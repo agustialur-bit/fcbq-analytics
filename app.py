@@ -307,6 +307,58 @@ def delete_partit_db(match_id):
 
 init_db()
 
+# ── Funcions de temps morts ────────────────────────────────────────────────
+MINS_PER_QUART = 10
+
+def analyze_timeouts(df, team_names):
+    results = []
+    moves = df.to_dict('records')
+    for i, m in enumerate(moves):
+        if 'Temps mort' not in str(m.get('accio','')):
+            continue
+        eq_id  = m.get('idEquip','')
+        quart  = int(m.get('quart',1)) if m.get('quart','') != '' else 1
+        min_to = float(m.get('min_num',0))
+        min_abs_to = (quart-1)*MINS_PER_QUART + min_to
+        eq_nom = team_names.get(str(eq_id),'?')
+        va_anotar = 0; jugadora = ''; accio_cist = ''; mins_cist = None
+        for j in range(i+1, len(moves)):
+            nm = moves[j]
+            q_next = int(nm.get('quart',1)) if nm.get('quart','') != '' else 1
+            if q_next != quart: break
+            move_str = str(nm.get('accio',''))
+            if nm.get('idEquip','') == eq_id and any(c in move_str for c in ['Cistella de 1','Cistella de 2','Cistella de 3']):
+                min_cist = float(nm.get('min_num',0))
+                mins_cist = (q_next-1)*MINS_PER_QUART + min_cist
+                jugadora = str(nm.get('jugador',''))
+                accio_cist = move_str
+                va_anotar = 1
+                break
+        segons = round((min_abs_to - mins_cist)*60, 1) if mins_cist is not None else None
+        results.append({'equip_nom':eq_nom,'quart':quart,'min_timeout':round(min_abs_to,2),
+            'min_cistella':round(mins_cist,2) if mins_cist else None,
+            'segons_resposta':segons,'jugadora':jugadora,'accio':accio_cist,'va_anotar':va_anotar})
+    return results
+
+def save_timeouts(match_id, data_consulta, df, team_names):
+    con = sqlite3.connect(DB_PATH)
+    con.execute("DELETE FROM timeouts WHERE match_id=?", (match_id,))
+    results = analyze_timeouts(df, team_names)
+    for r in results:
+        con.execute(
+            "INSERT INTO timeouts (match_id,data_consulta,equip_nom,quart,min_timeout,min_cistella,segons_resposta,jugadora,accio,va_anotar) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (match_id,data_consulta,r['equip_nom'],r['quart'],r['min_timeout'],
+             r['min_cistella'],r['segons_resposta'],r['jugadora'],r['accio'],r['va_anotar']))
+    con.commit(); con.close()
+
+def load_timeouts_db():
+    con = sqlite3.connect(DB_PATH)
+    try:
+        df = pd.read_sql("SELECT * FROM timeouts ORDER BY data_consulta, min_timeout", con)
+    except:
+        df = pd.DataFrame()
+    con.close(); return df
+
 # Migració automàtica: afegir columnes noves si no existeixen a BD antigues
 def migrate_db():
     con = sqlite3.connect(DB_PATH)
