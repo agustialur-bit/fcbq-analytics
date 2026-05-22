@@ -607,8 +607,8 @@ else:
 # ══════════════════════════════════════════════════
 # TABS
 # ══════════════════════════════════════════════════
-t1,t2,t3,t4,t5,t6 = st.tabs([
-    "🏀 Partit","👤 Jugadores","⏱ Ritme","📚 Històric","📈 Hist. Jugadores","🎯 Mapa de Tir"
+t1,t2,t3,t4,t5,t6,t7 = st.tabs([
+    "🏀 Partit","👤 Jugadores","⏱ Ritme","📚 Històric","📈 Hist. Jugadores","🎯 Mapa de Tir","🎬 Vídeo"
 ])
 
 # ══════════════════════════════════════════════════
@@ -1417,3 +1417,140 @@ with t6:
                             st.dataframe(df_det,use_container_width=True,hide_index=True)
             else:
                 st.info("Consulta més partits per veure l'evolució per jugadora.")
+
+# ══════════════════════════════════════════════════
+# TAB 7: ANÀLISI DE VÍDEO
+# ══════════════════════════════════════════════════
+with t7:
+    st.markdown(sec("🎬 Anàlisi de vídeo — carrega els CSV del notebook"), unsafe_allow_html=True)
+    st.caption("Carrega els fitxers generats pel notebook de Google Colab per veure les dades del vídeo.")
+
+    col_u1, col_u2, col_u3 = st.columns(3)
+    with col_u1:
+        f_accions  = st.file_uploader("CSV d'accions", type="csv", key="up_accions",
+                                       help="dades_partit_accions.csv")
+    with col_u2:
+        f_tracking = st.file_uploader("CSV de tracking", type="csv", key="up_tracking",
+                                       help="dades_partit_tracking.csv")
+    with col_u3:
+        f_resum    = st.file_uploader("CSV de resum", type="csv", key="up_resum",
+                                       help="dades_partit_resum.csv")
+
+    if f_accions is None:
+        st.info("Carrega almenys el CSV d'accions per començar.")
+    else:
+        df_vid_acc = pd.read_csv(f_accions)
+        df_vid_tra = pd.read_csv(f_tracking) if f_tracking else pd.DataFrame()
+        df_vid_res = pd.read_csv(f_resum)    if f_resum    else pd.DataFrame()
+
+        st.success(f"✅ {len(df_vid_acc)} accions carregades")
+
+        # ── Mètriques generals ──────────────────────────────────────────
+        st.markdown(sec("Resum del partit"), unsafe_allow_html=True)
+        equips_vid = [e for e in df_vid_acc["equip"].unique() if e and e != "?"]
+
+        cols_m = st.columns(len(equips_vid) * 3 + 1)
+        idx = 0
+        cols_m[idx].markdown(card("Accions totals", len(df_vid_acc), "", "#374151"), unsafe_allow_html=True)
+        idx += 1
+        for eq in equips_vid:
+            df_e = df_vid_acc[df_vid_acc["equip"] == eq]
+            color_e = COLOR_A if idx <= 3 else COLOR_B
+            cist  = int((df_e["tipus"] == "cistella").sum())
+            falts = int((df_e["tipus"] == "falta").sum())
+            tfall = int((df_e["tipus"] == "tir_fallat").sum())
+            cols_m[idx].markdown(card(f"Cistelles {eq}", cist, "", color_e), unsafe_allow_html=True); idx+=1
+            cols_m[idx].markdown(card(f"Faltes {eq}", falts, "", color_e), unsafe_allow_html=True); idx+=1
+            cols_m[idx].markdown(card(f"Tirs fallats {eq}", tfall, "", color_e), unsafe_allow_html=True); idx+=1
+
+        # ── Gràfic accions per equip ────────────────────────────────────
+        st.markdown(sec("Accions per equip i tipus"), unsafe_allow_html=True)
+        df_grp = df_vid_acc[df_vid_acc["equip"].isin(equips_vid)].groupby(["equip","tipus"]).size().reset_index(name="n")
+        if not df_grp.empty:
+            pal = {equips_vid[0]: COLOR_A, equips_vid[1]: COLOR_B} if len(equips_vid) >= 2 else {equips_vid[0]: COLOR_A}
+            fig_a = px.bar(df_grp, x="tipus", y="n", color="equip", barmode="group",
+                color_discrete_map=pal,
+                labels={"tipus":"Tipus","n":"Accions","equip":"Equip"})
+            fig_a.update_layout(xaxis_title="", paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+                font=dict(color="#374151",family="Inter"),
+                legend=dict(bgcolor="#ffffff",bordercolor="#e2e4e8",borderwidth=1,title=""),
+                margin=dict(l=0,r=0,t=30,b=0),height=280)
+            st.plotly_chart(fig_a, use_container_width=True)
+
+        # ── Accions per quart ───────────────────────────────────────────
+        st.markdown(sec("Accions per quart"), unsafe_allow_html=True)
+        if "quart" in df_vid_acc.columns:
+            df_q = df_vid_acc[df_vid_acc["equip"].isin(equips_vid)].groupby(["quart","equip","tipus"]).size().reset_index(name="n")
+            cistelles_q = df_q[df_q["tipus"]=="cistella"]
+            if not cistelles_q.empty:
+                pal = {equips_vid[0]: COLOR_A, equips_vid[1]: COLOR_B} if len(equips_vid) >= 2 else {equips_vid[0]: COLOR_A}
+                fig_q = px.bar(cistelles_q, x="quart", y="n", color="equip", barmode="group",
+                    color_discrete_map=pal,
+                    labels={"quart":"Quart","n":"Cistelles","equip":"Equip"})
+                fig_q.update_layout(paper_bgcolor="#ffffff",plot_bgcolor="#ffffff",
+                    font=dict(color="#374151",family="Inter"),
+                    legend=dict(bgcolor="#ffffff",bordercolor="#e2e4e8",borderwidth=1,title=""),
+                    margin=dict(l=0,r=0,t=30,b=0),height=260)
+                st.plotly_chart(fig_q, use_container_width=True)
+
+        # ── Evolució del marcador (des de les accions del vídeo) ────────
+        st.markdown(sec("Evolució del marcador"), unsafe_allow_html=True)
+        if "marcador" in df_vid_acc.columns:
+            df_marc = df_vid_acc[df_vid_acc["marcador"].str.contains("-", na=False)].copy()
+            if not df_marc.empty:
+                try:
+                    df_marc["scoreA"] = df_marc["marcador"].str.split("-").str[0].astype(int)
+                    df_marc["scoreB"] = df_marc["marcador"].str.split("-").str[1].astype(int)
+                    df_marc = df_marc.sort_values("temps_joc")
+                    fig_m = go.Figure()
+                    fig_m.add_trace(go.Scatter(x=df_marc["temps_joc"]/60, y=df_marc["scoreA"],
+                        name=equips_vid[0] if equips_vid else "Local",
+                        line=dict(color=COLOR_A,width=2.5),mode="lines"))
+                    fig_m.add_trace(go.Scatter(x=df_marc["temps_joc"]/60, y=df_marc["scoreB"],
+                        name=equips_vid[1] if len(equips_vid)>1 else "Visitant",
+                        line=dict(color=COLOR_B,width=2.5),mode="lines"))
+                    fig_m.update_layout(paper_bgcolor="#ffffff",plot_bgcolor="#ffffff",
+                        font=dict(color="#374151",family="Inter"),
+                        xaxis=dict(title="Minut de joc",showgrid=False,color="#9ca3af"),
+                        yaxis=dict(title="Punts",showgrid=True,gridcolor="#f3f4f6",color="#9ca3af"),
+                        legend=dict(bgcolor="#ffffff",bordercolor="#e2e4e8",borderwidth=1,title="",
+                                    orientation="h",yanchor="bottom",y=1.02,xanchor="right",x=1),
+                        margin=dict(l=0,r=0,t=40,b=0),height=280)
+                    st.plotly_chart(fig_m, use_container_width=True)
+                except:
+                    st.info("No s'ha pogut generar l'evolució del marcador.")
+
+        # ── Taula d'accions ─────────────────────────────────────────────
+        st.markdown(sec("Totes les accions"), unsafe_allow_html=True)
+        col_eq_f, col_tip_f = st.columns(2)
+        with col_eq_f:
+            eq_filter = st.selectbox("Equip", ["Tots"] + equips_vid, key="vid_eq_f")
+        with col_tip_f:
+            tip_filter = st.selectbox("Tipus", ["Tots","cistella","tir_fallat","falta","rebot","altre"], key="vid_tip_f")
+
+        df_show = df_vid_acc.copy()
+        if eq_filter != "Tots":
+            df_show = df_show[df_show["equip"] == eq_filter]
+        if tip_filter != "Tots":
+            df_show = df_show[df_show["tipus"] == tip_filter]
+
+        st.caption(f"{len(df_show)} accions")
+        st.dataframe(df_show[["quart","jugadora","equip","accio","tipus","marcador"]].rename(
+            columns={"quart":"Q","jugadora":"Jugadora","equip":"Equip",
+                     "accio":"Acció","tipus":"Tipus","marcador":"Marc"}),
+            use_container_width=True, hide_index=True, height=350)
+
+        # ── Resum de tracking (si disponible) ───────────────────────────
+        if not df_vid_res.empty:
+            st.markdown(sec("Presència en pantalla per jugadora"), unsafe_allow_html=True)
+            st.caption("Basada en el tracking del vídeo — quant temps apareix cada ID a càmera.")
+            st.dataframe(df_vid_res.sort_values("minuts_visibles", ascending=False).rename(
+                columns={"track_id":"ID","equip":"Equip","aparicions":"Frames",
+                         "minuts_visibles":"Minuts visibles"}),
+                use_container_width=True, hide_index=True)
+
+        # ── Descàrrega combinada ────────────────────────────────────────
+        st.markdown("---")
+        csv_exp = df_vid_acc.to_csv(index=False).encode("utf-8")
+        st.download_button("⬇ Descarregar accions CSV", csv_exp,
+            "accions_video.csv", "text/csv")
