@@ -146,7 +146,7 @@ def init_db():
         min_timeout REAL, min_cistella REAL,
         segons_resposta REAL,
         jugadora TEXT, accio TEXT,
-        va_anotar INTEGER
+        va_anotar INTEGER, dins_24s INTEGER DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS equips (
         id_equip TEXT PRIMARY KEY, nom TEXT
@@ -334,10 +334,14 @@ def analyze_timeouts(df, team_names):
                 accio_cist = move_str
                 va_anotar = 1
                 break
+        # Comprova si la cistella és dins dels 24 segons
+        dins_24s = (segons is not None and abs(segons) <= 24) if segons is not None else False
         segons = round((min_abs_to - mins_cist)*60, 1) if mins_cist is not None else None
+        dins_24s = (segons is not None and abs(segons) <= 24)
         results.append({'equip_nom':eq_nom,'quart':quart,'min_timeout':round(min_abs_to,2),
             'min_cistella':round(mins_cist,2) if mins_cist else None,
-            'segons_resposta':segons,'jugadora':jugadora,'accio':accio_cist,'va_anotar':va_anotar})
+            'segons_resposta':segons,'jugadora':jugadora,'accio':accio_cist,
+            'va_anotar':va_anotar,'dins_24s':dins_24s})
     return results
 
 def save_timeouts(match_id, data_consulta, df, team_names):
@@ -346,9 +350,10 @@ def save_timeouts(match_id, data_consulta, df, team_names):
     results = analyze_timeouts(df, team_names)
     for r in results:
         con.execute(
-            "INSERT INTO timeouts (match_id,data_consulta,equip_nom,quart,min_timeout,min_cistella,segons_resposta,jugadora,accio,va_anotar) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO timeouts (match_id,data_consulta,equip_nom,quart,min_timeout,min_cistella,segons_resposta,jugadora,accio,va_anotar,dins_24s) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (match_id,data_consulta,r['equip_nom'],r['quart'],r['min_timeout'],
-             r['min_cistella'],r['segons_resposta'],r['jugadora'],r['accio'],r['va_anotar']))
+             r['min_cistella'],r['segons_resposta'],r['jugadora'],r['accio'],
+             r['va_anotar'],r.get('dins_24s',0)))
     con.commit(); con.close()
 
 def load_timeouts_db():
@@ -364,6 +369,11 @@ def migrate_db():
     con = sqlite3.connect(DB_PATH)
     try:
         con.execute("ALTER TABLE stats_jugador ADD COLUMN minuts REAL DEFAULT 0")
+        con.commit()
+    except Exception:
+        pass
+    try:
+        con.execute("ALTER TABLE timeouts ADD COLUMN dins_24s INTEGER DEFAULT 0")
         con.commit()
     except Exception:
         pass
@@ -976,7 +986,8 @@ with t3:
         df_to_show["Jugadora"] = df_to_show["jugadora"]
         df_to_show["Acció"] = df_to_show["accio"]
         df_to_show["Seg."] = df_to_show["segons_resposta"].apply(lambda x: f"{x:.0f}s" if x and not pd.isna(x) else "—")
-        st.dataframe(df_to_show[["Q","Equip","Anota?","Jugadora","Acció","Seg."]],
+        df_to_show["≤24s?"] = df_to_show.get("dins_24s", pd.Series([0]*len(df_to_show))).map({1:"✅ Sí", 0:"❌ No"})
+        st.dataframe(df_to_show[["Q","Equip","Anota?","≤24s?","Jugadora","Acció","Seg."]],
             use_container_width=True, hide_index=True)
 
         # Gràfic per equip
@@ -1105,8 +1116,48 @@ with t5:
         if "minuts" in ranking.columns:
             ranking["Min/p"] = (ranking.get("minuts",0) / ranking["Partits"]).round(1)
             cols_rank = ["Jugadora","Equip","Partits","Punts","Pts/p","C2","C3","TL","Faltes","Min/p","Impacte","Imp/p"]
+        # Afegir eficiència de tir al rànquing
+        if "minuts" in ranking.columns:
+            ranking["Ef2%"] = (ranking.get("C2",0) /
+                (ranking.get("C2",0) + df_sj.groupby(["jugador","equip_nom"])["cistelles_2"].sum().reset_index()["cistelles_2"] * 0 + 1)
+            ).round(0)
+
         st.dataframe(df_rk[cols_rank],
             use_container_width=True,hide_index=True)
+
+        # Tirs ficats/tirats per tipus
+        st.markdown(sec("Eficiència de tir — ficats/tirats"), unsafe_allow_html=True)
+        st.caption("Exemple: 12/17 vol dir 12 cistelles de 17 intents.")
+
+        df_sz_rank = load_shots_zones_db()
+        if not df_sz_rank.empty:
+            # Agrega per jugadora tots els partits
+            df_sz_agg = df_sz_rank[df_sz_rank["jugador"]!="__equip__"].groupby(["jugador","equip_nom"]).agg(
+                v1m=("val1_made","sum"), v1x=("val1_miss","sum"),
+                v2m=("val2_made","sum"), v2x=("val2_miss","sum"),
+                v3m=("val3_made","sum"), v3x=("val3_miss","sum"),
+            ).reset_index()
+
+            def fmt_ratio(made, miss):
+                total = made + miss
+                ef = round(made/total*100) if total > 0 else 0
+                color = "#16a34a" if ef >= 55 else ("#d97706" if ef >= 35 else "#dc2626")
+                return f"{made}/{total} ({ef}%)", color
+
+            # Filtra per equip
+            eq_tir = st.selectbox("Equip", ["Tots"] + sorted(df_sz_agg["equip_nom"].unique().tolist()), key="eq_tir_rank")
+            df_sz_show = df_sz_agg if eq_tir == "Tots" else df_sz_agg[df_sz_agg["equip_nom"]==eq_tir]
+            df_sz_show = df_sz_show.copy()
+            df_sz_show["TL (1pt)"]  = df_sz_show.apply(lambda r: f"{r.v1m}/{r.v1m+r.v1x} ({round(r.v1m/(r.v1m+r.v1x)*100) if (r.v1m+r.v1x)>0 else 0}%)", axis=1)
+            df_sz_show["2pts"]      = df_sz_show.apply(lambda r: f"{r.v2m}/{r.v2m+r.v2x} ({round(r.v2m/(r.v2m+r.v2x)*100) if (r.v2m+r.v2x)>0 else 0}%)", axis=1)
+            df_sz_show["3pts"]      = df_sz_show.apply(lambda r: f"{r.v3m}/{r.v3m+r.v3x} ({round(r.v3m/(r.v3m+r.v3x)*100) if (r.v3m+r.v3x)>0 else 0}%)", axis=1)
+            df_sz_show["Total"]     = df_sz_show.apply(lambda r: f"{r.v1m+r.v2m+r.v3m}/{r.v1m+r.v1x+r.v2m+r.v2x+r.v3m+r.v3x} ({round((r.v1m+r.v2m+r.v3m)/(r.v1m+r.v1x+r.v2m+r.v2x+r.v3m+r.v3x)*100) if (r.v1m+r.v1x+r.v2m+r.v2x+r.v3m+r.v3x)>0 else 0}%)", axis=1)
+            df_sz_show = df_sz_show.sort_values("v2m", ascending=False)
+            st.dataframe(df_sz_show[["jugador","equip_nom","TL (1pt)","2pts","3pts","Total"]].rename(
+                columns={"jugador":"Jugadora","equip_nom":"Equip"}),
+                use_container_width=True, hide_index=True)
+        else:
+            st.info("Consulta més partits per veure les estadístiques de tir.")
 
         top5=df_rk.head(5)
         if not top5.empty:
@@ -1169,6 +1220,91 @@ with t5:
                         columns={"punts":"Pts","cistelles_2":"C2","cistelles_3":"C3","tirs_lliures":"TL",
                                  "faltes":"Faltes","impacte":"Impacte","pts_per_min":"Pts/min"}),
                         use_container_width=True,hide_index=True)
+
+        # ── Rendiment per bloc de minuts ────────────────────────────────────────
+        st.markdown(sec("Rendiment per bloc de minuts — primers vs últims"), unsafe_allow_html=True)
+        st.caption("Compara si la jugadora anota més al principi o al final de cada bloc de minuts que juga.")
+
+        BLOC_MINS = 3  # minuts a considerar com 'principi' i 'final' del bloc
+
+        jug_bloc = st.selectbox("Jugadora", tots_jugs_hist, key="jug_bloc")
+        if jug_bloc:
+            # Agafem totes les jugades d'aquesta jugadora de tots els partits
+            con_bloc = sqlite3.connect(DB_PATH)
+            df_bloc = pd.read_sql(
+                "SELECT * FROM jugades WHERE jugador=? ORDER BY match_id, num",
+                con_bloc, params=(jug_bloc,))
+            con_bloc.close()
+
+            if df_bloc.empty:
+                st.info("Sense dades de play-by-play per a aquesta jugadora.")
+            else:
+                # Per cada partit, identifica blocs de joc continus
+                bloc_rows = []
+                for mid, df_mid in df_bloc.groupby("match_id"):
+                    df_mid = df_mid.sort_values("min_num")
+                    # Detecta ruptures de bloc (>2 min sense acció = fora de pista)
+                    df_mid["gap"] = df_mid["min_num"].diff().fillna(0)
+                    df_mid["bloc_id"] = (df_mid["gap"] > 2).cumsum()
+
+                    for bloc_id, df_b in df_mid.groupby("bloc_id"):
+                        if len(df_b) < 2: continue
+                        min_inici = df_b["min_num"].min()
+                        min_fi    = df_b["min_num"].max()
+                        durada    = min_fi - min_inici
+                        if durada < BLOC_MINS * 2: continue  # bloc massa curt
+
+                        # Primers N minuts del bloc
+                        df_primers = df_b[df_b["min_num"] <= min_inici + BLOC_MINS]
+                        pts_primers = int(df_primers["punts"].sum())
+
+                        # Últims N minuts del bloc
+                        df_ultims = df_b[df_b["min_num"] >= min_fi - BLOC_MINS]
+                        pts_ultims = int(df_ultims["punts"].sum())
+
+                        # Etiqueta del partit
+                        df_pr_b = load_partits_db()
+                        row_p = df_pr_b[df_pr_b["match_id"]==mid]
+                        lbl = f"{row_p.iloc[0]['nom_a']} vs {row_p.iloc[0]['nom_b']}" if not row_p.empty else mid[:8]
+
+                        bloc_rows.append({
+                            "Partit": lbl,
+                            "Bloc": f"Bloc {int(bloc_id)+1}",
+                            "Durada (min)": round(durada, 1),
+                            f"Pts primers {BLOC_MINS} min": pts_primers,
+                            f"Pts últims {BLOC_MINS} min": pts_ultims,
+                            "Tendència": "📈 Millora" if pts_ultims > pts_primers
+                                         else ("📉 Baixa" if pts_ultims < pts_primers
+                                               else "➡️ Estable")
+                        })
+
+                if bloc_rows:
+                    df_blocs = pd.DataFrame(bloc_rows)
+                    st.dataframe(df_blocs, use_container_width=True, hide_index=True)
+
+                    # Resum global
+                    col_b1, col_b2, col_b3 = st.columns(3)
+                    mit_p = df_blocs[f"Pts primers {BLOC_MINS} min"].mean()
+                    mit_u = df_blocs[f"Pts últims {BLOC_MINS} min"].mean()
+                    tendencia = "📈 Millora al final" if mit_u > mit_p else ("📉 Baixa al final" if mit_u < mit_p else "➡️ Estable")
+                    with col_b1: st.markdown(card(f"Pts/bloc inici",f"{mit_p:.1f}","mitjana","#185FA5"),unsafe_allow_html=True)
+                    with col_b2: st.markdown(card(f"Pts/bloc final",f"{mit_u:.1f}","mitjana","#185FA5"),unsafe_allow_html=True)
+                    with col_b3: st.markdown(card("Tendència global",tendencia,"","#374151"),unsafe_allow_html=True)
+
+                    fig_bloc = go.Figure()
+                    fig_bloc.add_trace(go.Bar(name=f"Primers {BLOC_MINS} min",
+                        x=df_blocs["Partit"]+" "+df_blocs["Bloc"],
+                        y=df_blocs[f"Pts primers {BLOC_MINS} min"],
+                        marker_color=COLOR_A, opacity=0.8))
+                    fig_bloc.add_trace(go.Bar(name=f"Últims {BLOC_MINS} min",
+                        x=df_blocs["Partit"]+" "+df_blocs["Bloc"],
+                        y=df_blocs[f"Pts últims {BLOC_MINS} min"],
+                        marker_color="#16a34a", opacity=0.8))
+                    fig_bloc.update_layout(barmode="group")
+                    fig_bloc.update_xaxes(tickangle=-30)
+                    st.plotly_chart(chart_style(fig_bloc,260,f"{jug_bloc} — primers vs últims minuts del bloc"),use_container_width=True)
+                else:
+                    st.info(f"No hi ha blocs de més de {BLOC_MINS*2} minuts per a aquesta jugadora.")
 
         st.markdown(sec("Comparativa entre jugadores"), unsafe_allow_html=True)
         col_j,col_m=st.columns([2,1])
