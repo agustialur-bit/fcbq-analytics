@@ -334,8 +334,6 @@ def analyze_timeouts(df, team_names):
                 accio_cist = move_str
                 va_anotar = 1
                 break
-        # Comprova si la cistella és dins dels 24 segons
-        dins_24s = (segons is not None and abs(segons) <= 24) if segons is not None else False
         segons = round((min_abs_to - mins_cist)*60, 1) if mins_cist is not None else None
         dins_24s = (segons is not None and abs(segons) <= 24)
         results.append({'equip_nom':eq_nom,'quart':quart,'min_timeout':round(min_abs_to,2),
