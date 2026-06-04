@@ -6,7 +6,7 @@ import urllib.request
 import json, re, sqlite3, os
 from datetime import datetime
 
-st.set_page_config(page_title="Guillem Analítica", page_icon="🏀", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Miki Analítica", page_icon="🏀", layout="wide", initial_sidebar_state="expanded")
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "historic.db")
 API_BASE = "https://msstats.optimalwayconsulting.com/v1/fcbq/getJsonWithMatchMoves/{match_id}?currentSeason=true"
@@ -146,7 +146,7 @@ def init_db():
         min_timeout REAL, min_cistella REAL,
         segons_resposta REAL,
         jugadora TEXT, accio TEXT,
-        va_anotar INTEGER, dins_24s INTEGER DEFAULT 0
+        va_anotar INTEGER
     );
     CREATE TABLE IF NOT EXISTS equips (
         id_equip TEXT PRIMARY KEY, nom TEXT
@@ -335,11 +335,9 @@ def analyze_timeouts(df, team_names):
                 va_anotar = 1
                 break
         segons = round((min_abs_to - mins_cist)*60, 1) if mins_cist is not None else None
-        dins_24s = (segons is not None and abs(segons) <= 24)
         results.append({'equip_nom':eq_nom,'quart':quart,'min_timeout':round(min_abs_to,2),
             'min_cistella':round(mins_cist,2) if mins_cist else None,
-            'segons_resposta':segons,'jugadora':jugadora,'accio':accio_cist,
-            'va_anotar':va_anotar,'dins_24s':dins_24s})
+            'segons_resposta':segons,'jugadora':jugadora,'accio':accio_cist,'va_anotar':va_anotar})
     return results
 
 def save_timeouts(match_id, data_consulta, df, team_names):
@@ -348,10 +346,9 @@ def save_timeouts(match_id, data_consulta, df, team_names):
     results = analyze_timeouts(df, team_names)
     for r in results:
         con.execute(
-            "INSERT INTO timeouts (match_id,data_consulta,equip_nom,quart,min_timeout,min_cistella,segons_resposta,jugadora,accio,va_anotar,dins_24s) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO timeouts (match_id,data_consulta,equip_nom,quart,min_timeout,min_cistella,segons_resposta,jugadora,accio,va_anotar) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (match_id,data_consulta,r['equip_nom'],r['quart'],r['min_timeout'],
-             r['min_cistella'],r['segons_resposta'],r['jugadora'],r['accio'],
-             r['va_anotar'],r.get('dins_24s',0)))
+             r['min_cistella'],r['segons_resposta'],r['jugadora'],r['accio'],r['va_anotar']))
     con.commit(); con.close()
 
 def load_timeouts_db():
@@ -367,11 +364,6 @@ def migrate_db():
     con = sqlite3.connect(DB_PATH)
     try:
         con.execute("ALTER TABLE stats_jugador ADD COLUMN minuts REAL DEFAULT 0")
-        con.commit()
-    except Exception:
-        pass
-    try:
-        con.execute("ALTER TABLE timeouts ADD COLUMN dins_24s INTEGER DEFAULT 0")
         con.commit()
     except Exception:
         pass
@@ -510,7 +502,7 @@ def get_shot_counts(df_sub):
 with st.sidebar:
     st.markdown("""<div style="display:flex;align-items:center;gap:10px;padding-bottom:14px;border-bottom:0.5px solid #e2e4e8;margin-bottom:14px">
         <div style="width:34px;height:34px;background:#E6F1FB;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px">🏀</div>
-        <div><div style="font-size:13px;font-weight:600;color:#1a1c22">Guillem Analítica</div>
+        <div><div style="font-size:13px;font-weight:600;color:#1a1c22">Miki Analítica</div>
         <div style="font-size:11px;color:#9ca3af">Analítica de Bàsquet</div></div></div>""", unsafe_allow_html=True)
 
     st.markdown('<div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#9ca3af;margin-bottom:6px">Partit</div>', unsafe_allow_html=True)
@@ -518,8 +510,8 @@ with st.sidebar:
 
     with st.expander("✏️ Noms dels equips", expanded=False):
         st.caption("Es guardaran per a futurs partits.")
-        nom_equip_1 = st.text_input("Equip local", placeholder="Ex: Guillem Lakers")
-        nom_equip_2 = st.text_input("Equip visitant", placeholder="Ex: Guillemnaikos")
+        nom_equip_1 = st.text_input("Equip local", placeholder="Ex: Miki Lakers")
+        nom_equip_2 = st.text_input("Equip visitant", placeholder="Ex: Mikinaikos")
 
     carregar = st.button("⬇ Carregar partit", use_container_width=True)
     st.markdown("---")
@@ -528,7 +520,7 @@ with st.sidebar:
     accio_cerca = st.text_input("Acció", placeholder="Cistella, falta...")
     jugador_cerca = st.text_input("Jugadora", placeholder="Nom...")
     st.markdown("---")
-    st.caption("Guillem Analítica")
+    st.caption("Miki Analítica")
 
 # ── Sessió ─────────────────────────────────────────────────────────────────────
 for k,v in [("df",None),("match_id",None),("team_names",{}),("score_a",0),("score_b",0)]:
@@ -590,7 +582,7 @@ if carregar and url_input:
 if st.session_state.df is None:
     st.markdown("""<div style="text-align:center;padding:80px 0">
         <div style="font-size:64px">🏀</div>
-        <h1 style="font-size:38px;font-weight:600;color:#1a1c22;margin:16px 0 8px">Guillem Analítica</h1>
+        <h1 style="font-size:38px;font-weight:600;color:#1a1c22;margin:16px 0 8px">Miki Analítica</h1>
         <p style="color:#6b7280;font-size:15px">Enganxa la URL o l'ID d'un partit al panell esquerre i prem Carregar.</p>
         <p style="color:#d1d5db;font-size:12px;margin-top:32px">Exemple: 69ec95d4339c3d0001f523a1</p>
     </div>""", unsafe_allow_html=True)
@@ -615,292 +607,8 @@ else:
 # ══════════════════════════════════════════════════
 # TABS
 # ══════════════════════════════════════════════════
-def calc_possessions(df_equip):
-    """Calcula les possessions estimades d'un equip."""
-    tc_int = int(df_equip["accio"].str.contains(
-        "Cistella de 2|Cistella de 3|Intent fallat de 2|Intent fallat de 3|"
-        "Tir de 2|Tir de 3|fallat de 2|fallat de 3",
-        case=False, na=False).sum())
-    tl_int = int(df_equip["accio"].str.contains(
-        "Cistella de 1|Intent fallat de 1", case=False, na=False).sum())
-    return tc_int + 0.44 * tl_int
-
-def calc_eficiencies(df_orig, teams, team_names):
-    """Calcula eficiència ofensiva i defensiva per equip."""
-    result = {}
-    for i, tid in enumerate(teams[:2]):
-        rival_id = teams[1-i] if len(teams) > 1 else None
-        df_eq  = df_orig[df_orig["idEquip"] == tid]
-        df_riv = df_orig[df_orig["idEquip"] == rival_id] if rival_id else pd.DataFrame()
-        pts_of = int(df_eq["punts"].sum())
-        pts_def = int(df_riv["punts"].sum()) if not df_riv.empty else 0
-        poss_of  = calc_possessions(df_eq)
-        poss_def = calc_possessions(df_riv) if not df_riv.empty else 1
-        off_rtg = round(pts_of  / poss_of  * 100, 1) if poss_of  > 0 else 0
-        def_rtg = round(pts_def / poss_def * 100, 1) if poss_def > 0 else 0
-        net_rtg = round(off_rtg - def_rtg, 1)
-        result[tid] = {
-            "nom": team_names.get(tid, "?"),
-            "pts_of": pts_of, "pts_def": pts_def,
-            "poss_of": round(poss_of, 1), "poss_def": round(poss_def, 1),
-            "off_rtg": off_rtg, "def_rtg": def_rtg, "net_rtg": net_rtg
-        }
-    return result
-
-def calc_onoff(df_orig, jugadora, equip_id, teams):
-    """Calcula On/Off Rating d'una jugadora."""
-    rival_id = next((t for t in teams if t != equip_id), None)
-    if rival_id is None:
-        return None
-
-    # Frames ON: quan la jugadora té accions
-    nums_on = df_orig[df_orig["jugador"] == jugadora]["num"].values
-    if len(nums_on) == 0:
-        return None
-    n_min, n_max = int(nums_on.min()), int(nums_on.max())
-
-    df_on_eq  = df_orig[(df_orig["num"] >= n_min) & (df_orig["num"] <= n_max) & (df_orig["idEquip"] == equip_id)]
-    df_on_riv = df_orig[(df_orig["num"] >= n_min) & (df_orig["num"] <= n_max) & (df_orig["idEquip"] == rival_id)]
-    df_off_eq  = df_orig[(df_orig["num"] < n_min) | (df_orig["num"] > n_max)]
-    df_off_eq  = df_off_eq[df_off_eq["idEquip"] == equip_id]
-    df_off_riv = df_orig[((df_orig["num"] < n_min) | (df_orig["num"] > n_max)) & (df_orig["idEquip"] == rival_id)]
-
-    def rtg(df_e, df_r):
-        pts = int(df_e["punts"].sum())
-        poss = calc_possessions(df_e)
-        pts_r = int(df_r["punts"].sum())
-        poss_r = calc_possessions(df_r)
-        off = round(pts/poss*100, 1) if poss > 0 else 0
-        deff = round(pts_r/poss_r*100, 1) if poss_r > 0 else 0
-        return off, deff, round(off-deff, 1)
-
-    on_off,  on_def,  on_net  = rtg(df_on_eq,  df_on_riv)
-    off_off, off_def, off_net = rtg(df_off_eq, df_off_riv)
-
-    return {
-        "on_off_rtg":  on_off,  "on_def_rtg":  on_def,  "on_net_rtg":  on_net,
-        "off_off_rtg": off_off, "off_def_rtg": off_def, "off_net_rtg": off_net,
-        "diff": round(on_net - off_net, 1)
-    }
-
-def genera_excel_temporada():
-    """Genera un Excel formatat amb totes les dades de la temporada."""
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-    from openpyxl.utils import get_column_letter
-    import io
-
-    BLAU_FOSC='0C3A6E'; BLAU_MIG='185FA5'; BLAU_CLAR='D6E8F7'
-    BLAU_MOLT='EBF4FC'; GRIS_CAP='F2F4F6'; VERD='16A34A'
-    VERMELL='C0392B'; BLANC='FFFFFF'; GROC='FFF3CD'
-
-    def fons(c): return PatternFill('solid',fgColor=c)
-    def vora():
-        s=Side(style='thin',color='CCCCCC')
-        return Border(top=s,bottom=s,left=s,right=s)
-    def fc(ws,row,col,value,bold=False,bg=None,fg='000000',align='left',size=10):
-        c=ws.cell(row=row,column=col,value=value)
-        c.font=Font(name='Arial',bold=bold,color=fg,size=size)
-        if bg: c.fill=fons(bg)
-        c.alignment=Alignment(horizontal=align,vertical='center')
-        c.border=vora()
-        return c
-
-    df_p=load_partits_db()
-    df_s=load_stats_jugador_db()
-    df_sh=load_shots_zones_db()
-
-    wb=Workbook(); wb.remove(wb.active)
-
-    # ── Pestanya 1: Temporada ─────────────────────────────────────────────
-    ws1=wb.create_sheet("📋 Temporada")
-    ws1.sheet_view.showGridLines=False
-    ws1.column_dimensions['A'].width=2
-    ws1.merge_cells('B1:H1')
-    c=ws1['B1']; c.value='🏀  MIKI ANALÍTICA — RESUM DE TEMPORADA'
-    c.font=Font(name='Arial',bold=True,color=BLANC,size=15)
-    c.fill=fons(BLAU_FOSC); c.alignment=Alignment(horizontal='center',vertical='center')
-    ws1.row_dimensions[1].height=38
-    ws1.merge_cells('B2:H2')
-    c=ws1['B2']; c.value=f"Actualitzat: {datetime.now().strftime('%d/%m/%Y')}  ·  {len(df_p)} partits"
-    c.font=Font(name='Arial',color=BLANC,size=10); c.fill=fons(BLAU_MIG)
-    c.alignment=Alignment(horizontal='center',vertical='center')
-    ws1.row_dimensions[2].height=20; ws1.row_dimensions[3].height=8
-    row=4
-    for ci,cap,w in zip(range(2,9),['Data','Local','Pts L','Pts V','Visitant','W/L','Dif.'],[12,22,9,9,22,7,9]):
-        fc(ws1,row,ci,cap,bold=True,bg=BLAU_MIG,fg=BLANC,align='center',size=10)
-        ws1.column_dimensions[get_column_letter(ci)].width=w
-    ws1.row_dimensions[row].height=20; row+=1
-    v=d=e=0
-    for _,p in df_p.iterrows():
-        sa,sb=int(p['score_a']),int(p['score_b'])
-        if sa>sb: r='V'; v+=1; bgr='D5F5E3'; fgr=VERD
-        elif sa<sb: r='D'; d+=1; bgr='FADBD8'; fgr=VERMELL
-        else: r='E'; e+=1; bgr=GROC; fgr='8B6914'
-        fc(ws1,row,2,str(p['data_consulta'])[:10],align='center')
-        fc(ws1,row,3,p['nom_a'],bold=True,fg=BLAU_FOSC)
-        fc(ws1,row,4,sa,align='center',bold=True,fg=BLAU_FOSC)
-        fc(ws1,row,5,sb,align='center',bold=True,fg=VERMELL)
-        fc(ws1,row,6,p['nom_b'])
-        fc(ws1,row,7,r,align='center',bold=True,bg=bgr,fg=fgr)
-        fc(ws1,row,8,f"{'+'if sa>sb else ''}{sa-sb}",align='center',bg=bgr,fg=fgr)
-        ws1.row_dimensions[row].height=18; row+=1
-    row+=1
-    ws1.merge_cells(f'B{row}:H{row}')
-    c=ws1[f'B{row}']
-    c.value=f'  V: {v}    D: {d}    E: {e}    % Victòries: {round(v/max(len(df_p),1)*100)}%'
-    c.font=Font(name='Arial',bold=True,color=BLAU_FOSC,size=11)
-    c.fill=fons(BLAU_MOLT); c.alignment=Alignment(horizontal='left',vertical='center')
-    from openpyxl.styles import Border, Side
-    s=Side(style='thin',color=BLAU_MIG)
-    c.border=Border(top=s,bottom=s,left=s,right=s)
-    ws1.row_dimensions[row].height=26
-
-    # ── Pestanya 2: Jugadores ─────────────────────────────────────────────
-    ws2=wb.create_sheet("👤 Jugadores")
-    ws2.sheet_view.showGridLines=False; ws2.column_dimensions['A'].width=2
-    ws2.merge_cells('B1:N1')
-    c=ws2['B1']; c.value='🏀  RÀNQUING DE JUGADORES — TEMPORADA'
-    c.font=Font(name='Arial',bold=True,color=BLANC,size=15)
-    c.fill=fons(BLAU_FOSC); c.alignment=Alignment(horizontal='center',vertical='center')
-    ws2.row_dimensions[1].height=38; ws2.row_dimensions[2].height=8
-    row=3
-    for ci,cap,w in zip(range(2,15),
-        ['#','Jugadora','Equip','Part.','Pts','Pts/P','Min','Min/P','C2','C3','TL','Faltes','Impacte'],
-        [5,24,20,8,9,9,9,9,7,7,7,9,12]):
-        fc(ws2,row,ci,cap,bold=True,bg=BLAU_MIG,fg=BLANC,align='center',size=10)
-        ws2.column_dimensions[get_column_letter(ci)].width=w
-    ws2.row_dimensions[row].height=22; row+=1
-
-    if not df_s.empty:
-        agg=df_s.groupby(['jugador','equip_nom']).agg(
-            p=('match_id','nunique'),pts=('punts','sum'),
-            mn=('minuts','sum') if 'minuts' in df_s.columns else ('punts','count'),
-            c2=('cistelles_2','sum'),c3=('cistelles_3','sum'),
-            tl=('tirs_lliures','sum'),f=('faltes','sum'),imp=('impacte','sum')
-        ).reset_index().sort_values('pts',ascending=False)
-        for rank,(_,r) in enumerate(agg.iterrows(),1):
-            bg=BLAU_MOLT if rank%2==0 else BLANC
-            ppp=round(r['pts']/r['p'],1) if r['p']>0 else 0
-            mpp=round(r['mn']/r['p'],1) if r['p']>0 else 0
-            iv=f"+{int(r['imp'])}" if r['imp']>=0 else str(int(r['imp']))
-            ic=VERD if r['imp']>=0 else VERMELL
-            fc(ws2,row,2,rank,align='center',bg=bg,bold=True,fg=BLAU_FOSC)
-            fc(ws2,row,3,r['jugador'],bold=True,bg=bg,fg=BLAU_FOSC)
-            fc(ws2,row,4,r['equip_nom'],bg=bg)
-            fc(ws2,row,5,int(r['p']),align='center',bg=bg)
-            fc(ws2,row,6,int(r['pts']),align='center',bold=True,bg=bg,fg=BLAU_FOSC)
-            fc(ws2,row,7,ppp,align='center',bg=bg)
-            fc(ws2,row,8,round(r['mn'],1),align='center',bg=bg)
-            fc(ws2,row,9,mpp,align='center',bg=bg)
-            fc(ws2,row,10,int(r['c2']),align='center',bg=bg)
-            fc(ws2,row,11,int(r['c3']),align='center',bg=bg)
-            fc(ws2,row,12,int(r['tl']),align='center',bg=bg)
-            fc(ws2,row,13,int(r['f']),align='center',bg=bg)
-            fc(ws2,row,14,iv,align='center',bold=True,bg=bg,fg=ic)
-            ws2.row_dimensions[row].height=18; row+=1
-
-    # ── Pestanya 3: Evolució ──────────────────────────────────────────────
-    ws3=wb.create_sheet("📈 Evolució per Partit")
-    ws3.sheet_view.showGridLines=False; ws3.column_dimensions['A'].width=2
-    ws3.merge_cells('B1:L1')
-    c=ws3['B1']; c.value='🏀  EVOLUCIÓ DE JUGADORES PER PARTIT'
-    c.font=Font(name='Arial',bold=True,color=BLANC,size=15)
-    c.fill=fons(BLAU_FOSC); c.alignment=Alignment(horizontal='center',vertical='center')
-    ws3.row_dimensions[1].height=38; ws3.row_dimensions[2].height=8
-    row=3
-    if not df_s.empty:
-        for jug in df_s['jugador'].unique():
-            dj=df_s[df_s['jugador']==jug].sort_values('data_consulta')
-            if dj.empty: continue
-            ws3.merge_cells(f'B{row}:K{row}')
-            c=ws3[f'B{row}']; c.value=f'  {jug}  ·  {dj.iloc[0]["equip_nom"]}'
-            c.font=Font(name='Arial',bold=True,color=BLANC,size=11)
-            c.fill=fons(BLAU_MIG); c.alignment=Alignment(horizontal='left',vertical='center')
-            ws3.row_dimensions[row].height=22; row+=1
-            for ci,cap,w in zip(range(2,12),
-                ['Rival','Data','Punts','Min','C2','C3','TL','Faltes','Impacte','Pts/min'],
-                [22,12,9,9,7,7,7,9,11,10]):
-                fc(ws3,row,ci,cap,bold=True,bg=BLAU_CLAR,fg=BLAU_FOSC,align='center',size=9)
-                ws3.column_dimensions[get_column_letter(ci)].width=max(
-                    ws3.column_dimensions[get_column_letter(ci)].width or 0,w)
-            ws3.row_dimensions[row].height=18; row+=1
-            for _,r in dj.iterrows():
-                pr=df_p[df_p['match_id']==r['match_id']]
-                rival=pr.iloc[0]['nom_b'] if not pr.empty else '?'
-                iv=f"+{int(r['impacte'])}" if r['impacte']>=0 else str(int(r['impacte']))
-                ic=VERD if r['impacte']>=0 else VERMELL
-                fc(ws3,row,2,rival,size=9); fc(ws3,row,3,str(r['data_consulta'])[:10],align='center',size=9)
-                fc(ws3,row,4,int(r['punts']),align='center',bold=True,fg=BLAU_FOSC)
-                fc(ws3,row,5,round(r.get('minuts',0),1),align='center')
-                fc(ws3,row,6,int(r['cistelles_2']),align='center'); fc(ws3,row,7,int(r['cistelles_3']),align='center')
-                fc(ws3,row,8,int(r['tirs_lliures']),align='center'); fc(ws3,row,9,int(r['faltes']),align='center')
-                fc(ws3,row,10,iv,align='center',bold=True,fg=ic)
-                fc(ws3,row,11,round(r['pts_per_min'],2),align='center')
-                ws3.row_dimensions[row].height=16; row+=1
-            it=int(dj['impacte'].sum())
-            fc(ws3,row,2,'TOTAL',bold=True,bg=GRIS_CAP,fg=BLAU_FOSC,size=9)
-            for ci in range(3,12): fc(ws3,row,ci,'',bg=GRIS_CAP)
-            fc(ws3,row,4,int(dj['punts'].sum()),bold=True,align='center',bg=GRIS_CAP,fg=BLAU_FOSC)
-            fc(ws3,row,6,int(dj['cistelles_2'].sum()),bold=True,align='center',bg=GRIS_CAP)
-            fc(ws3,row,7,int(dj['cistelles_3'].sum()),bold=True,align='center',bg=GRIS_CAP)
-            fc(ws3,row,8,int(dj['tirs_lliures'].sum()),bold=True,align='center',bg=GRIS_CAP)
-            fc(ws3,row,9,int(dj['faltes'].sum()),bold=True,align='center',bg=GRIS_CAP)
-            fc(ws3,row,10,f"+{it}" if it>=0 else str(it),bold=True,align='center',bg=GRIS_CAP,fg=VERD if it>=0 else VERMELL)
-            ws3.row_dimensions[row].height=20; row+=2
-
-    # ── Pestanya 4: Tirs ──────────────────────────────────────────────────
-    if not df_sh.empty:
-        ws4=wb.create_sheet("🎯 Eficiència de Tir")
-        ws4.sheet_view.showGridLines=False; ws4.column_dimensions['A'].width=2
-        ws4.merge_cells('B1:L1')
-        c=ws4['B1']; c.value='🏀  EFICIÈNCIA DE TIR — FICATS / TIRATS'
-        c.font=Font(name='Arial',bold=True,color=BLANC,size=15)
-        c.fill=fons(BLAU_FOSC); c.alignment=Alignment(horizontal='center',vertical='center')
-        ws4.row_dimensions[1].height=38; ws4.row_dimensions[2].height=8
-        row=3
-        for ci,cap,w in zip(range(2,13),
-            ['Jugadora','Equip','TL conv/int','TL %','2pts conv/int','2pts %','3pts conv/int','3pts %','Total conv/int','Total %'],
-            [24,20,14,9,16,9,16,9,16,9]):
-            fc(ws4,row,ci,cap,bold=True,bg=BLAU_MIG,fg=BLANC,align='center',size=10)
-            ws4.column_dimensions[get_column_letter(ci)].width=w
-        ws4.row_dimensions[row].height=22; row+=1
-        def ef_bg(m,t): 
-            if t==0: return BLANC
-            p=m/t
-            return 'D5F5E3' if p>=0.55 else (GROC if p>=0.35 else 'FADBD8')
-        at=df_sh[df_sh['jugador']!='__equip__'].groupby(['jugador','equip_nom']).agg(
-            v1m=('val1_made','sum'),v1x=('val1_miss','sum'),
-            v2m=('val2_made','sum'),v2x=('val2_miss','sum'),
-            v3m=('val3_made','sum'),v3x=('val3_miss','sum'),
-        ).reset_index()
-        at['tm']=at['v1m']+at['v2m']+at['v3m']
-        at=at.sort_values('tm',ascending=False)
-        for _,r in at.iterrows():
-            def ratio(m,x): return f"{int(m)}/{int(m+x)}" if (m+x)>0 else "—"
-            def pct(m,x): return f"{round(m/(m+x)*100)}%" if (m+x)>0 else "—"
-            fc(ws4,row,2,r['jugador'],bold=True,fg=BLAU_FOSC); fc(ws4,row,3,r['equip_nom'])
-            fc(ws4,row,4,ratio(r['v1m'],r['v1x']),align='center')
-            fc(ws4,row,5,pct(r['v1m'],r['v1x']),align='center',bold=True,bg=ef_bg(r['v1m'],r['v1m']+r['v1x']))
-            fc(ws4,row,6,ratio(r['v2m'],r['v2x']),align='center')
-            fc(ws4,row,7,pct(r['v2m'],r['v2x']),align='center',bold=True,bg=ef_bg(r['v2m'],r['v2m']+r['v2x']))
-            fc(ws4,row,8,ratio(r['v3m'],r['v3x']),align='center')
-            fc(ws4,row,9,pct(r['v3m'],r['v3x']),align='center',bold=True,bg=ef_bg(r['v3m'],r['v3m']+r['v3x']))
-            tt=r['v1m']+r['v1x']+r['v2m']+r['v2x']+r['v3m']+r['v3x']
-            fc(ws4,row,10,ratio(r['tm'],tt-r['tm']),align='center',bold=True)
-            fc(ws4,row,11,pct(r['tm'],tt-r['tm']),align='center',bold=True,bg=ef_bg(r['tm'],tt),fg=BLAU_FOSC)
-            ws4.row_dimensions[row].height=18; row+=1
-        row+=1
-        ws4.merge_cells(f'B{row}:F{row}')
-        c=ws4[f'B{row}']; c.value='Llegenda:  🟢 ≥55% alta    🟡 35–54% mitja    🔴 <35% baixa'
-        c.font=Font(name='Arial',italic=True,color='666666',size=9)
-        c.alignment=Alignment(horizontal='left')
-
-    buf=io.BytesIO(); wb.save(buf); buf.seek(0)
-    return buf.getvalue()
-
-t1,t2,t3,t4,t5,t6,t7 = st.tabs([
-    "🏀 Partit","👤 Jugadores","⏱ Ritme","📚 Històric","📈 Hist. Jugadores","🎯 Mapa de Tir","🎬 Vídeo"
+t1,t2,t3,t4,t5,t6 = st.tabs([
+    "🏀 Partit","👤 Jugadores","⏱ Ritme","📚 Històric","📈 Hist. Jugadores","🎯 Mapa de Tir"
 ])
 
 # ══════════════════════════════════════════════════
@@ -1268,8 +976,7 @@ with t3:
         df_to_show["Jugadora"] = df_to_show["jugadora"]
         df_to_show["Acció"] = df_to_show["accio"]
         df_to_show["Seg."] = df_to_show["segons_resposta"].apply(lambda x: f"{x:.0f}s" if x and not pd.isna(x) else "—")
-        df_to_show["≤24s?"] = df_to_show.get("dins_24s", pd.Series([0]*len(df_to_show))).map({1:"✅ Sí", 0:"❌ No"})
-        st.dataframe(df_to_show[["Q","Equip","Anota?","≤24s?","Jugadora","Acció","Seg."]],
+        st.dataframe(df_to_show[["Q","Equip","Anota?","Jugadora","Acció","Seg."]],
             use_container_width=True, hide_index=True)
 
         # Gràfic per equip
@@ -1353,19 +1060,6 @@ with t4:
             if st.button("🗑 Eliminar",key="btn_del"):
                 delete_partit_db(del_id); st.success("Eliminat."); st.rerun()
 
-        # Botó per descarregar Excel de temporada
-        st.markdown(sec("Exporta la temporada a Excel"), unsafe_allow_html=True)
-        st.caption("Excel formatat amb 4 pestanyes: Temporada · Jugadores · Evolució per Partit · Eficiència de Tir")
-        if st.button("⬇ Descarregar Excel de temporada", key="btn_excel"):
-            excel_data = genera_excel_temporada()
-            st.download_button(
-                label="📥 Clic per descarregar",
-                data=excel_data,
-                file_name=f"miki_analitica_temporada_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="dl_excel"
-            )
-
         if len(df_hist)>1:
             st.markdown(sec("Evolució de resultats"), unsafe_allow_html=True)
             rows_comp=[]
@@ -1411,48 +1105,8 @@ with t5:
         if "minuts" in ranking.columns:
             ranking["Min/p"] = (ranking.get("minuts",0) / ranking["Partits"]).round(1)
             cols_rank = ["Jugadora","Equip","Partits","Punts","Pts/p","C2","C3","TL","Faltes","Min/p","Impacte","Imp/p"]
-        # Afegir eficiència de tir al rànquing
-        if "minuts" in ranking.columns:
-            ranking["Ef2%"] = (ranking.get("C2",0) /
-                (ranking.get("C2",0) + df_sj.groupby(["jugador","equip_nom"])["cistelles_2"].sum().reset_index()["cistelles_2"] * 0 + 1)
-            ).round(0)
-
         st.dataframe(df_rk[cols_rank],
             use_container_width=True,hide_index=True)
-
-        # Tirs ficats/tirats per tipus
-        st.markdown(sec("Eficiència de tir — ficats/tirats"), unsafe_allow_html=True)
-        st.caption("Exemple: 12/17 vol dir 12 cistelles de 17 intents.")
-
-        df_sz_rank = load_shots_zones_db()
-        if not df_sz_rank.empty:
-            # Agrega per jugadora tots els partits
-            df_sz_agg = df_sz_rank[df_sz_rank["jugador"]!="__equip__"].groupby(["jugador","equip_nom"]).agg(
-                v1m=("val1_made","sum"), v1x=("val1_miss","sum"),
-                v2m=("val2_made","sum"), v2x=("val2_miss","sum"),
-                v3m=("val3_made","sum"), v3x=("val3_miss","sum"),
-            ).reset_index()
-
-            def fmt_ratio(made, miss):
-                total = made + miss
-                ef = round(made/total*100) if total > 0 else 0
-                color = "#16a34a" if ef >= 55 else ("#d97706" if ef >= 35 else "#dc2626")
-                return f"{made}/{total} ({ef}%)", color
-
-            # Filtra per equip
-            eq_tir = st.selectbox("Equip", ["Tots"] + sorted(df_sz_agg["equip_nom"].unique().tolist()), key="eq_tir_rank")
-            df_sz_show = df_sz_agg if eq_tir == "Tots" else df_sz_agg[df_sz_agg["equip_nom"]==eq_tir]
-            df_sz_show = df_sz_show.copy()
-            df_sz_show["TL (1pt)"]  = df_sz_show.apply(lambda r: f"{r.v1m}/{r.v1m+r.v1x} ({round(r.v1m/(r.v1m+r.v1x)*100) if (r.v1m+r.v1x)>0 else 0}%)", axis=1)
-            df_sz_show["2pts"]      = df_sz_show.apply(lambda r: f"{r.v2m}/{r.v2m+r.v2x} ({round(r.v2m/(r.v2m+r.v2x)*100) if (r.v2m+r.v2x)>0 else 0}%)", axis=1)
-            df_sz_show["3pts"]      = df_sz_show.apply(lambda r: f"{r.v3m}/{r.v3m+r.v3x} ({round(r.v3m/(r.v3m+r.v3x)*100) if (r.v3m+r.v3x)>0 else 0}%)", axis=1)
-            df_sz_show["Total"]     = df_sz_show.apply(lambda r: f"{r.v1m+r.v2m+r.v3m}/{r.v1m+r.v1x+r.v2m+r.v2x+r.v3m+r.v3x} ({round((r.v1m+r.v2m+r.v3m)/(r.v1m+r.v1x+r.v2m+r.v2x+r.v3m+r.v3x)*100) if (r.v1m+r.v1x+r.v2m+r.v2x+r.v3m+r.v3x)>0 else 0}%)", axis=1)
-            df_sz_show = df_sz_show.sort_values("v2m", ascending=False)
-            st.dataframe(df_sz_show[["jugador","equip_nom","TL (1pt)","2pts","3pts","Total"]].rename(
-                columns={"jugador":"Jugadora","equip_nom":"Equip"}),
-                use_container_width=True, hide_index=True)
-        else:
-            st.info("Consulta més partits per veure les estadístiques de tir.")
 
         top5=df_rk.head(5)
         if not top5.empty:
@@ -1515,91 +1169,6 @@ with t5:
                         columns={"punts":"Pts","cistelles_2":"C2","cistelles_3":"C3","tirs_lliures":"TL",
                                  "faltes":"Faltes","impacte":"Impacte","pts_per_min":"Pts/min"}),
                         use_container_width=True,hide_index=True)
-
-        # ── Rendiment per bloc de minuts ────────────────────────────────────────
-        st.markdown(sec("Rendiment per bloc de minuts — primers vs últims"), unsafe_allow_html=True)
-        st.caption("Compara si la jugadora anota més al principi o al final de cada bloc de minuts que juga.")
-
-        BLOC_MINS = 3  # minuts a considerar com 'principi' i 'final' del bloc
-
-        jug_bloc = st.selectbox("Jugadora", tots_jugs_hist, key="jug_bloc")
-        if jug_bloc:
-            # Agafem totes les jugades d'aquesta jugadora de tots els partits
-            con_bloc = sqlite3.connect(DB_PATH)
-            df_bloc = pd.read_sql(
-                "SELECT * FROM jugades WHERE jugador=? ORDER BY match_id, num",
-                con_bloc, params=(jug_bloc,))
-            con_bloc.close()
-
-            if df_bloc.empty:
-                st.info("Sense dades de play-by-play per a aquesta jugadora.")
-            else:
-                # Per cada partit, identifica blocs de joc continus
-                bloc_rows = []
-                for mid, df_mid in df_bloc.groupby("match_id"):
-                    df_mid = df_mid.sort_values("min_num")
-                    # Detecta ruptures de bloc (>2 min sense acció = fora de pista)
-                    df_mid["gap"] = df_mid["min_num"].diff().fillna(0)
-                    df_mid["bloc_id"] = (df_mid["gap"] > 2).cumsum()
-
-                    for bloc_id, df_b in df_mid.groupby("bloc_id"):
-                        if len(df_b) < 2: continue
-                        min_inici = df_b["min_num"].min()
-                        min_fi    = df_b["min_num"].max()
-                        durada    = min_fi - min_inici
-                        if durada < BLOC_MINS * 2: continue  # bloc massa curt
-
-                        # Primers N minuts del bloc
-                        df_primers = df_b[df_b["min_num"] <= min_inici + BLOC_MINS]
-                        pts_primers = int(df_primers["punts"].sum())
-
-                        # Últims N minuts del bloc
-                        df_ultims = df_b[df_b["min_num"] >= min_fi - BLOC_MINS]
-                        pts_ultims = int(df_ultims["punts"].sum())
-
-                        # Etiqueta del partit
-                        df_pr_b = load_partits_db()
-                        row_p = df_pr_b[df_pr_b["match_id"]==mid]
-                        lbl = f"{row_p.iloc[0]['nom_a']} vs {row_p.iloc[0]['nom_b']}" if not row_p.empty else mid[:8]
-
-                        bloc_rows.append({
-                            "Partit": lbl,
-                            "Bloc": f"Bloc {int(bloc_id)+1}",
-                            "Durada (min)": round(durada, 1),
-                            f"Pts primers {BLOC_MINS} min": pts_primers,
-                            f"Pts últims {BLOC_MINS} min": pts_ultims,
-                            "Tendència": "📈 Millora" if pts_ultims > pts_primers
-                                         else ("📉 Baixa" if pts_ultims < pts_primers
-                                               else "➡️ Estable")
-                        })
-
-                if bloc_rows:
-                    df_blocs = pd.DataFrame(bloc_rows)
-                    st.dataframe(df_blocs, use_container_width=True, hide_index=True)
-
-                    # Resum global
-                    col_b1, col_b2, col_b3 = st.columns(3)
-                    mit_p = df_blocs[f"Pts primers {BLOC_MINS} min"].mean()
-                    mit_u = df_blocs[f"Pts últims {BLOC_MINS} min"].mean()
-                    tendencia = "📈 Millora al final" if mit_u > mit_p else ("📉 Baixa al final" if mit_u < mit_p else "➡️ Estable")
-                    with col_b1: st.markdown(card(f"Pts/bloc inici",f"{mit_p:.1f}","mitjana","#185FA5"),unsafe_allow_html=True)
-                    with col_b2: st.markdown(card(f"Pts/bloc final",f"{mit_u:.1f}","mitjana","#185FA5"),unsafe_allow_html=True)
-                    with col_b3: st.markdown(card("Tendència global",tendencia,"","#374151"),unsafe_allow_html=True)
-
-                    fig_bloc = go.Figure()
-                    fig_bloc.add_trace(go.Bar(name=f"Primers {BLOC_MINS} min",
-                        x=df_blocs["Partit"]+" "+df_blocs["Bloc"],
-                        y=df_blocs[f"Pts primers {BLOC_MINS} min"],
-                        marker_color=COLOR_A, opacity=0.8))
-                    fig_bloc.add_trace(go.Bar(name=f"Últims {BLOC_MINS} min",
-                        x=df_blocs["Partit"]+" "+df_blocs["Bloc"],
-                        y=df_blocs[f"Pts últims {BLOC_MINS} min"],
-                        marker_color="#16a34a", opacity=0.8))
-                    fig_bloc.update_layout(barmode="group")
-                    fig_bloc.update_xaxes(tickangle=-30)
-                    st.plotly_chart(chart_style(fig_bloc,260,f"{jug_bloc} — primers vs últims minuts del bloc"),use_container_width=True)
-                else:
-                    st.info(f"No hi ha blocs de més de {BLOC_MINS*2} minuts per a aquesta jugadora.")
 
         st.markdown(sec("Comparativa entre jugadores"), unsafe_allow_html=True)
         col_j,col_m=st.columns([2,1])
@@ -1848,140 +1417,3 @@ with t6:
                             st.dataframe(df_det,use_container_width=True,hide_index=True)
             else:
                 st.info("Consulta més partits per veure l'evolució per jugadora.")
-
-# ══════════════════════════════════════════════════
-# TAB 7: ANÀLISI DE VÍDEO
-# ══════════════════════════════════════════════════
-with t7:
-    st.markdown(sec("🎬 Anàlisi de vídeo — carrega els CSV del notebook"), unsafe_allow_html=True)
-    st.caption("Carrega els fitxers generats pel notebook de Google Colab per veure les dades del vídeo.")
-
-    col_u1, col_u2, col_u3 = st.columns(3)
-    with col_u1:
-        f_accions  = st.file_uploader("CSV d'accions", type="csv", key="up_accions",
-                                       help="dades_partit_accions.csv")
-    with col_u2:
-        f_tracking = st.file_uploader("CSV de tracking", type="csv", key="up_tracking",
-                                       help="dades_partit_tracking.csv")
-    with col_u3:
-        f_resum    = st.file_uploader("CSV de resum", type="csv", key="up_resum",
-                                       help="dades_partit_resum.csv")
-
-    if f_accions is None:
-        st.info("Carrega almenys el CSV d'accions per començar.")
-    else:
-        df_vid_acc = pd.read_csv(f_accions)
-        df_vid_tra = pd.read_csv(f_tracking) if f_tracking else pd.DataFrame()
-        df_vid_res = pd.read_csv(f_resum)    if f_resum    else pd.DataFrame()
-
-        st.success(f"✅ {len(df_vid_acc)} accions carregades")
-
-        # ── Mètriques generals ──────────────────────────────────────────
-        st.markdown(sec("Resum del partit"), unsafe_allow_html=True)
-        equips_vid = [e for e in df_vid_acc["equip"].unique() if e and e != "?"]
-
-        cols_m = st.columns(len(equips_vid) * 3 + 1)
-        idx = 0
-        cols_m[idx].markdown(card("Accions totals", len(df_vid_acc), "", "#374151"), unsafe_allow_html=True)
-        idx += 1
-        for eq in equips_vid:
-            df_e = df_vid_acc[df_vid_acc["equip"] == eq]
-            color_e = COLOR_A if idx <= 3 else COLOR_B
-            cist  = int((df_e["tipus"] == "cistella").sum())
-            falts = int((df_e["tipus"] == "falta").sum())
-            tfall = int((df_e["tipus"] == "tir_fallat").sum())
-            cols_m[idx].markdown(card(f"Cistelles {eq}", cist, "", color_e), unsafe_allow_html=True); idx+=1
-            cols_m[idx].markdown(card(f"Faltes {eq}", falts, "", color_e), unsafe_allow_html=True); idx+=1
-            cols_m[idx].markdown(card(f"Tirs fallats {eq}", tfall, "", color_e), unsafe_allow_html=True); idx+=1
-
-        # ── Gràfic accions per equip ────────────────────────────────────
-        st.markdown(sec("Accions per equip i tipus"), unsafe_allow_html=True)
-        df_grp = df_vid_acc[df_vid_acc["equip"].isin(equips_vid)].groupby(["equip","tipus"]).size().reset_index(name="n")
-        if not df_grp.empty:
-            pal = {equips_vid[0]: COLOR_A, equips_vid[1]: COLOR_B} if len(equips_vid) >= 2 else {equips_vid[0]: COLOR_A}
-            fig_a = px.bar(df_grp, x="tipus", y="n", color="equip", barmode="group",
-                color_discrete_map=pal,
-                labels={"tipus":"Tipus","n":"Accions","equip":"Equip"})
-            fig_a.update_layout(xaxis_title="", paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
-                font=dict(color="#374151",family="Inter"),
-                legend=dict(bgcolor="#ffffff",bordercolor="#e2e4e8",borderwidth=1,title=""),
-                margin=dict(l=0,r=0,t=30,b=0),height=280)
-            st.plotly_chart(fig_a, use_container_width=True)
-
-        # ── Accions per quart ───────────────────────────────────────────
-        st.markdown(sec("Accions per quart"), unsafe_allow_html=True)
-        if "quart" in df_vid_acc.columns:
-            df_q = df_vid_acc[df_vid_acc["equip"].isin(equips_vid)].groupby(["quart","equip","tipus"]).size().reset_index(name="n")
-            cistelles_q = df_q[df_q["tipus"]=="cistella"]
-            if not cistelles_q.empty:
-                pal = {equips_vid[0]: COLOR_A, equips_vid[1]: COLOR_B} if len(equips_vid) >= 2 else {equips_vid[0]: COLOR_A}
-                fig_q = px.bar(cistelles_q, x="quart", y="n", color="equip", barmode="group",
-                    color_discrete_map=pal,
-                    labels={"quart":"Quart","n":"Cistelles","equip":"Equip"})
-                fig_q.update_layout(paper_bgcolor="#ffffff",plot_bgcolor="#ffffff",
-                    font=dict(color="#374151",family="Inter"),
-                    legend=dict(bgcolor="#ffffff",bordercolor="#e2e4e8",borderwidth=1,title=""),
-                    margin=dict(l=0,r=0,t=30,b=0),height=260)
-                st.plotly_chart(fig_q, use_container_width=True)
-
-        # ── Evolució del marcador (des de les accions del vídeo) ────────
-        st.markdown(sec("Evolució del marcador"), unsafe_allow_html=True)
-        if "marcador" in df_vid_acc.columns:
-            df_marc = df_vid_acc[df_vid_acc["marcador"].str.contains("-", na=False)].copy()
-            if not df_marc.empty:
-                try:
-                    df_marc["scoreA"] = df_marc["marcador"].str.split("-").str[0].astype(int)
-                    df_marc["scoreB"] = df_marc["marcador"].str.split("-").str[1].astype(int)
-                    df_marc = df_marc.sort_values("temps_joc")
-                    fig_m = go.Figure()
-                    fig_m.add_trace(go.Scatter(x=df_marc["temps_joc"]/60, y=df_marc["scoreA"],
-                        name=equips_vid[0] if equips_vid else "Local",
-                        line=dict(color=COLOR_A,width=2.5),mode="lines"))
-                    fig_m.add_trace(go.Scatter(x=df_marc["temps_joc"]/60, y=df_marc["scoreB"],
-                        name=equips_vid[1] if len(equips_vid)>1 else "Visitant",
-                        line=dict(color=COLOR_B,width=2.5),mode="lines"))
-                    fig_m.update_layout(paper_bgcolor="#ffffff",plot_bgcolor="#ffffff",
-                        font=dict(color="#374151",family="Inter"),
-                        xaxis=dict(title="Minut de joc",showgrid=False,color="#9ca3af"),
-                        yaxis=dict(title="Punts",showgrid=True,gridcolor="#f3f4f6",color="#9ca3af"),
-                        legend=dict(bgcolor="#ffffff",bordercolor="#e2e4e8",borderwidth=1,title="",
-                                    orientation="h",yanchor="bottom",y=1.02,xanchor="right",x=1),
-                        margin=dict(l=0,r=0,t=40,b=0),height=280)
-                    st.plotly_chart(fig_m, use_container_width=True)
-                except:
-                    st.info("No s'ha pogut generar l'evolució del marcador.")
-
-        # ── Taula d'accions ─────────────────────────────────────────────
-        st.markdown(sec("Totes les accions"), unsafe_allow_html=True)
-        col_eq_f, col_tip_f = st.columns(2)
-        with col_eq_f:
-            eq_filter = st.selectbox("Equip", ["Tots"] + equips_vid, key="vid_eq_f")
-        with col_tip_f:
-            tip_filter = st.selectbox("Tipus", ["Tots","cistella","tir_fallat","falta","rebot","altre"], key="vid_tip_f")
-
-        df_show = df_vid_acc.copy()
-        if eq_filter != "Tots":
-            df_show = df_show[df_show["equip"] == eq_filter]
-        if tip_filter != "Tots":
-            df_show = df_show[df_show["tipus"] == tip_filter]
-
-        st.caption(f"{len(df_show)} accions")
-        st.dataframe(df_show[["quart","jugadora","equip","accio","tipus","marcador"]].rename(
-            columns={"quart":"Q","jugadora":"Jugadora","equip":"Equip",
-                     "accio":"Acció","tipus":"Tipus","marcador":"Marc"}),
-            use_container_width=True, hide_index=True, height=350)
-
-        # ── Resum de tracking (si disponible) ───────────────────────────
-        if not df_vid_res.empty:
-            st.markdown(sec("Presència en pantalla per jugadora"), unsafe_allow_html=True)
-            st.caption("Basada en el tracking del vídeo — quant temps apareix cada ID a càmera.")
-            st.dataframe(df_vid_res.sort_values("minuts_visibles", ascending=False).rename(
-                columns={"track_id":"ID","equip":"Equip","aparicions":"Frames",
-                         "minuts_visibles":"Minuts visibles"}),
-                use_container_width=True, hide_index=True)
-
-        # ── Descàrrega combinada ────────────────────────────────────────
-        st.markdown("---")
-        csv_exp = df_vid_acc.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇ Descarregar accions CSV", csv_exp,
-            "accions_video.csv", "text/csv")
