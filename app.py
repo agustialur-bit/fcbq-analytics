@@ -1751,6 +1751,22 @@ with t4:
                 else:
                     st.info("No hi ha prou dades per calcular l'On/Off Rating.")
 
+    # ── Exporta Excel ───────────────────────────────────────────────────────
+    st.markdown(sec("Exporta a Excel"), unsafe_allow_html=True)
+    st.caption("Excel amb totes les mètriques avançades de tots els partits de la base de dades.")
+    if st.button("⬇ Descarregar Excel d'anàlisi complet", key="btn_excel_analisi"):
+        excel_data = genera_excel_analisi()
+        if excel_data:
+            st.download_button(
+                label="📥 Clic per descarregar",
+                data=excel_data,
+                file_name=f"miki_analisi_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_excel_analisi"
+            )
+        else:
+            st.info("No hi ha partits a la base de dades.")
+
 with t5:
     st.markdown(sec("Rànquing acumulat"), unsafe_allow_html=True)
     df_sj=load_stats_jugador_db()
