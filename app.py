@@ -6,7 +6,7 @@ import urllib.request
 import json, re, sqlite3, os
 from datetime import datetime
 
-st.set_page_config(page_title="Micki Analítica", page_icon="🏀", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Guillem Analítica", page_icon="🏀", layout="wide", initial_sidebar_state="expanded")
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "historic.db")
 API_BASE = "https://msstats.optimalwayconsulting.com/v1/fcbq/getJsonWithMatchMoves/{match_id}?currentSeason=true"
@@ -510,7 +510,7 @@ def get_shot_counts(df_sub):
 with st.sidebar:
     st.markdown("""<div style="display:flex;align-items:center;gap:10px;padding-bottom:14px;border-bottom:0.5px solid #e2e4e8;margin-bottom:14px">
         <div style="width:34px;height:34px;background:#E6F1FB;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px">🏀</div>
-        <div><div style="font-size:13px;font-weight:600;color:#1a1c22">Micki Analítica</div>
+        <div><div style="font-size:13px;font-weight:600;color:#1a1c22">Guillem Analítica</div>
         <div style="font-size:11px;color:#9ca3af">Analítica de Bàsquet</div></div></div>""", unsafe_allow_html=True)
 
     st.markdown('<div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#9ca3af;margin-bottom:6px">Partit</div>', unsafe_allow_html=True)
@@ -518,8 +518,8 @@ with st.sidebar:
 
     with st.expander("✏️ Noms dels equips", expanded=False):
         st.caption("Es guardaran per a futurs partits.")
-        nom_equip_1 = st.text_input("Equip local", placeholder="Ex: Micki Lakers")
-        nom_equip_2 = st.text_input("Equip visitant", placeholder="Ex: Mickinaikos")
+        nom_equip_1 = st.text_input("Equip local", placeholder="Ex: Guillem Lakers")
+        nom_equip_2 = st.text_input("Equip visitant", placeholder="Ex: Guillemnaikos")
 
     carregar = st.button("⬇ Carregar partit", use_container_width=True)
     st.markdown("---")
@@ -528,7 +528,7 @@ with st.sidebar:
     accio_cerca = st.text_input("Acció", placeholder="Cistella, falta...")
     jugador_cerca = st.text_input("Jugadora", placeholder="Nom...")
     st.markdown("---")
-    st.caption("Micki Analítica")
+    st.caption("Guillem Analítica")
 
 # ── Sessió ─────────────────────────────────────────────────────────────────────
 for k,v in [("df",None),("match_id",None),("team_names",{}),("score_a",0),("score_b",0)]:
@@ -590,7 +590,7 @@ if carregar and url_input:
 if st.session_state.df is None:
     st.markdown("""<div style="text-align:center;padding:80px 0">
         <div style="font-size:64px">🏀</div>
-        <h1 style="font-size:38px;font-weight:600;color:#1a1c22;margin:16px 0 8px">Micki Analítica</h1>
+        <h1 style="font-size:38px;font-weight:600;color:#1a1c22;margin:16px 0 8px">Guillem Analítica</h1>
         <p style="color:#6b7280;font-size:15px">Enganxa la URL o l'ID d'un partit al panell esquerre i prem Carregar.</p>
         <p style="color:#d1d5db;font-size:12px;margin-top:32px">Exemple: 69ec95d4339c3d0001f523a1</p>
     </div>""", unsafe_allow_html=True)
@@ -1774,7 +1774,7 @@ with t5:
 
     # ── Càlcul de minuts reals per jugadora des de l'API ──────────────────
     def get_intervals_jugadores(df):
-        """Retorna dict jugadora -> [(t_ini, t_fi, equip_id)] en minuts de partit."""
+        """Retorna dict jugadora -> [(t_ini, t_fi, equip_id)] en minuts absoluts de partit."""
         MINS_Q = 10
         intervals = {}
         en_pista  = {}
@@ -1783,18 +1783,35 @@ with t5:
             if not jug or str(jug) in ("","nan"): continue
             accio = str(row.get("accio",""))
             quart = int(row.get("quart",1)) if row.get("quart","") != "" else 1
-            t_min = (quart-1)*MINS_Q + float(row.get("min_num",0))
+            # min_num és el minut DINS del quart (cronòmetre enrere: 10→0)
+            # El convertim a minut absolut: inici_quart + (MINS_Q - min_dins_quart)
+            min_dins = float(row.get("min_num", 0))
+            # Si min_num ja és absolut (>10), ho detectem
+            if min_dins > MINS_Q:
+                t_min = min_dins  # ja és absolut
+            else:
+                t_min = (quart-1)*MINS_Q + (MINS_Q - min_dins)
+            # Clipa al rang vàlid
+            t_min = max(0, min(t_min, quart * MINS_Q))
             eq_id = str(row.get("idEquip",""))
             if "Entra al camp" in accio:
                 en_pista[jug] = (t_min, eq_id)
             elif "Surt del camp" in accio:
-                ini = en_pista.pop(jug, ((quart-1)*MINS_Q, eq_id))
-                intervals.setdefault(jug, []).append((ini[0], t_min, ini[1]))
+                ini_t = en_pista.pop(jug, ((quart-1)*MINS_Q, eq_id))
+                t_ini_real = ini_t[0]; eq_real = ini_t[1]
+                if t_min > t_ini_real:
+                    intervals.setdefault(jug, []).append((t_ini_real, t_min, eq_real))
             elif "Final de període" in accio:
                 fi = quart * MINS_Q
                 for j, (ti, ei) in list(en_pista.items()):
-                    intervals.setdefault(j, []).append((ti, fi, ei))
+                    if fi > ti:
+                        intervals.setdefault(j, []).append((ti, fi, ei))
                 en_pista = {}
+        # Tanca intervals que han quedat oberts
+        for j, (ti, ei) in en_pista.items():
+            fi = df["quart"].max() * MINS_Q if not df.empty else 40
+            if fi > ti:
+                intervals.setdefault(j, []).append((ti, fi, ei))
         return intervals
 
     intervals_jug = get_intervals_jugadores(df_orig)
