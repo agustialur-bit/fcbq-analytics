@@ -1,4 +1,5 @@
-streamlit
+streamlit>=1.45.0
 pandas
-plotly
-numpy
+plotly>=5.22.0
+pillow>=11.0.0
+openpyxl
