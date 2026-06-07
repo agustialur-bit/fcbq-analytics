@@ -1183,8 +1183,8 @@ def genera_excel_temporada():
     buf=io.BytesIO(); wb.save(buf); buf.seek(0)
     return buf.getvalue()
 
-t1,t2,t3,t4,t5,t6,t7,t8 = st.tabs([
-    "🏀 Partit","👤 Jugadores","⏱ Ritme","⚡ Eficiència","📈 Hist. Jugadores","🎯 Mapa de Tir","🎬 Vídeo","📚 Històric"
+t1,t2,t3,t4,t5,t6,t7,t8,t9 = st.tabs([
+    "🏀 Partit","👤 Jugadores","⏱ Ritme","⚡ Eficiència","🔄 Rotacions","📈 Hist. Jugadores","🎯 Mapa de Tir","🎬 Vídeo","📚 Històric"
 ])
 
 # ══════════════════════════════════════════════════
@@ -1595,7 +1595,7 @@ with t3:
 # ══════════════════════════════════════════════════
 # TAB 4: HISTÒRIC PARTITS
 # ══════════════════════════════════════════════════
-with t8:
+with t9:
     st.markdown(sec("Partits consultats"), unsafe_allow_html=True)
     df_hist=load_partits_db()
     if df_hist.empty:
@@ -1768,6 +1768,308 @@ with t4:
             st.info("No hi ha partits a la base de dades.")
 
 with t5:
+    # ══════════════════════════════════════════════════
+    # PESTANYA ROTACIONS
+    # ══════════════════════════════════════════════════
+
+    # ── Càlcul de minuts reals per jugadora des de l'API ──────────────────
+    def get_intervals_jugadores(df):
+        """Retorna dict jugadora -> [(t_ini, t_fi, equip_id)] en minuts de partit."""
+        MINS_Q = 10
+        intervals = {}
+        en_pista  = {}
+        for _, row in df.sort_values("num").iterrows():
+            jug = row.get("jugadora", row.get("jugador",""))
+            if not jug or str(jug) in ("","nan"): continue
+            accio = str(row.get("accio",""))
+            quart = int(row.get("quart",1)) if row.get("quart","") != "" else 1
+            t_min = (quart-1)*MINS_Q + float(row.get("min_num",0))
+            eq_id = str(row.get("idEquip",""))
+            if "Entra al camp" in accio:
+                en_pista[jug] = (t_min, eq_id)
+            elif "Surt del camp" in accio:
+                ini = en_pista.pop(jug, ((quart-1)*MINS_Q, eq_id))
+                intervals.setdefault(jug, []).append((ini[0], t_min, ini[1]))
+            elif "Final de període" in accio:
+                fi = quart * MINS_Q
+                for j, (ti, ei) in list(en_pista.items()):
+                    intervals.setdefault(j, []).append((ti, fi, ei))
+                en_pista = {}
+        return intervals
+
+    intervals_jug = get_intervals_jugadores(df_orig)
+    score_df_rot = score_df.copy() if not score_df.empty else pd.DataFrame()
+
+    # ── 1. Gràfic de quintets (Gantt de rotacions) ────────────────────────
+    st.markdown(sec("Gràfic de rotacions — qui juga cada minut"), unsafe_allow_html=True)
+    st.caption("Cada barra indica un tram de joc d'una jugadora. La línia vermella/blava és el ±parcial de l'equip.")
+
+    eq_rot = st.selectbox("Equip", [nom_a, nom_b], key="rot_eq")
+    tid_rot = teams[0] if eq_rot == nom_a else (teams[1] if len(teams)>1 else None)
+    color_rot = COLOR_A if eq_rot == nom_a else COLOR_B
+    rival_rot = teams[1] if eq_rot == nom_a else (teams[0] if teams else None)
+
+    if tid_rot and intervals_jug:
+        # Filtra jugadores de l'equip seleccionat
+        jugs_rot = {j: ivs for j,ivs in intervals_jug.items()
+                    if any(ei == tid_rot for _,_,ei in ivs)}
+
+        if not jugs_rot:
+            st.info("No s'han detectat events d'entrada/sortida per a aquest equip.")
+        else:
+            # Ordena per primer minut de joc
+            jugs_sorted = sorted(jugs_rot.items(), key=lambda x: min(i[0] for i in x[1]))
+            n_jugs = len(jugs_sorted)
+            MINS_TOTAL = max(df_orig["quart"].max() * 10 if not df_orig.empty else 40, 40)
+
+            fig_rot = go.Figure()
+
+            # Barres de rotació per jugadora
+            for yi, (jug, ivs) in enumerate(jugs_sorted):
+                for (t_ini, t_fi, ei) in ivs:
+                    if ei != tid_rot: continue
+                    fig_rot.add_trace(go.Bar(
+                        x=[t_fi - t_ini],
+                        y=[jug],
+                        base=[t_ini],
+                        orientation='h',
+                        marker_color=color_rot,
+                        marker_opacity=0.75,
+                        marker_line=dict(width=0.5, color='white'),
+                        name=jug,
+                        showlegend=False,
+                        hovertemplate=f"{jug}<br>Minut {t_ini:.1f}–{t_fi:.1f}<br>Durada: {t_fi-t_ini:.1f} min<extra></extra>"
+                    ))
+
+            # Línies de parcial de l'equip (±)
+            if not score_df_rot.empty:
+                score_df_rot["t_min"] = score_df_rot.apply(
+                    lambda r: (int(r["quart"])-1)*10 + r.get("min_num", 0)
+                    if "min_num" in r else (int(r["quart"])-1)*10, axis=1)
+
+                if "min_num" not in score_df_rot.columns:
+                    # Estima minut des del número de jugada
+                    score_df_rot["t_min"] = score_df_rot["num"] / score_df_rot["num"].max() * MINS_TOTAL
+
+                parcial_eq  = score_df_rot["scoreA"] if tid_rot == teams[0] else score_df_rot["scoreB"]
+                parcial_riv = score_df_rot["scoreB"] if tid_rot == teams[0] else score_df_rot["scoreA"]
+                diff_parcial = parcial_eq - parcial_riv
+
+                # Normalitza per mostrar com a línia sobre el gràfic
+                d_max = max(abs(diff_parcial.max()), abs(diff_parcial.min()), 1)
+
+                fig_rot.add_trace(go.Scatter(
+                    x=score_df_rot["t_min"] if "t_min" in score_df_rot else score_df_rot.index,
+                    y=diff_parcial,
+                    mode="lines",
+                    name="Parcial equip",
+                    line=dict(color="#374151", width=1.5, dash="dot"),
+                    yaxis="y2",
+                    hovertemplate="Minut %{x:.1f}<br>Parcial: %{y:+d}<extra></extra>"
+                ))
+
+            # Línies de quart
+            for q in range(1, 5):
+                fig_rot.add_vline(x=q*10, line_dash="dot", line_color="#e2e4e8",
+                    annotation_text=f"Fi Q{q}", annotation_font_size=9,
+                    annotation_font_color="#9ca3af")
+
+            fig_rot.update_layout(
+                barmode="overlay",
+                height=max(280, n_jugs * 36 + 80),
+                paper_bgcolor="#ffffff", plot_bgcolor="#f9fafb",
+                font=dict(color="#374151", family="Inter"),
+                xaxis=dict(title="Minut de joc", range=[0, MINS_TOTAL],
+                           showgrid=True, gridcolor="#f3f4f6", color="#9ca3af"),
+                yaxis=dict(showgrid=False, color="#374151"),
+                yaxis2=dict(overlaying="y", side="right", title="Parcial ±",
+                            showgrid=False, zeroline=True, zerolinecolor="#e2e4e8",
+                            color="#9ca3af"),
+                margin=dict(l=0,r=60,t=20,b=40),
+                legend=dict(bgcolor="#ffffff",bordercolor="#e2e4e8",borderwidth=1)
+            )
+            st.plotly_chart(fig_rot, use_container_width=True)
+
+    # ── 2. +/- per minuts jugats ──────────────────────────────────────────
+    st.markdown(sec("+/- per minut jugat"), unsafe_allow_html=True)
+    st.caption("Parcial de l'equip per minut jugat per cada jugadora. Valors positius = l'equip guanya mentre juga.")
+
+    if tid_rot and not score_df_rot.empty and intervals_jug:
+        pm_rows = []
+        for jug, ivs in intervals_jug.items():
+            ivs_eq = [(ti,tf) for ti,tf,ei in ivs if ei==tid_rot]
+            if not ivs_eq: continue
+            total_min = sum(tf-ti for ti,tf in ivs_eq)
+            if total_min < 0.5: continue
+
+            # Calcula el parcial durant els intervals d'aquesta jugadora
+            parcial_favor = 0; parcial_contra = 0
+            for t_ini, t_fi in ivs_eq:
+                mask = (score_df_rot.index >= 0)
+                if "t_min" in score_df_rot.columns:
+                    df_interval = score_df_rot[
+                        (score_df_rot["t_min"] >= t_ini) &
+                        (score_df_rot["t_min"] <= t_fi)]
+                else:
+                    n_ini = int(t_ini / MINS_TOTAL * len(score_df_rot))
+                    n_fi  = int(t_fi  / MINS_TOTAL * len(score_df_rot))
+                    df_interval = score_df_rot.iloc[n_ini:n_fi]
+
+                if not df_interval.empty:
+                    if tid_rot == teams[0]:
+                        parcial_favor  += df_interval["scoreA"].iloc[-1] - df_interval["scoreA"].iloc[0]
+                        parcial_contra += df_interval["scoreB"].iloc[-1] - df_interval["scoreB"].iloc[0]
+                    else:
+                        parcial_favor  += df_interval["scoreB"].iloc[-1] - df_interval["scoreB"].iloc[0]
+                        parcial_contra += df_interval["scoreA"].iloc[-1] - df_interval["scoreA"].iloc[0]
+
+            pm = parcial_favor - parcial_contra
+            pm_per_min = round(pm / total_min, 2) if total_min > 0 else 0
+            pm_rows.append({
+                "Jugadora": jug,
+                "Minuts": round(total_min, 1),
+                "+/-": pm,
+                "+/- per min": pm_per_min
+            })
+
+        if pm_rows:
+            df_pm = pd.DataFrame(pm_rows).sort_values("+/- per min", ascending=False)
+
+            # Gràfic scatter: X = minuts, Y = +/-
+            fig_pm = go.Figure()
+            colors_pm = ["#16a34a" if v >= 0 else "#dc2626" for v in df_pm["+/- per min"]]
+            fig_pm.add_trace(go.Scatter(
+                x=df_pm["Minuts"],
+                y=df_pm["+/- per min"],
+                mode="markers+text",
+                marker=dict(size=12, color=colors_pm,
+                            line=dict(width=1.5, color="white")),
+                text=df_pm["Jugadora"].apply(lambda n: n.split()[-1] if " " in n else n),
+                textposition="top center",
+                textfont=dict(size=9),
+                hovertemplate="%{text}<br>Minuts: %{x:.1f}<br>+/- per min: %{y:+.2f}<extra></extra>"
+            ))
+            fig_pm.add_hline(y=0, line_dash="solid", line_color="#e2e4e8")
+            fig_pm.update_layout(
+                xaxis=dict(title="Minuts jugats", showgrid=True, gridcolor="#f3f4f6", color="#9ca3af"),
+                yaxis=dict(title="+/- per minut", showgrid=True, gridcolor="#f3f4f6", color="#9ca3af",
+                           zeroline=True, zerolinecolor="#e2e4e8"),
+                paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+                font=dict(color="#374151", family="Inter"),
+                margin=dict(l=0,r=0,t=20,b=0), height=320)
+            st.plotly_chart(fig_pm, use_container_width=True)
+            st.dataframe(df_pm, use_container_width=True, hide_index=True)
+
+    # ── 3. +/- per tram de minuts jugats ─────────────────────────────────
+    st.markdown(sec("+/- per tram de joc"), unsafe_allow_html=True)
+    st.caption("Per cada tram que una jugadora juga seguit, veus el parcial de l'equip minut a minut.")
+
+    if tid_rot and not score_df_rot.empty and intervals_jug:
+        jugs_tram = [j for j,ivs in intervals_jug.items()
+                     if any(ei==tid_rot for _,_,ei in ivs)]
+        jug_tram = st.selectbox("Jugadora", sorted(jugs_tram), key="jug_tram")
+
+        if jug_tram and jug_tram in intervals_jug:
+            ivs_jug = [(ti,tf) for ti,tf,ei in intervals_jug[jug_tram] if ei==tid_rot]
+
+            fig_tram = go.Figure()
+            colors_tram = [color_rot, "#16a34a", "#d97706", "#6366f1", "#ec4899"]
+
+            for bi, (t_ini, t_fi) in enumerate(ivs_jug):
+                if "t_min" in score_df_rot.columns:
+                    df_tr = score_df_rot[
+                        (score_df_rot["t_min"] >= t_ini) &
+                        (score_df_rot["t_min"] <= t_fi)].copy()
+                    x_vals = df_tr["t_min"] - t_ini
+                else:
+                    n_ini = int(t_ini / MINS_TOTAL * len(score_df_rot))
+                    n_fi  = int(t_fi  / MINS_TOTAL * len(score_df_rot))
+                    df_tr = score_df_rot.iloc[n_ini:n_fi].copy()
+                    x_vals = pd.Series(range(len(df_tr))) * (t_fi-t_ini) / max(len(df_tr),1)
+
+                if df_tr.empty: continue
+
+                if tid_rot == teams[0]:
+                    parcial_tr = df_tr["scoreA"] - df_tr["scoreA"].iloc[0] -                                  (df_tr["scoreB"] - df_tr["scoreB"].iloc[0])
+                else:
+                    parcial_tr = df_tr["scoreB"] - df_tr["scoreB"].iloc[0] -                                  (df_tr["scoreA"] - df_tr["scoreA"].iloc[0])
+
+                color_bi = colors_tram[bi % len(colors_tram)]
+                fig_tram.add_trace(go.Scatter(
+                    x=x_vals,
+                    y=parcial_tr,
+                    mode="lines+markers",
+                    name=f"Tram {bi+1} (min {t_ini:.0f}–{t_fi:.0f})",
+                    line=dict(color=color_bi, width=2),
+                    marker=dict(size=6, color=color_bi),
+                    hovertemplate="Min %{x:.1f} del tram<br>Parcial: %{y:+d}<extra></extra>"
+                ))
+
+            fig_tram.add_hline(y=0, line_dash="solid", line_color="#e2e4e8")
+            fig_tram.update_layout(
+                xaxis=dict(title="Minuts dins del tram", showgrid=True,
+                           gridcolor="#f3f4f6", color="#9ca3af"),
+                yaxis=dict(title="Parcial ±", showgrid=True,
+                           gridcolor="#f3f4f6", color="#9ca3af",
+                           zeroline=True, zerolinecolor="#e2e4e8"),
+                paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+                font=dict(color="#374151", family="Inter"),
+                legend=dict(bgcolor="#ffffff", bordercolor="#e2e4e8", borderwidth=1,
+                            orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                margin=dict(l=0,r=0,t=40,b=0), height=300)
+            st.plotly_chart(fig_tram, use_container_width=True)
+
+    # ── 4. +/- per parelles de jugadores ─────────────────────────────────
+    st.markdown(sec("+/- per parella de jugadores"), unsafe_allow_html=True)
+    st.caption("Parcial de l'equip durant els minuts que les dues jugadores seleccionades han jugat juntes.")
+
+    if tid_rot and intervals_jug:
+        jugs_par = [j for j,ivs in intervals_jug.items()
+                    if any(ei==tid_rot for _,_,ei in ivs)]
+        col_p1, col_p2 = st.columns(2)
+        with col_p1: jug_p1 = st.selectbox("Jugadora 1", sorted(jugs_par), key="par_j1")
+        with col_p2: jug_p2 = st.selectbox("Jugadora 2",
+            [j for j in sorted(jugs_par) if j != jug_p1], key="par_j2")
+
+        if jug_p1 and jug_p2:
+            ivs1 = [(ti,tf) for ti,tf,ei in intervals_jug.get(jug_p1,[]) if ei==tid_rot]
+            ivs2 = [(ti,tf) for ti,tf,ei in intervals_jug.get(jug_p2,[]) if ei==tid_rot]
+
+            # Troba intervals on les dues juguen juntes
+            juntes = []
+            for a1,a2 in ivs1:
+                for b1,b2 in ivs2:
+                    ini = max(a1,b1); fi = min(a2,b2)
+                    if fi > ini: juntes.append((ini,fi))
+
+            if not juntes:
+                st.info(f"{jug_p1} i {jug_p2} no han jugat juntes en aquest partit.")
+            else:
+                total_min_j = sum(f-i for i,f in juntes)
+                parcial_j = 0
+                for t_ini,t_fi in juntes:
+                    if "t_min" in score_df_rot.columns:
+                        df_j = score_df_rot[(score_df_rot["t_min"]>=t_ini)&(score_df_rot["t_min"]<=t_fi)]
+                    else:
+                        n1=int(t_ini/MINS_TOTAL*len(score_df_rot))
+                        n2=int(t_fi/MINS_TOTAL*len(score_df_rot))
+                        df_j = score_df_rot.iloc[n1:n2]
+                    if not df_j.empty:
+                        if tid_rot == teams[0]:
+                            parcial_j += (df_j["scoreA"].iloc[-1]-df_j["scoreA"].iloc[0]) -                                          (df_j["scoreB"].iloc[-1]-df_j["scoreB"].iloc[0])
+                        else:
+                            parcial_j += (df_j["scoreB"].iloc[-1]-df_j["scoreB"].iloc[0]) -                                          (df_j["scoreA"].iloc[-1]-df_j["scoreA"].iloc[0])
+
+                c1,c2,c3 = st.columns(3)
+                col_p = "#16a34a" if parcial_j >= 0 else "#dc2626"
+                with c1: st.markdown(card("Minuts juntes", round(total_min_j,1), "min", color_rot), unsafe_allow_html=True)
+                with c2: st.markdown(card("Parcial", f"{'+'if parcial_j>=0 else ''}{parcial_j}", "", col_p), unsafe_allow_html=True)
+                with c3: st.markdown(card("+/- per min",
+                    f"{'+'if parcial_j>=0 else ''}{round(parcial_j/total_min_j,2) if total_min_j>0 else 0}",
+                    "", col_p), unsafe_allow_html=True)
+                st.caption(f"Trams juntes: {', '.join([f'{i:.0f}–{f:.0f} min' for i,f in juntes])}")
+
+with t6:
     st.markdown(sec("Rànquing acumulat"), unsafe_allow_html=True)
     df_sj=load_stats_jugador_db()
     if df_sj.empty:
@@ -2108,7 +2410,7 @@ with t5:
 # ══════════════════════════════════════════════════
 # TAB 6: MAPA DE TIR
 # ══════════════════════════════════════════════════
-with t6:
+with t7:
     st.markdown(sec("Mapa de tir — partit actual"), unsafe_allow_html=True)
     st.caption("Mida del cercle = volum · Color = eficiència: verd >55%, taronja 35–55%, vermell <35%")
 
@@ -2239,7 +2541,7 @@ with t6:
 # ══════════════════════════════════════════════════
 # TAB 7: ANÀLISI DE VÍDEO
 # ══════════════════════════════════════════════════
-with t7:
+with t8:
     st.markdown(sec("🎬 Anàlisi de vídeo — carrega els CSV del notebook"), unsafe_allow_html=True)
     st.caption("Carrega els fitxers generats pel notebook de Google Colab per veure les dades del vídeo.")
 
