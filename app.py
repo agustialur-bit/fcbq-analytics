@@ -722,6 +722,16 @@ def calc_metriques_partit(df_jug, match_id, nom_equip, nom_rival):
         "2pts conv/int": f"{c2_conv}/{c2_int}",
         "3pts conv/int": f"{c3_conv}/{c3_int}",
         "TL conv/int":   f"{tl_conv}/{tl_int}",
+        # Detall complet per cistella
+        "1pt conv":     tl_conv,
+        "1pt int":      tl_int,
+        "1pt%":         round(tl_conv / tl_int * 100, 1) if tl_int > 0 else 0,
+        "2pts conv":    c2_conv,
+        "2pts int":     c2_int,
+        "2pts% ef":     round(c2_conv / c2_int * 100, 1) if c2_int > 0 else 0,
+        "3pts conv":    c3_conv,
+        "3pts int":     c3_int,
+        "3pts% ef":     round(c3_conv / c3_int * 100, 1) if c3_int > 0 else 0,
     }
 
 def genera_excel_analisi():
@@ -759,13 +769,13 @@ def genera_excel_analisi():
     ws1.sheet_view.showGridLines = False
     ws1.column_dimensions['A'].width = 2
 
-    ws1.merge_cells('B1:X1')
+    ws1.merge_cells('B1:Z1')
     c=ws1['B1']; c.value='🏀  MIKI ANALÍTICA — ANÀLISI DE PARTITS'
     c.font=Font(name='Arial',bold=True,color=BLANC,size=14)
     c.fill=fons(BLAU_FOSC); c.alignment=Alignment(horizontal='center',vertical='center')
     ws1.row_dimensions[1].height=36
 
-    ws1.merge_cells('B2:X2')
+    ws1.merge_cells('B2:Z2')
     c=ws1['B2']; c.value=f"Generat: {datetime.now().strftime('%d/%m/%Y %H:%M')}  ·  {len(df_p)} partits"
     c.font=Font(name='Arial',color=BLANC,size=10); c.fill=fons(BLAU_MIG)
     c.alignment=Alignment(horizontal='center',vertical='center')
@@ -794,7 +804,9 @@ def genera_excel_analisi():
           ('Poss.',9),('Pts/Poss',10),('Off Rtg',9),
           ('TS%',8),('TC%',8),('2pts%',8),('3pts%',8),('TL%',8),
           ('%Pts 2',9),('%Pts 3',9),('%Pts TL',9),
-          ('2 c/i',9),('3 c/i',9),('TL c/i',9)]
+          ('1pt conv',9),('1pt int',9),('1pt%',8),
+          ('2pts conv',9),('2pts int',9),('2pts%',8),
+          ('3pts conv',9),('3pts int',9),('3pts%',8)]
     for ci,(cap,w) in enumerate(caps,2):
         fc(ws1,row,ci,cap,bold=True,bg=BLAU_MIG,fg=BLANC,size=9)
         ws1.column_dimensions[get_column_letter(ci)].width=w
@@ -829,7 +841,9 @@ def genera_excel_analisi():
             r['Possessions'], r['Pts/Poss'], r['Off Rtg'],
             r['TS%'], r['TC%'], r['2pts%'], r['3pts%'], r['TL%'],
             r['%Pts 2pts'], r['%Pts 3pts'], r['%Pts TL'],
-            r['2pts conv/int'], r['3pts conv/int'], r['TL conv/int']
+            r['1pt conv'], r['1pt int'], r['1pt%'],
+            r['2pts conv'], r['2pts int'], r['2pts% ef'],
+            r['3pts conv'], r['3pts int'], r['3pts% ef'],
         ]
         num_fmts = [None,None,None,None,None,
                     '0.0','0.000','0.0',
