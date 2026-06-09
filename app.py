@@ -1078,6 +1078,15 @@ def genera_excel_analisi():
             fc(ws2,row2,12,int(r['tl']),bg=bg)
             fc(ws2,row2,13,int(r['f']),bg=bg)
             fc(ws2,row2,14,iv,bold=True,bg=bg,fg=ic)
+            # Usage% com a número (0.75 = 75%) per poder calcular mitjanes a Excel
+            usage_num = round(r.get('usage',0)/100, 4) if r.get('usage',0) > 0 else None
+            uc2 = '0F6E56' if (usage_num or 0)>=0.25 else ('854F0B' if (usage_num or 0)>=0.15 else '374151')
+            c_us = ws2.cell(row=row2, column=15, value=usage_num)
+            c_us.font = Font(name='Arial', bold=True, color=uc2, size=10)
+            c_us.fill = fons(bg)
+            c_us.alignment = Alignment(horizontal='center', vertical='center')
+            c_us.border = vora()
+            c_us.number_format = '0%'
             ws2.row_dimensions[row2].height=18; row2+=1
 
     # ── PESTANYA 3: EFICIÈNCIA DE TIR ─────────────────────────────────
