@@ -1158,6 +1158,7 @@ def calc_pm_combinacions(df_orig, mode="quintets"):
     return rows
 
 
+def calc_possessions(df_equip):
     """Calcula les possessions estimades d'un equip."""
     tc_int = int(df_equip["accio"].str.contains(
         "Cistella de 2|Cistella de 3|Intent fallat de 2|Intent fallat de 3|"
@@ -2900,13 +2901,7 @@ with t4:
             df_onoff2["equip_nom"] = df_onoff2["idEquip"].map(tn_oo2).fillna("?")
             df_onoff2["jugador"] = df_onoff2.get("jugadora", df_onoff2.get("jugador",""))
             st.markdown("**Eficiències d'equip**")
-            try:
-                ef2 = calc_eficiencies(df_onoff2, teams_oo2, tn_oo2)
-            except Exception as e_ef:
-                import traceback
-                st.error(f"Error a calc_eficiencies: {e_ef}")
-                st.code(traceback.format_exc())
-                st.stop()
+            ef2 = calc_eficiencies(df_onoff2, teams_oo2, tn_oo2)
             col_ea2, col_eb2 = st.columns(2)
             for col_e2, tid2 in [(col_ea2, teams_oo2[0] if teams_oo2 else None),
                                   (col_eb2, teams_oo2[1] if len(teams_oo2)>1 else None)]:
