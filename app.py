@@ -4068,12 +4068,11 @@ with t7:
         con_t.close()
         return df_t
 
-    def dibuixa_mapa_tir_fcbq(tirs_list, titol="Mapa de tir", equip_side="local", W=340, H=400):
+    def dibuixa_mapa_tir_fcbq(tirs_list, titol="Mapa de tir", W=340, H=400):
         """Mig camp vertical. Cistella dalt al centre.
-        El web FCBQ mostra la pista horitzontalment:
-          LOCAL: cistella a x=50% (dreta), y=50% (centre vertical)
-          VISITANT: cistella a x=50% (esquerra), y=50% (centre vertical)
-        Rotem 90° per mostrar cistella dalt al centre del SVG.
+        Cada tir (x,y) és 0-100% relatiu al SEU PROPI mig camp individual.
+        Cistella a x≈48-50%, y≈12-16% (dalt-centre).
+        Mapeig directe: px=x%*W, py=y%*H (escalat per deixar marge dalt).
         """
         import math
         svg = []
@@ -4083,59 +4082,41 @@ with t7:
         s  = 'stroke="#2d5a2d" stroke-width="1.5" fill="none"'
         sf = 'stroke="#2d5a2d" stroke-width="1.5" fill="rgba(255,255,255,0.18)"'
 
-        # Cistella — dalt al centre
         cx_c = W // 2
         cy_c = 22
 
-        # Perímetre
         svg.append(f'<rect x="4" y="4" width="{W-8}" height="{H-8}" {s} rx="3"/>')
-
-        # Cistella
         svg.append(f'<circle cx="{cx_c}" cy="{cy_c}" r="9" {sf}/>')
         svg.append(f'<circle cx="{cx_c}" cy="{cy_c}" r="3" fill="#2d5a2d"/>')
 
-        # Zona pintada (rectangle des de la línia de fons)
         z_w = int(W * 0.40); z_h = int(H * 0.34)
         z_x = (W - z_w) // 2
         svg.append(f'<rect x="{z_x}" y="4" width="{z_w}" height="{z_h}" {sf}/>')
-
-        # Semicercle baix zona
         r_zona = z_w // 2
         svg.append(f'<path d="M {z_x} {4+z_h} A {r_zona} {r_zona} 0 0 0 {z_x+z_w} {4+z_h}" {s}/>')
 
-        # Arc de triple — semicircumferència centrada a la CISTELLA, obre cap avall
         r_triple = int(H * 0.55)
-        # On l'arc talla les parets laterals (x=4 i x=W-4)
         dx_paret = cx_c - 4
         dy_paret = int(math.sqrt(max(r_triple**2 - dx_paret**2, 0)))
         y_paret = cy_c + dy_paret
-        # Línies laterals de corner fins al punt on comença l'arc
         svg.append(f'<line x1="4" y1="4" x2="4" y2="{y_paret}" {s}/>')
         svg.append(f'<line x1="{W-4}" y1="4" x2="{W-4}" y2="{y_paret}" {s}/>')
-        # Arc de triple: de (4, y_paret) a (W-4, y_paret), centrat a cistella, cap avall
         svg.append(f'<path d="M 4 {y_paret} A {r_triple} {r_triple} 0 0 0 {W-4} {y_paret}" {s}/>')
 
-        # Línia de mig camp (baix)
         svg.append(f'<line x1="4" y1="{H-4}" x2="{W-4}" y2="{H-4}" {s}/>')
 
         # ── Tirs ──────────────────────────────────────────────────────────
-        # La pista FCBQ és HORITZONTAL sencera:
-        # Cistella LOCAL: x~0%, y~50% (esquerra, centre vertical)
-        # Cistella VISITANT: x~100%, y~50% (dreta, centre vertical)
-        # Per mostrar mig camp vertical (cistella dalt centre):
-        # LOCAL:    px = y * W,          py = x/50 * H  (x=0→dalt, x=50→baix)
-        # VISITANT: px = y * W,          py = (1-x/100)*2 * H  (x=100→dalt, x=50→baix)
+        # Mapeig directe: x → eix horitzontal, y → eix vertical
+        # y mínim real ≈ 11 (línia de fons, a prop de la cistella, dalt)
+        # y màxim ≈ 70-100 (línia de mig camp, baix)
+        Y_MIN, Y_MAX = 8, 100
         fets_n = 0; fallats_n = 0
         for t in tirs_list:
             x_raw = float(t['x'])
             y_raw = float(t['y'])
 
-            if equip_side == "local":
-                px = (y_raw / 100) * W
-                py = H - (x_raw / 50) * H
-            else:
-                px = (y_raw / 100) * W
-                py = H - ((100 - x_raw) / 50) * H
+            px = (x_raw / 100) * W
+            py = ((y_raw - Y_MIN) / (Y_MAX - Y_MIN)) * H
 
             px = max(8, min(W-8, px))
             py = max(8, min(H-8, py))
@@ -4218,33 +4199,21 @@ console.log(`✅ Copiat! Total: ${punts.length} | Cistelles: ${punts.filter(p=>p
         try:
             import json as json_mod
             tirs = json_mod.loads(json_tirs)
-            tirs_local = [t for t in tirs if float(t['x']) < 50]
-            tirs_visit = [t for t in tirs if float(t['x']) >= 50]
-            col_g1, col_g2 = st.columns(2)
-            with col_g1:
-                if st.button("💾 Guardar tirs a la BD", key="btn_save_tirs"):
-                    save_tirs_fcbq(mid_mapa, datetime.now().strftime("%Y-%m-%d"),
-                                   nom_local_mapa, nom_visit_mapa, tirs)
-                    st.success(f"✅ {len(tirs)} tirs guardats!")
 
-            eq_sel = st.radio("Mostra", ["Tots dos", nom_local_mapa, nom_visit_mapa],
-                              horizontal=True, key="eq_sel_mapa")
-            tirs_show = tirs_local if eq_sel==nom_local_mapa else (tirs_visit if eq_sel==nom_visit_mapa else tirs)
+            if st.button("💾 Guardar tirs a la BD", key="btn_save_tirs"):
+                save_tirs_fcbq(mid_mapa, datetime.now().strftime("%Y-%m-%d"),
+                               f"{nom_local_mapa} vs {nom_visit_mapa}", "—", tirs)
+                st.success(f"✅ {len(tirs)} tirs guardats!")
 
-            fets_n = sum(1 for t in tirs_show if t.get('fet'))
-            tot_n = len(tirs_show)
+            fets_n = sum(1 for t in tirs if t.get('fet'))
+            tot_n = len(tirs)
             c1,c2,c3 = st.columns(3)
             with c1: st.markdown(card("Total tirs",tot_n,"","#374151"),unsafe_allow_html=True)
             with c2: st.markdown(card("Cistelles",fets_n,"convertides","#16a34a"),unsafe_allow_html=True)
             with c3: st.markdown(card("Eficiència",f"{round(fets_n/max(tot_n,1)*100)}%","","#185FA5"),unsafe_allow_html=True)
 
-            side = "local" if eq_sel==nom_local_mapa else ("visitant" if eq_sel==nom_visit_mapa else "local")
-            st.markdown(dibuixa_mapa_tir_fcbq(tirs_show, f"{eq_sel}", side), unsafe_allow_html=True)
-
-            if eq_sel == "Tots dos" and tirs_local and tirs_visit:
-                col_ma, col_mb = st.columns(2)
-                with col_ma: st.markdown(dibuixa_mapa_tir_fcbq(tirs_local, nom_local_mapa, "local"), unsafe_allow_html=True)
-                with col_mb: st.markdown(dibuixa_mapa_tir_fcbq(tirs_visit, nom_visit_mapa, "visitant"), unsafe_allow_html=True)
+            st.markdown(dibuixa_mapa_tir_fcbq(tirs, f"{nom_local_mapa} vs {nom_visit_mapa} — tots els tirs"), unsafe_allow_html=True)
+            st.caption("⚠️ El mapa de la FCBQ no permet diferenciar els tirs per equip — es mostren tots junts.")
 
         except Exception as e:
             st.error(f"Error: {e}")
@@ -4255,26 +4224,22 @@ console.log(`✅ Copiat! Total: ${punts.length} | Cistelles: ${punts.filter(p=>p
     if df_tirs_bd.empty:
         st.info("Guarda tirs de partits per veure l'acumulat de temporada.")
     else:
-        equips_tirs = sorted(df_tirs_bd["equip_nom"].unique().tolist())
-        eq_acum = st.selectbox("Equip", equips_tirs, key="eq_acum_mapa")
-        partits_eq = sorted(df_tirs_bd[df_tirs_bd["equip_nom"]==eq_acum]["match_id"].unique().tolist())
+        partits_tirs = sorted(df_tirs_bd["match_id"].unique().tolist())
         df_pr_acum = load_partits_db()
-        sel_partits = st.multiselect("Partits", partits_eq, default=partits_eq,
+        sel_partits = st.multiselect("Partits", partits_tirs, default=partits_tirs,
             format_func=lambda x: f"{df_pr_acum[df_pr_acum['match_id']==x]['nom_a'].values[0]} vs "
                                    f"{df_pr_acum[df_pr_acum['match_id']==x]['nom_b'].values[0]}"
                                    if not df_pr_acum.empty and x in df_pr_acum["match_id"].values else x[:8],
             key="sel_partits_mapa")
         if sel_partits:
-            df_acum = df_tirs_bd[(df_tirs_bd["equip_nom"]==eq_acum)&(df_tirs_bd["match_id"].isin(sel_partits))]
+            df_acum = df_tirs_bd[df_tirs_bd["match_id"].isin(sel_partits)]
             tirs_acum = df_acum[["x","y","fet"]].to_dict("records")
             fets_a = int(df_acum["fet"].sum()); tot_a = len(df_acum)
             c1,c2,c3 = st.columns(3)
             with c1: st.markdown(card("Total tirs",tot_a,f"{len(sel_partits)} partits","#374151"),unsafe_allow_html=True)
             with c2: st.markdown(card("Cistelles",fets_a,"convertides","#16a34a"),unsafe_allow_html=True)
             with c3: st.markdown(card("Eficiència",f"{round(fets_a/max(tot_a,1)*100)}%","","#185FA5"),unsafe_allow_html=True)
-            # Detecta si és local o visitant per la primera fila
-            side_acum = "local" if df_acum.iloc[0]["x"] < 50 else "visitant"
-            st.markdown(dibuixa_mapa_tir_fcbq(tirs_acum, f"{eq_acum} — {len(sel_partits)} partits", side_acum), unsafe_allow_html=True)
+            st.markdown(dibuixa_mapa_tir_fcbq(tirs_acum, f"Acumulat — {len(sel_partits)} partits"), unsafe_allow_html=True)
 
     col_ma,col_mb=st.columns(2)
     for col_m,tid,tnom,tcol in [
