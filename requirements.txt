@@ -3,3 +3,4 @@ pandas
 plotly>=5.22.0
 pillow>=11.0.0
 openpyxl
+scipy
