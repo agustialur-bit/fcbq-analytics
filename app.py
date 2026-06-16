@@ -2875,6 +2875,115 @@ with t9:
 # TAB 5: HISTÒRIC JUGADORES
 # ══════════════════════════════════════════════════
 with t4:
+    # ── ROT — Índex de gestió de rotacions ─────────────────────────────────
+    st.markdown(sec("ROT — Índex de gestió de rotacions"), unsafe_allow_html=True)
+    st.caption("ROT = 5 · (ρ + 1)  on ρ = correlació de Pearson entre minuts jugats i +/- per minut de cada jugadora. Escala 0-10. ROT alt = les jugadores que juguen més aporten més.")
+
+    col_j_rot = "jugador" if "jugador" in df_orig.columns else "jugadora"
+    minuts_rot = calc_minuts_reals(df_orig)
+    rot_data = []
+
+    for eq_rot in teams:
+        rival_rot = [t for t in teams if t != eq_rot]
+        rival_id_rot = rival_rot[0] if rival_rot else None
+        if rival_id_rot is None: continue
+
+        df_t_rot = df_orig.copy()
+        df_t_rot["t_abs"] = df_t_rot.apply(
+            lambda r: (int(r["quart"])-1)*10+(10-float(r["min_num"]))
+            if float(r.get("min_num",0))<=10 else float(r.get("min_num",0)), axis=1)
+
+        jugs_rot = [j for j in df_orig[df_orig["idEquip"]==eq_rot][col_j_rot].unique()
+                    if j and str(j) not in ("","nan")]
+
+        for jug_rot in jugs_rot:
+            min_rot = minuts_rot.get(jug_rot, 0)
+            if min_rot < 0.5: continue
+
+            # Calcula intervals reals i +/-
+            MINS_Q_R = 10
+            ivs_rot = []; ep_rot = {}
+            dj_rot = df_orig[df_orig[col_j_rot]==jug_rot]
+            pr_rot = dj_rot.sort_values("num").iloc[0]
+            if "Surt" in str(pr_rot.get("accio","")) and "camp" in str(pr_rot.get("accio","")):
+                ep_rot[jug_rot] = (int(pr_rot.get("quart",1))-1)*MINS_Q_R
+            for _,row_r in df_orig.sort_values("num").iterrows():
+                if str(row_r.get(col_j_rot,"")) != jug_rot: continue
+                a_r=str(row_r.get("accio","")); q_r=int(row_r.get("quart",1))
+                m_r=float(row_r.get("min_num",0))
+                t_r=(q_r-1)*MINS_Q_R+(MINS_Q_R-m_r if m_r<=MINS_Q_R else m_r)
+                t_r=max(0,min(t_r,q_r*MINS_Q_R))
+                if "Entra" in a_r and "camp" in a_r: ep_rot[jug_rot]=t_r
+                elif "Surt" in a_r and "camp" in a_r:
+                    ti_r=ep_rot.pop(jug_rot,(q_r-1)*MINS_Q_R)
+                    if t_r>ti_r: ivs_rot.append((float(ti_r),float(t_r)))
+                elif "Final de període" in a_r:
+                    if jug_rot in ep_rot:
+                        ti_r=ep_rot.pop(jug_rot); fi_r=float(q_r*MINS_Q_R)
+                        if fi_r>ti_r: ivs_rot.append((ti_r,fi_r))
+            for ti_o in ep_rot.values():
+                fi_o=float(df_orig["quart"].max()*MINS_Q_R)
+                if fi_o>ti_o: ivs_rot.append((float(ti_o),fi_o))
+
+            if not ivs_rot: continue
+            pf_rot=pc_rot=0
+            for ti_r,tf_r in ivs_rot:
+                df_i_rot=df_t_rot[(df_t_rot["t_abs"]>=ti_r)&(df_t_rot["t_abs"]<=tf_r)]
+                pf_rot+=int(df_i_rot[df_i_rot["idEquip"]==eq_rot]["punts"].sum())
+                pc_rot+=int(df_i_rot[df_i_rot["idEquip"]==rival_id_rot]["punts"].sum())
+            pm_rot = pf_rot - pc_rot
+            pm_min_rot = pm_rot / min_rot if min_rot > 0 else 0
+            rot_data.append({"equip": eq_rot, "jugadora": jug_rot, "minuts": min_rot, "pm_min": pm_min_rot})
+
+    # Calcula ROT per equip
+    for eq_rot in teams:
+        df_rot_eq = pd.DataFrame([r for r in rot_data if r["equip"]==eq_rot])
+        if df_rot_eq.empty or len(df_rot_eq) < 3: continue
+
+        from scipy import stats as sp_stats_rot
+        rho_rot, pval_rot = sp_stats_rot.pearsonr(df_rot_eq["minuts"], df_rot_eq["pm_min"])
+        rot_val = round(5 * (rho_rot + 1), 2)
+
+        eq_nom_rot = nom_a if eq_rot==teams[0] else nom_b
+        color_rot = COLOR_A if eq_rot==teams[0] else COLOR_B
+
+        if rot_val >= 7.5: rot_interp = "🟢 Rotacions excel·lents"
+        elif rot_val >= 5.5: rot_interp = "🟡 Rotacions bones"
+        elif rot_val >= 3.5: rot_interp = "🟠 Rotacions millorables"
+        else: rot_interp = "🔴 Rotacions per revisar"
+
+        with st.container():
+            st.markdown(f'<div style="font-size:13px;font-weight:700;color:{color_rot};margin-bottom:6px">🏀 {eq_nom_rot}</div>', unsafe_allow_html=True)
+            c1,c2,c3,c4 = st.columns(4)
+            with c1: st.markdown(card("ROT", f"{rot_val}/10", rot_interp, color_rot), unsafe_allow_html=True)
+            with c2: st.markdown(card("Pearson (ρ)", f"{rho_rot:+.3f}", "minuts vs +/-/min", color_rot), unsafe_allow_html=True)
+            with c3: st.markdown(card("p-value", f"{pval_rot:.3f}", "sig. si <0.05", "#374151"), unsafe_allow_html=True)
+            with c4: st.markdown(card("Jugadores", len(df_rot_eq), "analitzades", "#374151"), unsafe_allow_html=True)
+
+            # Scatter Minuts vs +/- per minut
+            import numpy as np
+            fig_rot = go.Figure()
+            colors_rot = [COLOR_A if eq_rot==teams[0] else COLOR_B] * len(df_rot_eq)
+            fig_rot.add_trace(go.Scatter(
+                x=df_rot_eq["minuts"], y=df_rot_eq["pm_min"],
+                mode="markers+text",
+                marker=dict(size=10, color=color_rot, line=dict(width=1, color="white")),
+                text=df_rot_eq["jugadora"].apply(lambda n: n.split()[1] if len(n.split())>1 else n),
+                textposition="top center", textfont=dict(size=8),
+                hovertemplate="<b>%{text}</b><br>Minuts: %{x:.1f}<br>+/- per min: %{y:+.3f}<extra></extra>"
+            ))
+            m_rot, b_rot = np.polyfit(df_rot_eq["minuts"], df_rot_eq["pm_min"], 1)
+            x_lr = [df_rot_eq["minuts"].min(), df_rot_eq["minuts"].max()]
+            y_lr = [m_rot*x+b_rot for x in x_lr]
+            fig_rot.add_trace(go.Scatter(
+                x=x_lr, y=y_lr, mode="lines",
+                line=dict(color="#d97706", width=2, dash="dot"),
+                name=f"Tendència (ρ={rho_rot:+.3f})", showlegend=True))
+            fig_rot.add_hline(y=0, line_dash="solid", line_color="#e2e4e8")
+            fig_rot.update_xaxes(title="Minuts jugats")
+            fig_rot.update_yaxes(title="+/- per minut")
+            st.plotly_chart(chart_style(fig_rot, 260, f"{eq_nom_rot} — ROT {rot_val}/10 (ρ={rho_rot:+.3f})"), use_container_width=True)
+
     st.markdown(sec("⚡ Eficiència i On/Off Rating per jugadora"), unsafe_allow_html=True)
     st.caption(
         "On/Off Net Rating = diferència de Net Rating (pts/100 poss) quan la jugadora és a pista vs quan no hi és. "
@@ -3750,11 +3859,32 @@ with t6:
         if pm_acum_rows:
             df_pm_acum = pd.DataFrame(pm_acum_rows)
             mitj_pm = df_pm_acum["+/- per min"].mean()
-            col_pa1,col_pa2,col_pa3 = st.columns(3)
+
+            # Pearson entre Minuts i +/- per minut
+            if len(df_pm_acum) >= 3:
+                from scipy import stats as sp_stats
+                rho, pval = sp_stats.pearsonr(df_pm_acum["Minuts"], df_pm_acum["+/- per min"])
+                rho_txt = f"ρ = {rho:+.3f}"
+                if abs(rho) >= 0.7: rho_interp = "correlació forta"
+                elif abs(rho) >= 0.4: rho_interp = "correlació moderada"
+                else: rho_interp = "correlació feble"
+                rho_dir = "positiva" if rho > 0 else "negativa"
+                pval_txt = f"p = {pval:.3f}" + (" (sig.)" if pval < 0.05 else " (no sig.)")
+            else:
+                rho, pval = None, None
+                rho_txt = "Cal ≥3 partits"
+                rho_interp = ""; rho_dir = ""; pval_txt = ""
+
+            col_pa1,col_pa2,col_pa3,col_pa4 = st.columns(4)
             color_pm = "#16a34a" if mitj_pm>=0 else "#dc2626"
+            color_rho = "#16a34a" if (rho or 0)>0.4 else ("#dc2626" if (rho or 0)<-0.4 else "#374151")
             with col_pa1: st.markdown(card("Partits analitzats",len(df_pm_acum),"",COLOR_A),unsafe_allow_html=True)
             with col_pa2: st.markdown(card("Minuts totals",round(df_pm_acum["Minuts"].sum(),1),"",COLOR_A),unsafe_allow_html=True)
             with col_pa3: st.markdown(card("+/- per min (mitj.)",f"{'+'if mitj_pm>=0 else ''}{mitj_pm:.3f}","",color_pm),unsafe_allow_html=True)
+            with col_pa4: st.markdown(card("Pearson (Min vs +/-/min)",rho_txt,f"{rho_interp} {rho_dir}" if rho is not None else "",color_rho),unsafe_allow_html=True)
+
+            if rho is not None:
+                st.caption(f"ρ de Pearson (Minuts jugats vs +/- per minut): **{rho_txt}** — {rho_interp} {rho_dir} · {pval_txt}")
 
             # Gràfic barres +/- per minut per partit
             colors_pm_acum = ["#16a34a" if v>=0 else "#dc2626" for v in df_pm_acum["+/- per min"]]
@@ -3770,6 +3900,34 @@ with t6:
                 annotation_text=f"Mitjana: {mitj_pm:+.3f}", annotation_font_size=10)
             fig_pm_acum.update_layout(xaxis_tickangle=-30)
             st.plotly_chart(chart_style(fig_pm_acum,280,f"{jug_pm} — +/- per minut (temporada)"),use_container_width=True)
+
+            # Scatter Minuts vs +/- per minut amb línia de tendència
+            if len(df_pm_acum) >= 3:
+                import numpy as np
+                fig_scatter_pm = go.Figure()
+                fig_scatter_pm.add_trace(go.Scatter(
+                    x=df_pm_acum["Minuts"], y=df_pm_acum["+/- per min"],
+                    mode="markers+text",
+                    marker=dict(size=10, color=colors_pm_acum, line=dict(width=1, color="white")),
+                    text=df_pm_acum["Partit"].apply(lambda s: s[:12]),
+                    textposition="top center", textfont=dict(size=8),
+                    hovertemplate="<b>%{text}</b><br>Minuts: %{x}<br>+/- per min: %{y:+.3f}<extra></extra>"
+                ))
+                # Línia de tendència
+                m, b = np.polyfit(df_pm_acum["Minuts"], df_pm_acum["+/- per min"], 1)
+                x_line = [df_pm_acum["Minuts"].min(), df_pm_acum["Minuts"].max()]
+                y_line = [m*x+b for x in x_line]
+                fig_scatter_pm.add_trace(go.Scatter(
+                    x=x_line, y=y_line, mode="lines",
+                    line=dict(color="#d97706", width=2, dash="dot"),
+                    name=f"Tendència (ρ={rho:+.3f})", showlegend=True
+                ))
+                fig_scatter_pm.add_hline(y=0, line_dash="solid", line_color="#e2e4e8")
+                fig_scatter_pm.update_xaxes(title="Minuts jugats")
+                fig_scatter_pm.update_yaxes(title="+/- per minut")
+                st.plotly_chart(chart_style(fig_scatter_pm, 260,
+                    f"{jug_pm} — Minuts vs +/- per minut (ρ = {rho:+.3f})"),
+                    use_container_width=True)
 
             st.dataframe(df_pm_acum[["Partit","Minuts","+/-","+/- per min"]],
                 use_container_width=True, hide_index=True)
@@ -4048,13 +4206,14 @@ with t7:
         con_t.commit(); con_t.close()
     except: pass
 
-    def save_tirs_fcbq(match_id, data_consulta, equip_local, equip_visitant, tirs):
+    def save_tirs_fcbq(match_id, data_consulta, equip_local, equip_visitant, tirs_local, tirs_visit):
         con_t = sqlite3.connect(DB_PATH)
         con_t.execute("DELETE FROM tirs_fcbq WHERE match_id=?", (match_id,))
         rows = []
-        for t in tirs:
-            eq = equip_local if float(t['x']) < 50 else equip_visitant
-            rows.append((match_id, data_consulta, eq, float(t['x']), float(t['y']), 1 if t.get('fet') else 0))
+        for t in tirs_local:
+            rows.append((match_id, data_consulta, equip_local, float(t['x']), float(t['y']), 1 if t.get('fet') else 0))
+        for t in tirs_visit:
+            rows.append((match_id, data_consulta, equip_visitant, float(t['x']), float(t['y']), 1 if t.get('fet') else 0))
         con_t.executemany("INSERT INTO tirs_fcbq (match_id,data_consulta,equip_nom,x,y,fet) VALUES (?,?,?,?,?,?)", rows)
         con_t.commit(); con_t.close()
 
@@ -4095,8 +4254,10 @@ with t7:
         r_zona = z_w // 2
         svg.append(f'<path d="M {z_x} {4+z_h} A {r_zona} {r_zona} 0 0 0 {z_x+z_w} {4+z_h}" {s}/>')
 
-        r_triple = int(H * 0.55)
+        # Radi mínim per tal que l'arc toqui les dues parets laterals
         dx_paret = cx_c - 4
+        r_triple_min = dx_paret + 2  # marge mínim perquè dy_paret > 0
+        r_triple = max(int(H * 0.62), r_triple_min)
         dy_paret = int(math.sqrt(max(r_triple**2 - dx_paret**2, 0)))
         y_paret = cy_c + dy_paret
         svg.append(f'<line x1="4" y1="4" x2="4" y2="{y_paret}" {s}/>')
@@ -4199,21 +4360,47 @@ console.log(`✅ Copiat! Total: ${punts.length} | Cistelles: ${punts.filter(p=>p
         try:
             import json as json_mod
             tirs = json_mod.loads(json_tirs)
+            n_total = len(tirs)
+
+            split_idx = st.number_input(
+                f"A partir de quina posició comencen els tirs de {nom_visit_mapa}? "
+                f"(els primers tirs són de {nom_local_mapa})",
+                min_value=0, max_value=n_total, value=n_total//2, step=1,
+                key="split_idx_mapa",
+                help=f"Total de tirs: {n_total}. Per exemple, si els primers 60 són del local i la resta del visitant, escriu 60."
+            )
+
+            tirs_local = tirs[:split_idx]
+            tirs_visit = tirs[split_idx:]
 
             if st.button("💾 Guardar tirs a la BD", key="btn_save_tirs"):
                 save_tirs_fcbq(mid_mapa, datetime.now().strftime("%Y-%m-%d"),
-                               f"{nom_local_mapa} vs {nom_visit_mapa}", "—", tirs)
-                st.success(f"✅ {len(tirs)} tirs guardats!")
+                               nom_local_mapa, nom_visit_mapa, tirs_local, tirs_visit)
+                st.success(f"✅ {len(tirs)} tirs guardats! ({len(tirs_local)} {nom_local_mapa} + {len(tirs_visit)} {nom_visit_mapa})")
 
-            fets_n = sum(1 for t in tirs if t.get('fet'))
-            tot_n = len(tirs)
+            eq_sel = st.radio("Mostra", ["Tots dos", nom_local_mapa, nom_visit_mapa],
+                              horizontal=True, key="eq_sel_mapa")
+
+            if eq_sel == nom_local_mapa:
+                tirs_show = tirs_local
+            elif eq_sel == nom_visit_mapa:
+                tirs_show = tirs_visit
+            else:
+                tirs_show = tirs
+
+            fets_n = sum(1 for t in tirs_show if t.get('fet'))
+            tot_n = len(tirs_show)
             c1,c2,c3 = st.columns(3)
-            with c1: st.markdown(card("Total tirs",tot_n,"","#374151"),unsafe_allow_html=True)
+            with c1: st.markdown(card("Total tirs",tot_n,eq_sel,"#374151"),unsafe_allow_html=True)
             with c2: st.markdown(card("Cistelles",fets_n,"convertides","#16a34a"),unsafe_allow_html=True)
             with c3: st.markdown(card("Eficiència",f"{round(fets_n/max(tot_n,1)*100)}%","","#185FA5"),unsafe_allow_html=True)
 
-            st.markdown(dibuixa_mapa_tir_fcbq(tirs, f"{nom_local_mapa} vs {nom_visit_mapa} — tots els tirs"), unsafe_allow_html=True)
-            st.caption("⚠️ El mapa de la FCBQ no permet diferenciar els tirs per equip — es mostren tots junts.")
+            if eq_sel == "Tots dos":
+                col_ma, col_mb = st.columns(2)
+                with col_ma: st.markdown(dibuixa_mapa_tir_fcbq(tirs_local, nom_local_mapa), unsafe_allow_html=True)
+                with col_mb: st.markdown(dibuixa_mapa_tir_fcbq(tirs_visit, nom_visit_mapa), unsafe_allow_html=True)
+            else:
+                st.markdown(dibuixa_mapa_tir_fcbq(tirs_show, eq_sel), unsafe_allow_html=True)
 
         except Exception as e:
             st.error(f"Error: {e}")
