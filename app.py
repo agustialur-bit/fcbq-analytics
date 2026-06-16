@@ -6,7 +6,7 @@ import urllib.request
 import json, re, sqlite3, os
 from datetime import datetime
 
-st.set_page_config(page_title="Micki Analítica", page_icon="🏀", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Guillem Analítica", page_icon="🏀", layout="wide", initial_sidebar_state="expanded")
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "historic.db")
 API_BASE = "https://msstats.optimalwayconsulting.com/v1/fcbq/getJsonWithMatchMoves/{match_id}?currentSeason=true"
@@ -878,7 +878,7 @@ def get_shot_counts(df_sub):
 with st.sidebar:
     st.markdown("""<div style="display:flex;align-items:center;gap:10px;padding-bottom:14px;border-bottom:0.5px solid #e2e4e8;margin-bottom:14px">
         <div style="width:34px;height:34px;background:#E6F1FB;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px">🏀</div>
-        <div><div style="font-size:13px;font-weight:600;color:#1a1c22">Micki Analítica</div>
+        <div><div style="font-size:13px;font-weight:600;color:#1a1c22">Guillem Analítica</div>
         <div style="font-size:11px;color:#9ca3af">Analítica de Bàsquet</div></div></div>""", unsafe_allow_html=True)
 
     st.markdown('<div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#9ca3af;margin-bottom:6px">Partit</div>', unsafe_allow_html=True)
@@ -886,8 +886,8 @@ with st.sidebar:
 
     with st.expander("✏️ Noms dels equips", expanded=False):
         st.caption("Es guardaran per a futurs partits.")
-        nom_equip_1 = st.text_input("Equip local", placeholder="Ex: Micki Lakers")
-        nom_equip_2 = st.text_input("Equip visitant", placeholder="Ex: Mickinaikos")
+        nom_equip_1 = st.text_input("Equip local", placeholder="Ex: Guillem Lakers")
+        nom_equip_2 = st.text_input("Equip visitant", placeholder="Ex: Guillemnaikos")
 
     carregar = st.button("⬇ Carregar partit", use_container_width=True)
 
@@ -934,7 +934,7 @@ with st.sidebar:
     accio_cerca = st.text_input("Acció", placeholder="Cistella, falta...")
     jugador_cerca = st.text_input("Jugadora", placeholder="Nom...")
     st.markdown("---")
-    st.caption("Micki Analítica")
+    st.caption("Guillem Analítica")
 
 # ── Sessió ─────────────────────────────────────────────────────────────────────
 for k,v in [("df",None),("match_id",None),("team_names",{}),("score_a",0),("score_b",0)]:
@@ -996,7 +996,7 @@ if carregar and url_input:
 if st.session_state.df is None:
     st.markdown("""<div style="text-align:center;padding:80px 0">
         <div style="font-size:64px">🏀</div>
-        <h1 style="font-size:38px;font-weight:600;color:#1a1c22;margin:16px 0 8px">Micki Analítica</h1>
+        <h1 style="font-size:38px;font-weight:600;color:#1a1c22;margin:16px 0 8px">Guillem Analítica</h1>
         <p style="color:#6b7280;font-size:15px">Enganxa la URL o l'ID d'un partit al panell esquerre i prem Carregar.</p>
         <p style="color:#d1d5db;font-size:12px;margin-top:32px">Exemple: 69ec95d4339c3d0001f523a1</p>
     </div>""", unsafe_allow_html=True)
@@ -2880,7 +2880,6 @@ with t4:
     st.caption("ROT = 5 · (ρ + 1)  on ρ = correlació de Pearson entre minuts jugats i +/- per minut de cada jugadora. Escala 0-10. ROT alt = les jugadores que juguen més aporten més.")
 
     col_j_rot = "jugador" if "jugador" in df_orig.columns else "jugadora"
-    minuts_rot = calc_minuts_reals(df_orig)
     rot_data = []
 
     for eq_rot in teams:
@@ -2897,13 +2896,11 @@ with t4:
                     if j and str(j) not in ("","nan")]
 
         for jug_rot in jugs_rot:
-            min_rot = minuts_rot.get(jug_rot, 0)
-            if min_rot < 0.5: continue
-
-            # Calcula intervals reals i +/-
+            # Calcula intervals reals (el mateix mètode que usem a tot arreu)
             MINS_Q_R = 10
             ivs_rot = []; ep_rot = {}
             dj_rot = df_orig[df_orig[col_j_rot]==jug_rot]
+            if dj_rot.empty: continue
             pr_rot = dj_rot.sort_values("num").iloc[0]
             if "Surt" in str(pr_rot.get("accio","")) and "camp" in str(pr_rot.get("accio","")):
                 ep_rot[jug_rot] = (int(pr_rot.get("quart",1))-1)*MINS_Q_R
@@ -2926,6 +2923,12 @@ with t4:
                 if fi_o>ti_o: ivs_rot.append((float(ti_o),fi_o))
 
             if not ivs_rot: continue
+
+            # Minuts des dels intervals reals (igual que a Rotacions)
+            min_rot = round(sum(tf-ti for ti,tf in ivs_rot), 1)
+            if min_rot < 0.5: continue
+
+            # +/- des dels mateixos intervals
             pf_rot=pc_rot=0
             for ti_r,tf_r in ivs_rot:
                 df_i_rot=df_t_rot[(df_t_rot["t_abs"]>=ti_r)&(df_t_rot["t_abs"]<=tf_r)]
