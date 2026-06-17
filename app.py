@@ -6,7 +6,7 @@ import urllib.request
 import json, re, sqlite3, os
 from datetime import datetime
 
-st.set_page_config(page_title="Micki Analítica", page_icon="🏀", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Guillem Analítica", page_icon="🏀", layout="wide", initial_sidebar_state="expanded")
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "historic.db")
 API_BASE = "https://msstats.optimalwayconsulting.com/v1/fcbq/getJsonWithMatchMoves/{match_id}?currentSeason=true"
@@ -878,7 +878,7 @@ def get_shot_counts(df_sub):
 with st.sidebar:
     st.markdown("""<div style="display:flex;align-items:center;gap:10px;padding-bottom:14px;border-bottom:0.5px solid #e2e4e8;margin-bottom:14px">
         <div style="width:34px;height:34px;background:#E6F1FB;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px">🏀</div>
-        <div><div style="font-size:13px;font-weight:600;color:#1a1c22">Micki Analítica</div>
+        <div><div style="font-size:13px;font-weight:600;color:#1a1c22">Guillem Analítica</div>
         <div style="font-size:11px;color:#9ca3af">Analítica de Bàsquet</div></div></div>""", unsafe_allow_html=True)
 
     st.markdown('<div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#9ca3af;margin-bottom:6px">Partit</div>', unsafe_allow_html=True)
@@ -886,8 +886,8 @@ with st.sidebar:
 
     with st.expander("✏️ Noms dels equips", expanded=False):
         st.caption("Es guardaran per a futurs partits.")
-        nom_equip_1 = st.text_input("Equip local", placeholder="Ex: Micki Lakers")
-        nom_equip_2 = st.text_input("Equip visitant", placeholder="Ex: Mickinaikos")
+        nom_equip_1 = st.text_input("Equip local", placeholder="Ex: Guillem Lakers")
+        nom_equip_2 = st.text_input("Equip visitant", placeholder="Ex: Guillemnaikos")
 
     carregar = st.button("⬇ Carregar partit", use_container_width=True)
 
@@ -934,7 +934,7 @@ with st.sidebar:
     accio_cerca = st.text_input("Acció", placeholder="Cistella, falta...")
     jugador_cerca = st.text_input("Jugadora", placeholder="Nom...")
     st.markdown("---")
-    st.caption("Micki Analítica")
+    st.caption("Guillem Analítica")
 
 # ── Sessió ─────────────────────────────────────────────────────────────────────
 for k,v in [("df",None),("match_id",None),("team_names",{}),("score_a",0),("score_b",0)]:
@@ -996,7 +996,7 @@ if carregar and url_input:
 if st.session_state.df is None:
     st.markdown("""<div style="text-align:center;padding:80px 0">
         <div style="font-size:64px">🏀</div>
-        <h1 style="font-size:38px;font-weight:600;color:#1a1c22;margin:16px 0 8px">Micki Analítica</h1>
+        <h1 style="font-size:38px;font-weight:600;color:#1a1c22;margin:16px 0 8px">Guillem Analítica</h1>
         <p style="color:#6b7280;font-size:15px">Enganxa la URL o l'ID d'un partit al panell esquerre i prem Carregar.</p>
         <p style="color:#d1d5db;font-size:12px;margin-top:32px">Exemple: 69ec95d4339c3d0001f523a1</p>
     </div>""", unsafe_allow_html=True)
@@ -4240,7 +4240,7 @@ with t7:
         svg = []
         svg.append(f'<svg viewBox="0 0 {W} {H+38}" xmlns="http://www.w3.org/2000/svg" '
                    f'style="width:100%;max-width:420px;border-radius:10px">')
-        svg.append(f'<rect width="{W}" height="{H}" fill="#c8dfc8" rx="6"/>')
+        svg.append(f'<rect width="{W}" height="{H}" fill="#e8e0d0" rx="6"/>')
         s  = 'stroke="#2d5a2d" stroke-width="1.5" fill="none"'
         sf = 'stroke="#2d5a2d" stroke-width="1.5" fill="rgba(255,255,255,0.18)"'
 
@@ -4257,10 +4257,9 @@ with t7:
         r_zona = z_w // 2
         svg.append(f'<path d="M {z_x} {4+z_h} A {r_zona} {r_zona} 0 0 0 {z_x+z_w} {4+z_h}" {s}/>')
 
-        # Radi mínim per tal que l'arc toqui les dues parets laterals
+        # Arc de triple: radi = 1.25 × distància lateral → sempre visible als dos costats
         dx_paret = cx_c - 4
-        r_triple_min = dx_paret + 2  # marge mínim perquè dy_paret > 0
-        r_triple = max(int(H * 0.62), r_triple_min)
+        r_triple = int(dx_paret * 1.25)
         dy_paret = int(math.sqrt(max(r_triple**2 - dx_paret**2, 0)))
         y_paret = cy_c + dy_paret
         svg.append(f'<line x1="4" y1="4" x2="4" y2="{y_paret}" {s}/>')
@@ -4325,7 +4324,7 @@ with t7:
         svg = []
         svg.append(f'<svg viewBox="0 0 {W} {H+38}" xmlns="http://www.w3.org/2000/svg" '
                    f'style="width:100%;max-width:420px;border-radius:10px">')
-        svg.append(f'<rect width="{W}" height="{H}" fill="#c8dfc8" rx="6"/>')
+        svg.append(f'<rect width="{W}" height="{H}" fill="#e8e0d0" rx="6"/>')
 
         # Grid de cel·les per calcular densitat
         COLS, ROWS = 12, 15
@@ -4397,7 +4396,7 @@ with t7:
         r_zona = z_w//2
         svg.append(f'<path d="M {z_x} {4+z_h} A {r_zona} {r_zona} 0 0 0 {z_x+z_w} {4+z_h}" {s}/>')
         dx_p = cx_c-4
-        r_t = max(int(H*0.62), dx_p+2)
+        r_t = int(dx_p * 1.25)
         dy_p = int(math.sqrt(max(r_t**2-dx_p**2,0)))
         y_p = cy_c+dy_p
         svg.append(f'<line x1="4" y1="4" x2="4" y2="{y_p}" {s}/>')
