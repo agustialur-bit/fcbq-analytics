@@ -177,8 +177,15 @@ div[data-testid="stSidebar"] [data-baseweb="input"] input,
 div[data-testid="stSidebar"] div[class*="Input"],
 div[data-testid="stSidebar"] div[class*="input"]{
     background:#ffffff!important;
-    color:#1a2744!important;
+    color:#000000!important;
     border:1px solid #B5D4F4!important;
+}
+/* Extra força per text visible dins inputs del sidebar */
+div[data-testid="stSidebar"] input[type="text"],
+div[data-testid="stSidebar"] input[type="url"],
+div[data-testid="stSidebar"] input:not([type="checkbox"]):not([type="radio"]){
+    color:#000000!important;
+    -webkit-text-fill-color:#000000!important;
 }
 
 /* Expanders — tot el contingut interior visible */
