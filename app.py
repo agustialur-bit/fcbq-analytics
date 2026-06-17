@@ -4307,6 +4307,115 @@ with t7:
         svg.append('</svg>')
         return ''.join(svg)
 
+    def dibuixa_heatmap_fcbq(tirs_list, titol="Mapa de calor", mode="tots", W=340, H=400):
+        """Heatmap de densitat de tirs. mode: 'tots','cistelles','fallats'"""
+        import math
+        # Filtra segons mode
+        if mode == "cistelles":
+            tirs_f = [t for t in tirs_list if t.get('fet')]
+        elif mode == "fallats":
+            tirs_f = [t for t in tirs_list if not t.get('fet')]
+        else:
+            tirs_f = tirs_list
+
+        if not tirs_f:
+            return f'<svg viewBox="0 0 {W} {H+38}" xmlns="http://www.w3.org/2000/svg"><text x="{W//2}" y="{H//2}" text-anchor="middle" font-family="Arial" font-size="14" fill="#888">Sense dades</text></svg>'
+
+        Y_MIN, Y_MAX = 8, 100
+        svg = []
+        svg.append(f'<svg viewBox="0 0 {W} {H+38}" xmlns="http://www.w3.org/2000/svg" '
+                   f'style="width:100%;max-width:420px;border-radius:10px">')
+        svg.append(f'<rect width="{W}" height="{H}" fill="#c8dfc8" rx="6"/>')
+
+        # Grid de cel·les per calcular densitat
+        COLS, ROWS = 12, 15
+        cell_w = W / COLS
+        cell_h = H / ROWS
+        grid = [[0]*COLS for _ in range(ROWS)]
+        for t in tirs_f:
+            x_raw = float(t['x'])
+            y_raw = float(t['y'])
+            px = (x_raw / 100) * W
+            py = ((y_raw - Y_MIN) / (Y_MAX - Y_MIN)) * H
+            col_g = min(int(px / cell_w), COLS-1)
+            row_g = min(int(py / cell_h), ROWS-1)
+            if 0 <= col_g < COLS and 0 <= row_g < ROWS:
+                grid[row_g][col_g] += 1
+
+        max_v = max(max(r) for r in grid) or 1
+
+        # Colors del heatmap (transparent → groc → taronja → vermell)
+        def heat_color(v, max_v):
+            if v == 0: return None
+            ratio = v / max_v
+            if mode == "cistelles":
+                # Verd clar → verd fosc
+                r = int(200 - ratio * 150)
+                g = int(240 - ratio * 100)
+                b = int(150 - ratio * 130)
+            elif mode == "fallats":
+                # Groc → vermell
+                r = int(220 + ratio * 35)
+                g = int(200 - ratio * 180)
+                b = int(50 - ratio * 50)
+            else:
+                # Blau clar → blau fosc → vermell
+                if ratio < 0.5:
+                    r = int(100 + ratio * 100)
+                    g = int(150 + ratio * 50)
+                    b = int(240 - ratio * 80)
+                else:
+                    r = int(200 + (ratio-0.5)*110)
+                    g = int(175 - (ratio-0.5)*350)
+                    b = int(200 - (ratio-0.5)*400)
+            r = max(0, min(255, r))
+            g = max(0, min(255, g))
+            b = max(0, min(255, b))
+            opacity = 0.3 + ratio * 0.65
+            return f'rgba({r},{g},{b},{opacity:.2f})'
+
+        for row_g in range(ROWS):
+            for col_g in range(COLS):
+                v = grid[row_g][col_g]
+                color = heat_color(v, max_v)
+                if color:
+                    x0 = col_g * cell_w
+                    y0 = row_g * cell_h
+                    svg.append(f'<rect x="{x0:.1f}" y="{y0:.1f}" '
+                               f'width="{cell_w:.1f}" height="{cell_h:.1f}" '
+                               f'fill="{color}" rx="3"/>')
+
+        # Línies de la pista sobre el heatmap
+        s = 'stroke="#2d5a2d" stroke-width="1.5" fill="none"'
+        sf = 'stroke="#2d5a2d" stroke-width="1" fill="none" stroke-dasharray="3,3"'
+        cx_c = W // 2; cy_c = 22
+        svg.append(f'<rect x="4" y="4" width="{W-8}" height="{H-8}" {s} rx="3"/>')
+        svg.append(f'<circle cx="{cx_c}" cy="{cy_c}" r="9" stroke="#2d5a2d" stroke-width="2" fill="rgba(255,255,255,0.7)"/>')
+        svg.append(f'<circle cx="{cx_c}" cy="{cy_c}" r="3" fill="#2d5a2d"/>')
+        z_w = int(W*0.40); z_h = int(H*0.34); z_x = (W-z_w)//2
+        svg.append(f'<rect x="{z_x}" y="4" width="{z_w}" height="{z_h}" {sf}/>')
+        r_zona = z_w//2
+        svg.append(f'<path d="M {z_x} {4+z_h} A {r_zona} {r_zona} 0 0 0 {z_x+z_w} {4+z_h}" {s}/>')
+        dx_p = cx_c-4
+        r_t = max(int(H*0.62), dx_p+2)
+        dy_p = int(math.sqrt(max(r_t**2-dx_p**2,0)))
+        y_p = cy_c+dy_p
+        svg.append(f'<line x1="4" y1="4" x2="4" y2="{y_p}" {s}/>')
+        svg.append(f'<line x1="{W-4}" y1="4" x2="{W-4}" y2="{y_p}" {s}/>')
+        svg.append(f'<path d="M 4 {y_p} A {r_t} {r_t} 0 0 0 {W-4} {y_p}" {s}/>')
+        svg.append(f'<line x1="4" y1="{H-4}" x2="{W-4}" y2="{H-4}" {s}/>')
+
+        # Títol i stats
+        n_show = len(tirs_f)
+        fets_n = sum(1 for t in tirs_f if t.get('fet'))
+        svg.append(f'<text x="{W//2}" y="{H+16}" font-family="Arial" font-size="11" '
+                   f'fill="#374151" text-anchor="middle" font-weight="bold">{titol}</text>')
+        svg.append(f'<text x="{W//2}" y="{H+32}" font-family="Arial" font-size="10" '
+                   f'fill="#374151" text-anchor="middle">{n_show} tirs · '
+                   f'{fets_n} cistelles · {round(fets_n/max(n_show,1)*100)}% ef.</text>')
+        svg.append('</svg>')
+        return ''.join(svg)
+
     # ── Secció mapa FCBQ ────────────────────────────────────────────────────
     st.markdown(sec("Mapa de tir — dades de la FCBQ"), unsafe_allow_html=True)
     st.caption("Extreu les coordenades del web de la FCBQ i guarda-les aquí per veure el mapa i l'acumulat.")
@@ -4384,6 +4493,9 @@ console.log(`✅ Copiat! Total: ${punts.length} | Cistelles: ${punts.filter(p=>p
             eq_sel = st.radio("Mostra", ["Tots dos", nom_local_mapa, nom_visit_mapa],
                               horizontal=True, key="eq_sel_mapa")
 
+            viz_sel = st.radio("Visualització", ["🎯 Punts individuals", "🔥 Mapa de calor", "🔥 Calor cistelles", "🔥 Calor fallats"],
+                               horizontal=True, key="viz_sel_mapa")
+
             if eq_sel == nom_local_mapa:
                 tirs_show = tirs_local
             elif eq_sel == nom_visit_mapa:
@@ -4398,12 +4510,22 @@ console.log(`✅ Copiat! Total: ${punts.length} | Cistelles: ${punts.filter(p=>p
             with c2: st.markdown(card("Cistelles",fets_n,"convertides","#16a34a"),unsafe_allow_html=True)
             with c3: st.markdown(card("Eficiència",f"{round(fets_n/max(tot_n,1)*100)}%","","#185FA5"),unsafe_allow_html=True)
 
+            def mostra_mapa(tirs, titol, viz):
+                if viz == "🎯 Punts individuals":
+                    st.markdown(dibuixa_mapa_tir_fcbq(tirs, titol), unsafe_allow_html=True)
+                elif viz == "🔥 Mapa de calor":
+                    st.markdown(dibuixa_heatmap_fcbq(tirs, titol, "tots"), unsafe_allow_html=True)
+                elif viz == "🔥 Calor cistelles":
+                    st.markdown(dibuixa_heatmap_fcbq(tirs, f"{titol} — cistelles", "cistelles"), unsafe_allow_html=True)
+                else:
+                    st.markdown(dibuixa_heatmap_fcbq(tirs, f"{titol} — fallats", "fallats"), unsafe_allow_html=True)
+
             if eq_sel == "Tots dos":
                 col_ma, col_mb = st.columns(2)
-                with col_ma: st.markdown(dibuixa_mapa_tir_fcbq(tirs_local, nom_local_mapa), unsafe_allow_html=True)
-                with col_mb: st.markdown(dibuixa_mapa_tir_fcbq(tirs_visit, nom_visit_mapa), unsafe_allow_html=True)
+                with col_ma: mostra_mapa(tirs_local, nom_local_mapa, viz_sel)
+                with col_mb: mostra_mapa(tirs_visit, nom_visit_mapa, viz_sel)
             else:
-                st.markdown(dibuixa_mapa_tir_fcbq(tirs_show, eq_sel), unsafe_allow_html=True)
+                mostra_mapa(tirs_show, eq_sel, viz_sel)
 
         except Exception as e:
             st.error(f"Error: {e}")
@@ -4429,7 +4551,20 @@ console.log(`✅ Copiat! Total: ${punts.length} | Cistelles: ${punts.filter(p=>p
             with c1: st.markdown(card("Total tirs",tot_a,f"{len(sel_partits)} partits","#374151"),unsafe_allow_html=True)
             with c2: st.markdown(card("Cistelles",fets_a,"convertides","#16a34a"),unsafe_allow_html=True)
             with c3: st.markdown(card("Eficiència",f"{round(fets_a/max(tot_a,1)*100)}%","","#185FA5"),unsafe_allow_html=True)
-            st.markdown(dibuixa_mapa_tir_fcbq(tirs_acum, f"Acumulat — {len(sel_partits)} partits"), unsafe_allow_html=True)
+
+            viz_acum = st.radio("Visualització",
+                ["🎯 Punts individuals","🔥 Mapa de calor","🔥 Calor cistelles","🔥 Calor fallats"],
+                horizontal=True, key="viz_acum_mapa")
+
+            titol_acum = f"{len(sel_partits)} partits seleccionats"
+            if viz_acum == "🎯 Punts individuals":
+                st.markdown(dibuixa_mapa_tir_fcbq(tirs_acum, titol_acum), unsafe_allow_html=True)
+            elif viz_acum == "🔥 Mapa de calor":
+                st.markdown(dibuixa_heatmap_fcbq(tirs_acum, titol_acum, "tots"), unsafe_allow_html=True)
+            elif viz_acum == "🔥 Calor cistelles":
+                st.markdown(dibuixa_heatmap_fcbq(tirs_acum, f"{titol_acum} — cistelles", "cistelles"), unsafe_allow_html=True)
+            else:
+                st.markdown(dibuixa_heatmap_fcbq(tirs_acum, f"{titol_acum} — fallats", "fallats"), unsafe_allow_html=True)
 
     col_ma,col_mb=st.columns(2)
     for col_m,tid,tnom,tcol in [
