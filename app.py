@@ -4134,6 +4134,183 @@ with t6:
         elif len(jugs_comp)==1:
             st.info("Selecciona almenys 2 jugadores.")
 
+    # ══════════════════════════════════════════════════════════════════
+    # ARQUETIPS DE JUGADORA I ANÀLISI D'ECOSISTEMA
+    # ══════════════════════════════════════════════════════════════════
+    st.markdown(sec("🎭 Arquetips de jugadora"), unsafe_allow_html=True)
+    st.caption("Classificació simplificada de l'estil de cada jugadora a partir del seu Usage% i distribució de punts (2pts/3pts/TL), acumulat de tota la temporada.")
+
+    df_sj_arq = load_stats_jugador_db()
+    if df_sj_arq.empty or len(df_sj_arq) < 5:
+        st.info("Carrega més partits per generar arquetips fiables (mínim recomanat: 3-5 partits).")
+    else:
+        col_j_arq = "jugador" if "jugador" in df_sj_arq.columns else "jugadora"
+
+        def classifica_arquetip(usage, p2, p3, ptl, min_p):
+            """Classifica una jugadora en un arquetip simplificat."""
+            if usage >= 25:
+                if p3 >= 35: return "🎯 Anotadora exterior (alt ús)"
+                elif p2 >= 55: return "💪 Anotadora interior (alt ús)"
+                else: return "⚡ Motor ofensiu"
+            elif usage >= 15:
+                if p3 >= 35: return "🏹 Especialista de triple"
+                elif p2 >= 55: return "🏀 Anotadora interior (rol)"
+                elif ptl >= 30: return "🎁 Generadora de contacte"
+                else: return "⚖️ Anotadora equilibrada"
+            else:
+                if min_p >= 15: return "🛡️ Rol defensiu/suport"
+                else: return "🔄 Rol secundari"
+
+        # Agrega per jugadora (mitjanes de temporada)
+        agg_arq = df_sj_arq.groupby(col_j_arq).agg(
+            equip=("equip_nom","first"),
+            punts=("punts","sum"),
+            c2=("cistelles_2","sum"),
+            c3=("cistelles_3","sum"),
+            tl=("tirs_lliures","sum"),
+            minuts=("minuts","sum") if "minuts" in df_sj_arq.columns else ("punts","count"),
+            partits=("match_id","nunique"),
+            usage=("usage_rate","mean") if "usage_rate" in df_sj_arq.columns else ("punts","mean"),
+            impacte=("impacte","sum")
+        ).reset_index()
+
+        agg_arq["pts2"] = agg_arq["c2"]*2
+        agg_arq["pts3"] = agg_arq["c3"]*3
+        agg_arq["ptstl"] = agg_arq["tl"]
+        agg_arq["pts_tot"] = agg_arq["pts2"]+agg_arq["pts3"]+agg_arq["ptstl"]
+        agg_arq["p2_pct"] = (agg_arq["pts2"]/agg_arq["pts_tot"].replace(0,1)*100).round(1)
+        agg_arq["p3_pct"] = (agg_arq["pts3"]/agg_arq["pts_tot"].replace(0,1)*100).round(1)
+        agg_arq["ptl_pct"] = (agg_arq["ptstl"]/agg_arq["pts_tot"].replace(0,1)*100).round(1)
+        agg_arq["usage_pct"] = (agg_arq["usage"]*100).round(1) if "usage_rate" in df_sj_arq.columns else 0
+        agg_arq["min_p"] = (agg_arq["minuts"]/agg_arq["partits"].replace(0,1)).round(1)
+
+        agg_arq["Arquetip"] = agg_arq.apply(
+            lambda r: classifica_arquetip(r["usage_pct"], r["p2_pct"], r["p3_pct"], r["ptl_pct"], r["min_p"]),
+            axis=1)
+
+        # Mostra taula d'arquetips
+        df_show_arq = agg_arq[["jugador","equip","partits","min_p","usage_pct","p2_pct","p3_pct","ptl_pct","Arquetip"]].copy() if col_j_arq=="jugador" else agg_arq.rename(columns={col_j_arq:"jugador"})[["jugador","equip","partits","min_p","usage_pct","p2_pct","p3_pct","ptl_pct","Arquetip"]]
+        df_show_arq.columns = ["Jugadora","Equip","Partits","Min/P","Usage%","%Pts2","%Pts3","%PtsTL","Arquetip"]
+        df_show_arq = df_show_arq.sort_values("Usage%", ascending=False)
+
+        # Taula HTML (per evitar problemes de visibilitat)
+        html_arq = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;color:#1a2744">'
+        html_arq += '<tr>' + ''.join(f'<th style="background:#D6E8F7;color:#0C447C;padding:6px 10px;text-align:center;border:1px solid #B5D4F4;font-weight:600">{c}</th>' for c in df_show_arq.columns) + '</tr>'
+        for i_arq, row_arq in df_show_arq.iterrows():
+            bg_arq = '#ffffff' if list(df_show_arq.index).index(i_arq)%2==0 else '#EBF4FC'
+            html_arq += '<tr>'
+            for ci_arq, col_arq in enumerate(df_show_arq.columns):
+                val_arq = row_arq[col_arq]
+                align_arq = 'left' if ci_arq in (0,1,8) else 'center'
+                bold_arq = 'font-weight:600;' if ci_arq==0 else ''
+                html_arq += f'<td style="padding:5px 10px;border:1px solid #B5D4F4;background:{bg_arq};color:#1a2744;text-align:{align_arq};{bold_arq}">{val_arq}</td>'
+            html_arq += '</tr>'
+        html_arq += '</table></div>'
+        st.markdown(html_arq, unsafe_allow_html=True)
+
+        # ── Anàlisi d'ecosistema: amb qui rendeix millor cada jugadora ──────
+        st.markdown(sec("🔍 Anàlisi d'ecosistema — amb quins arquetips rendeix millor?"), unsafe_allow_html=True)
+        st.caption("Creua els quintets/parelles ja calculats amb els arquetips per veure quines combinacions d'estils funcionen millor juntes.")
+
+        jug_eco = st.selectbox("Jugadora a analitzar", df_show_arq["Jugadora"].tolist(), key="jug_eco_arq")
+
+        if jug_eco:
+            arquetip_jug = df_show_arq[df_show_arq["Jugadora"]==jug_eco]["Arquetip"].values[0]
+            equip_jug = agg_arq[agg_arq[col_j_arq]==jug_eco]["equip"].values[0] if col_j_arq in agg_arq.columns else df_show_arq[df_show_arq["Jugadora"]==jug_eco]["Equip"].values[0]
+
+            st.markdown(f'<div style="font-size:13px;font-weight:600;color:#185FA5;margin-bottom:8px">'
+                       f'{jug_eco} — <span style="color:#0C447C">{arquetip_jug}</span></div>', unsafe_allow_html=True)
+
+            # Calcula +/- de la jugadora quan juga amb cada altra jugadora (parelles)
+            ecosistema_rows = []
+            df_pr_eco = load_partits_db()
+
+            for _,p_eco in df_pr_eco.iterrows():
+                mid_eco = p_eco['match_id']
+                df_m_eco = load_jugades_db(mid_eco)
+                if df_m_eco.empty: continue
+                col_j_m = "jugador" if "jugador" in df_m_eco.columns else "jugadora"
+                df_m_eco["jugador"] = df_m_eco[col_j_m].fillna("")
+                if jug_eco not in df_m_eco["jugador"].values: continue
+
+                rows_par_eco = calc_pm_combinacions(df_m_eco, mode="parelles")
+                for r_par_eco in rows_par_eco:
+                    if jug_eco in r_par_eco["combinacio"]:
+                        altra = [j for j in r_par_eco["combinacio"] if j != jug_eco]
+                        if not altra: continue
+                        altra_jug = altra[0]
+                        ecosistema_rows.append({
+                            "company": altra_jug,
+                            "minuts": r_par_eco["minuts"],
+                            "pf": r_par_eco["pf"],
+                            "pc": r_par_eco["pc"]
+                        })
+
+            if ecosistema_rows:
+                df_eco = pd.DataFrame(ecosistema_rows)
+                eco_acum = df_eco.groupby("company").agg(
+                    minuts=("minuts","sum"), pf=("pf","sum"), pc=("pc","sum")
+                ).reset_index()
+                eco_acum["pm"] = eco_acum["pf"]-eco_acum["pc"]
+                eco_acum["pm_min"] = (eco_acum["pm"]/eco_acum["minuts"].replace(0,1)).round(3)
+
+                # Afegeix l'arquetip de cada company
+                arq_map = dict(zip(df_show_arq["Jugadora"], df_show_arq["Arquetip"]))
+                eco_acum["Arquetip company"] = eco_acum["company"].map(arq_map).fillna("—")
+
+                # Agrupa per arquetip del company
+                eco_per_arq = eco_acum.groupby("Arquetip company").agg(
+                    minuts=("minuts","sum"), pf=("pf","sum"), pc=("pc","sum")
+                ).reset_index()
+                eco_per_arq["pm"] = eco_per_arq["pf"]-eco_per_arq["pc"]
+                eco_per_arq["pm_min"] = (eco_per_arq["pm"]/eco_per_arq["minuts"].replace(0,1)).round(3)
+                eco_per_arq = eco_per_arq[eco_per_arq["minuts"]>=2].sort_values("pm_min", ascending=False)
+
+                if not eco_per_arq.empty:
+                    colors_eco = ["#16a34a" if v>=0 else "#dc2626" for v in eco_per_arq["pm_min"]]
+                    fig_eco = go.Figure()
+                    fig_eco.add_trace(go.Bar(
+                        y=eco_per_arq["Arquetip company"],
+                        x=eco_per_arq["pm_min"],
+                        orientation='h',
+                        marker_color=colors_eco,
+                        text=[f"{'+'if v>=0 else ''}{v:.3f}" for v in eco_per_arq["pm_min"]],
+                        textposition="outside",
+                        customdata=eco_per_arq["minuts"],
+                        hovertemplate="<b>%{y}</b><br>+/- per min: %{x:+.3f}<br>Minuts junts: %{customdata:.1f}<extra></extra>"
+                    ))
+                    fig_eco.add_vline(x=0, line_dash="solid", line_color="#e2e4e8")
+                    fig_eco.update_xaxes(title="+/- per minut quan juguen junts")
+                    fig_eco.update_layout(height=max(250, len(eco_per_arq)*40))
+                    st.plotly_chart(chart_style(fig_eco, max(250, len(eco_per_arq)*40),
+                        f"{jug_eco} — rendiment segons l'arquetip del company"), use_container_width=True)
+
+                    millor_arq = eco_per_arq.iloc[0]
+                    pitjor_arq = eco_per_arq.iloc[-1]
+                    st.info(f"📊 **{jug_eco}** rendeix millor amb perfils **{millor_arq['Arquetip company']}** "
+                            f"({millor_arq['pm_min']:+.3f}/min, {millor_arq['minuts']:.0f} min junts) i pitjor amb "
+                            f"**{pitjor_arq['Arquetip company']}** ({pitjor_arq['pm_min']:+.3f}/min, {pitjor_arq['minuts']:.0f} min junts).")
+
+                    # Detall per company individual
+                    with st.expander("Veure detall per companya individual"):
+                        eco_detall = eco_acum[["company","Arquetip company","minuts","pm","pm_min"]].sort_values("pm_min", ascending=False)
+                        eco_detall.columns = ["Companya","Arquetip","Min junts","+/-","+/- per min"]
+                        html_eco = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;color:#1a2744">'
+                        html_eco += '<tr>' + ''.join(f'<th style="background:#D6E8F7;color:#0C447C;padding:6px 10px;text-align:center;border:1px solid #B5D4F4;font-weight:600">{c}</th>' for c in eco_detall.columns) + '</tr>'
+                        for i_e,(_,row_e) in enumerate(eco_detall.iterrows()):
+                            bg_e = '#ffffff' if i_e%2==0 else '#EBF4FC'
+                            html_eco += '<tr>'
+                            for ci_e,col_e in enumerate(eco_detall.columns):
+                                align_e = 'left' if ci_e<2 else 'center'
+                                html_eco += f'<td style="padding:5px 10px;border:1px solid #B5D4F4;background:{bg_e};color:#1a2744;text-align:{align_e}">{row_e[col_e]}</td>'
+                            html_eco += '</tr>'
+                        html_eco += '</table></div>'
+                        st.markdown(html_eco, unsafe_allow_html=True)
+                else:
+                    st.info("No hi ha prou minuts compartits amb altres jugadores per fer l'anàlisi.")
+            else:
+                st.info("No hi ha dades suficients de parelles per a aquesta jugadora.")
+
     # ── Històric temps morts ────────────────────────────────────────────────
     st.markdown(sec("⏸ Efectivitat dels temps morts — temporada"), unsafe_allow_html=True)
     df_to_hist = load_timeouts_db()
