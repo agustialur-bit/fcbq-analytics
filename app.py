@@ -4265,6 +4265,103 @@ with t6:
                          bold=(col_a=='Jugadora'),fg=BLAU_F_A if col_a=='Jugadora' else '000000')
                 ws_a.row_dimensions[row_a].height=18; row_a+=1
 
+            # ── PESTANYA 2: ECOSISTEMA — amb qui rendeix millor cada jugadora ──
+            ws_b = wb_a.create_sheet("Ecosistema")
+            ws_b.sheet_view.showGridLines=False; ws_b.column_dimensions['A'].width=2
+            ws_b.merge_cells('B1:I1')
+            c=ws_b['B1']; c.value=f'MICKI ANALÍTICA — ECOSISTEMA D\'EQUIP — {eq_filtre_arq}'
+            c.font=Font(name='Arial',bold=True,color=BLANC_A,size=14)
+            c.fill=fons_a(BLAU_F_A); c.alignment=Alignment(horizontal='center',vertical='center')
+            ws_b.row_dimensions[1].height=36
+            ws_b.merge_cells('B2:I2')
+            c=ws_b['B2']; c.value='Amb quin tipus de companya rendeix millor cada jugadora (segons +/- per minut quan juguen juntes)'
+            c.font=Font(name='Arial',color=BLANC_A,size=10); c.fill=fons_a(BLAU_M_A)
+            c.alignment=Alignment(horizontal='center',vertical='center')
+            ws_b.row_dimensions[2].height=18; ws_b.row_dimensions[3].height=6
+
+            for ci_b,w_b in zip(range(2,10),[22,28,12,10,10,10,38]):
+                ws_b.column_dimensions[get_column_letter(ci_b)].width=w_b
+
+            row_b=4
+            jugs_eq_arq = df_eq_arq["Jugadora"].tolist()
+            df_pr_eco_a = load_partits_db()
+            arq_map_a = dict(zip(df_show_arq["Jugadora"], df_show_arq["Arquetip"]))
+
+            for jug_b in jugs_eq_arq:
+                # Recull totes les parelles d'aquesta jugadora a tots els partits
+                eco_rows_b = []
+                for _,p_b in df_pr_eco_a.iterrows():
+                    mid_b = p_b['match_id']
+                    df_m_b = load_jugades_db(mid_b)
+                    if df_m_b.empty: continue
+                    col_j_b = "jugador" if "jugador" in df_m_b.columns else "jugadora"
+                    df_m_b["jugador"] = df_m_b[col_j_b].fillna("")
+                    if jug_b not in df_m_b["jugador"].values: continue
+                    rows_par_b = calc_pm_combinacions(df_m_b, mode="parelles")
+                    for r_par_b in rows_par_b:
+                        if jug_b in r_par_b["combinacio"]:
+                            altra_b = [j for j in r_par_b["combinacio"] if j != jug_b]
+                            if not altra_b: continue
+                            eco_rows_b.append({
+                                "company": altra_b[0],
+                                "minuts": r_par_b["minuts"],
+                                "pf": r_par_b["pf"],
+                                "pc": r_par_b["pc"]
+                            })
+
+                if not eco_rows_b: continue
+                df_eco_b = pd.DataFrame(eco_rows_b)
+                eco_acum_b = df_eco_b.groupby("company").agg(
+                    minuts=("minuts","sum"), pf=("pf","sum"), pc=("pc","sum")
+                ).reset_index()
+                eco_acum_b["pm"] = eco_acum_b["pf"]-eco_acum_b["pc"]
+                eco_acum_b["pm_min"] = (eco_acum_b["pm"]/eco_acum_b["minuts"].replace(0,1)).round(3)
+                eco_acum_b["Arquetip"] = eco_acum_b["company"].map(arq_map_a).fillna("—")
+
+                eco_per_arq_b = eco_acum_b.groupby("Arquetip").agg(
+                    minuts=("minuts","sum"), pf=("pf","sum"), pc=("pc","sum")
+                ).reset_index()
+                eco_per_arq_b["pm"] = eco_per_arq_b["pf"]-eco_per_arq_b["pc"]
+                eco_per_arq_b["pm_min"] = (eco_per_arq_b["pm"]/eco_per_arq_b["minuts"].replace(0,1)).round(3)
+                eco_per_arq_b = eco_per_arq_b[eco_per_arq_b["minuts"]>=2].sort_values("pm_min", ascending=False)
+
+                if eco_per_arq_b.empty: continue
+
+                # Capçalera jugadora
+                ws_b.merge_cells(f'B{row_b}:I{row_b}')
+                arquetip_propi = arq_map_a.get(jug_b, "—")
+                c=ws_b[f'B{row_b}']; c.value=f'{jug_b}  ({arquetip_propi})'
+                c.font=Font(name='Arial',bold=True,color=BLANC_A,size=11)
+                c.fill=fons_a(BLAU_M_A); c.alignment=Alignment(horizontal='left',vertical='center')
+                ws_b.row_dimensions[row_b].height=20; row_b+=1
+
+                for ci_b,cap_b in zip(range(2,9),['Arquetip company','Min junts','Pts favor','Pts contra','+/-','+/- per min','Conclusió']):
+                    fc_a(ws_b,row_b,ci_b,cap_b,bold=True,bg=BLAU_C_A,fg=BLAU_F_A,size=9)
+                ws_b.row_dimensions[row_b].height=18; row_b+=1
+
+                millor_b = eco_per_arq_b.iloc[0]
+                pitjor_b = eco_per_arq_b.iloc[-1]
+
+                for i_b,(_,r_b) in enumerate(eco_per_arq_b.iterrows()):
+                    bg_rb = BLANC_A if i_b%2==0 else BLAU_C_A
+                    pm_v = r_b['pm_min']
+                    pm_bg = 'D5F5E3' if pm_v>=0 else 'FADBD8'
+                    pm_fg = '0F6E56' if pm_v>=0 else '993C1D'
+                    concl = ''
+                    if r_b['Arquetip']==millor_b['Arquetip']: concl='⭐ Millor combinació'
+                    elif r_b['Arquetip']==pitjor_b['Arquetip']: concl='⚠️ Pitjor combinació'
+
+                    fc_a(ws_b,row_b,2,r_b['Arquetip'],bg=bg_rb,align='left',size=9)
+                    fc_a(ws_b,row_b,3,round(r_b['minuts'],1),bg=bg_rb,size=9)
+                    fc_a(ws_b,row_b,4,int(r_b['pf']),bg=bg_rb,size=9)
+                    fc_a(ws_b,row_b,5,int(r_b['pc']),bg=bg_rb,size=9)
+                    fc_a(ws_b,row_b,6,f"{'+'if r_b['pm']>=0 else ''}{int(r_b['pm'])}",bold=True,bg=bg_rb,size=9)
+                    fc_a(ws_b,row_b,7,f"{'+'if pm_v>=0 else ''}{pm_v}",bold=True,bg=pm_bg,fg=pm_fg,size=9)
+                    fc_a(ws_b,row_b,8,concl,bg=bg_rb,align='left',size=9)
+                    ws_b.row_dimensions[row_b].height=16; row_b+=1
+
+                row_b += 1
+
             buf_a=io_arq.BytesIO(); wb_a.save(buf_a); buf_a.seek(0)
             st.download_button(
                 label=f"📥 Clic per descarregar — {eq_filtre_arq}",
