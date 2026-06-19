@@ -4208,6 +4208,72 @@ with t6:
         html_arq += '</table></div>'
         st.markdown(html_arq, unsafe_allow_html=True)
 
+        # ── Descàrrega filtrada per equip ───────────────────────────────────
+        st.markdown("**📥 Descarregar arquetips d'un equip concret**")
+        equips_arq = sorted(df_show_arq["Equip"].unique().tolist())
+        eq_filtre_arq = st.selectbox("Selecciona l'equip", equips_arq, key="eq_filtre_arq")
+
+        if st.button(f"⬇ Generar Excel d'arquetips — {eq_filtre_arq}", key="btn_excel_arq"):
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+            from openpyxl.utils import get_column_letter
+            import io as io_arq
+
+            df_eq_arq = df_show_arq[df_show_arq["Equip"]==eq_filtre_arq].copy()
+
+            BLAU_F_A='0C447C'; BLAU_M_A='185FA5'; BLAU_C_A='EBF4FC'; BLANC_A='FFFFFF'
+
+            def fons_a(c): return PatternFill('solid', fgColor=c)
+            def vora_a():
+                s=Side(style='thin',color='CCCCCC')
+                return Border(top=s,bottom=s,left=s,right=s)
+            def fc_a(ws,r,c,v,bold=False,bg=None,fg='000000',align='center',size=10):
+                cell=ws.cell(row=r,column=c,value=v)
+                cell.font=Font(name='Arial',bold=bold,color=fg,size=size)
+                if bg: cell.fill=fons_a(bg)
+                cell.alignment=Alignment(horizontal=align,vertical='center')
+                cell.border=vora_a()
+                return cell
+
+            wb_a = Workbook(); wb_a.remove(wb_a.active)
+            ws_a = wb_a.create_sheet("Arquetips")
+            ws_a.sheet_view.showGridLines=False; ws_a.column_dimensions['A'].width=2
+            ws_a.merge_cells('B1:J1')
+            c=ws_a['B1']; c.value=f'MICKI ANALÍTICA — ARQUETIPS DE JUGADORA — {eq_filtre_arq}'
+            c.font=Font(name='Arial',bold=True,color=BLANC_A,size=14)
+            c.fill=fons_a(BLAU_F_A); c.alignment=Alignment(horizontal='center',vertical='center')
+            ws_a.row_dimensions[1].height=36
+            ws_a.merge_cells('B2:J2')
+            c=ws_a['B2']; c.value=f"Generat: {datetime.now().strftime('%d/%m/%Y %H:%M')} · {len(df_eq_arq)} jugadores"
+            c.font=Font(name='Arial',color=BLANC_A,size=10); c.fill=fons_a(BLAU_M_A)
+            c.alignment=Alignment(horizontal='center',vertical='center')
+            ws_a.row_dimensions[2].height=18; ws_a.row_dimensions[3].height=6
+
+            for ci_a,w_a in zip(range(2,11),[24,16,9,9,10,10,10,10,28]):
+                ws_a.column_dimensions[get_column_letter(ci_a)].width=w_a
+
+            row_a=4
+            for ci_a,cap_a in enumerate(df_eq_arq.columns,2):
+                fc_a(ws_a,row_a,ci_a,cap_a,bold=True,bg=BLAU_M_A,fg=BLANC_A,size=9)
+            ws_a.row_dimensions[row_a].height=20; row_a+=1
+
+            for i_a,(_,r_a) in enumerate(df_eq_arq.iterrows()):
+                bg_a = BLAU_C_A if i_a%2==0 else BLANC_A
+                for ci_a,col_a in enumerate(df_eq_arq.columns,2):
+                    align_a = 'left' if col_a in ('Jugadora','Equip','Arquetip') else 'center'
+                    fc_a(ws_a,row_a,ci_a,r_a[col_a],bg=bg_a,align=align_a,size=9,
+                         bold=(col_a=='Jugadora'),fg=BLAU_F_A if col_a=='Jugadora' else '000000')
+                ws_a.row_dimensions[row_a].height=18; row_a+=1
+
+            buf_a=io_arq.BytesIO(); wb_a.save(buf_a); buf_a.seek(0)
+            st.download_button(
+                label=f"📥 Clic per descarregar — {eq_filtre_arq}",
+                data=buf_a.getvalue(),
+                file_name=f"arquetips_{eq_filtre_arq.replace(' ','_')}_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_excel_arq"
+            )
+
         # ── Anàlisi d'ecosistema: amb qui rendeix millor cada jugadora ──────
         st.markdown(sec("🔍 Anàlisi d'ecosistema — amb quins arquetips rendeix millor?"), unsafe_allow_html=True)
         st.caption("Creua els quintets/parelles ja calculats amb els arquetips per veure quines combinacions d'estils funcionen millor juntes.")
