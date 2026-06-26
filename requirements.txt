@@ -1,6 +1,7 @@
-streamlit>=1.45.0
+streamlit
 pandas
-plotly>=5.22.0
-pillow>=11.0.0
+plotly
 openpyxl
 scipy
+Pillow
+python-pptx
