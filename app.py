@@ -2013,13 +2013,14 @@ def genera_excel_analisi():
 def _calc_ts_usage_jug(df_jug, df_equip_on):
     """Retorna (ts_pct, usage, pts, pts_per_tir) per a una jugadora."""
     pts      = int(df_jug["punts"].sum())
-    n_tc     = int(df_jug["accio"].str.contains("Tir de 2|Tir de 3|Cistella de 2|Cistella de 3", case=False, na=False).sum())
-    n_tl     = int(df_jug["accio"].str.contains("Tir lliure", case=False, na=False).sum())
+    PAT_TC = "Cistella de 2|Cistella de 3|Intent fallat de 2|Intent fallat de 3|fallat de 2|fallat de 3"
+    PAT_TL = "Cistella de 1|Intent fallat de 1|Tir lliure convertit|Tir lliure fallat"
+    n_tc     = int(df_jug["accio"].str.contains(PAT_TC, case=False, na=False).sum())
+    n_tl     = int(df_jug["accio"].str.contains(PAT_TL, case=False, na=False).sum())
     denom    = n_tc + 0.44 * n_tl
     ts_pct   = round(pts / (2 * denom) * 100, 1) if denom > 0 else 0.0
-    ppt      = round(pts / denom, 2) if denom > 0 else 0.0
-    tc_eq    = int(df_equip_on["accio"].str.contains("Tir de 2|Tir de 3|Cistella de 2|Cistella de 3", case=False, na=False).sum())
-    tl_eq    = int(df_equip_on["accio"].str.contains("Tir lliure", case=False, na=False).sum())
+    tc_eq    = int(df_equip_on["accio"].str.contains(PAT_TC, case=False, na=False).sum())
+    tl_eq    = int(df_equip_on["accio"].str.contains(PAT_TL, case=False, na=False).sum())
     denom_eq = tc_eq + 0.44 * tl_eq
     usage    = round(denom / denom_eq * 100, 1) if denom_eq > 0 else 0.0
     return ts_pct, usage, pts, ppt
@@ -2259,11 +2260,11 @@ def genera_pptx_postpartit(match_id, df_plays, nom_a, nom_b, score_a, score_b,
     _add_text(s3, f"Rendiment individual — {nom_a}", 1.5, 0.6, 28, 1.3,
               24, bold=True, color=_CD, font="Cambria", align="left")
 
-    hdr_j = ["Jugadora", "Pts", "Usage%", "TS%", "Pts/Tir", "+/-"]
+    hdr_j = ["Jugadora", "Pts", "Usage%", "TS%", "+/-"]
     rows_j = [[j["nom"], j["pts"], f"{j['usage']}%", f"{j['ts']}%",
-               j["ppt"], ("+"+str(j["pm"]) if j["pm"]>=0 else str(j["pm"]))]
+               ("+"+str(j["pm"]) if j["pm"]>=0 else str(j["pm"]))]
               for j in jugs_out[:10]]
-    cw_j = [9.0, 3.0, 3.5, 3.5, 3.5, 3.0]
+    cw_j = [10.0, 3.5, 4.0, 4.0, 3.5]
     _add_table(s3, hdr_j, rows_j, 1.5, 2.2, sum(cw_j), cw_j, row_bg2="EBF4FC")
 
     # ── SLIDE 4: Eficiència comparativa ──────────────────────────────────────
@@ -2431,11 +2432,11 @@ def genera_pptx_scouting(nom_rival, nom_manresa, df_hist_rival, df_plays_dict):
     _slide_bg(s2, _CBG)
     _add_text(s2, f"Jugadores clau — {nom_rival}", 1.5, 0.6, 28, 1.3,
               24, bold=True, color=_CD, font="Cambria", align="left")
-    hdr_jr = ["Jugadora", "Pts/P", "Usage%", "TS%", "Pts/Tir"]
-    rows_jr = [[j["nom"], j["pts_pp"], f"{j['usage']}%", f"{j['ts']}%", j["ppt"]]
+    hdr_jr = ["Jugadora", "Pts/P", "Usage%", "TS%"]
+    rows_jr = [[j["nom"], j["pts_pp"], f"{j['usage']}%", f"{j['ts']}%"]
                for j in jugs_r[:10]]
     _add_table(s2, hdr_jr, rows_jr, 1.5, 2.2, 30.0,
-               [12.0, 4.5, 4.5, 4.5, 4.5],
+               [15.0, 5.0, 5.0, 5.0],
                hdr_bg=_CR, row_bg2="FFF5F5")
     # Zona notes observació
     _add_rect(s2, 1.5, 14.0, 30.0, 4.0, _CW, radius=True)
@@ -3007,24 +3008,21 @@ with t2:
             usage_disp = calc_usage_rate(dj, df_eq_on_us)
         else:
             usage_disp = calc_usage_rate(dj, df_orig[df_orig["idEquip"]==eq_id])
-        # Pts per tir (inclou TL a 0.44)
+        # TS% (True Shooting) — patró correcte: cistelles + fallats
         dj_pts   = int(dj["punts"].sum())
-        n_tc_jug = int(dj["accio"].str.contains("Tir de 2|Tir de 3|Cistella de 2|Cistella de 3", case=False, na=False).sum())
-        n_tl_jug = int(dj["accio"].str.contains("Tir lliure", case=False, na=False).sum())
-        denom_pps = n_tc_jug + 0.44 * n_tl_jug
-        pts_per_shot = round(dj_pts / denom_pps, 2) if denom_pps > 0 else 0.0
-
-        # TS% (True Shooting)
+        PAT_TC_T2 = "Cistella de 2|Cistella de 3|Intent fallat de 2|Intent fallat de 3|fallat de 2|fallat de 3"
+        PAT_TL_T2 = "Cistella de 1|Intent fallat de 1|Tir lliure convertit|Tir lliure fallat"
+        n_tc_jug = int(dj["accio"].str.contains(PAT_TC_T2, case=False, na=False).sum())
+        n_tl_jug = int(dj["accio"].str.contains(PAT_TL_T2, case=False, na=False).sum())
         ts_denom_jug = 2 * (n_tc_jug + 0.44 * n_tl_jug)
         ts_pct_jug = round(dj_pts / ts_denom_jug * 100, 1) if ts_denom_jug > 0 else 0.0
 
         imp_rows.append({"Equip":eq_nom,"Jugadora":jug,"Pts favor":pf,"Pts contra":pc,
             "Parcial":f"+{pf-pc}" if pf>=pc else str(pf-pc),
             "Usage%": f"{usage_disp}%",
-            "Pts/Tir": pts_per_shot,
             "TS%": ts_pct_jug,
             "_diff":pf-pc,
-            "_n_tirs": int(denom_pps)})
+            "_n_tirs": int(n_tc_jug + 0.44*n_tl_jug)})
     df_imp=pd.DataFrame(imp_rows).sort_values("_diff",ascending=False).drop(columns=["_diff","_n_tirs"])
     t_ia,t_ib=st.tabs([nom_a,nom_b])
     for it,in_nom in [(t_ia,nom_a),(t_ib,nom_b)]:
