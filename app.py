@@ -2518,28 +2518,41 @@ with t2:
             usage_disp = calc_usage_rate(dj, df_eq_on_us)
         else:
             usage_disp = calc_usage_rate(dj, df_orig[df_orig["idEquip"]==eq_id])
+        # Pts per tir (inclou TL a 0.44)
+        dj_pts   = int(dj["punts"].sum())
+        n_tc_jug = int(dj["accio"].str.contains("Tir de 2|Tir de 3|Cistella de 2|Cistella de 3", case=False, na=False).sum())
+        n_tl_jug = int(dj["accio"].str.contains("Tir lliure", case=False, na=False).sum())
+        denom_pps = n_tc_jug + 0.44 * n_tl_jug
+        pts_per_shot = round(dj_pts / denom_pps, 2) if denom_pps > 0 else 0.0
+
+        # TS% (True Shooting)
+        ts_denom_jug = 2 * (n_tc_jug + 0.44 * n_tl_jug)
+        ts_pct_jug = round(dj_pts / ts_denom_jug * 100, 1) if ts_denom_jug > 0 else 0.0
+
         imp_rows.append({"Equip":eq_nom,"Jugadora":jug,"Pts favor":pf,"Pts contra":pc,
             "Parcial":f"+{pf-pc}" if pf>=pc else str(pf-pc),
             "Usage%": f"{usage_disp}%",
-            "_diff":pf-pc})
-    df_imp=pd.DataFrame(imp_rows).sort_values("_diff",ascending=False).drop(columns="_diff")
+            "Pts/Tir": pts_per_shot,
+            "TS%": ts_pct_jug,
+            "_diff":pf-pc,
+            "_n_tirs": int(denom_pps)})
+    df_imp=pd.DataFrame(imp_rows).sort_values("_diff",ascending=False).drop(columns=["_diff","_n_tirs"])
     t_ia,t_ib=st.tabs([nom_a,nom_b])
     for it,in_nom in [(t_ia,nom_a),(t_ib,nom_b)]:
         with it:
             di=df_imp[df_imp["Equip"]==in_nom].drop(columns="Equip")
             st.dataframe(di,use_container_width=True,hide_index=True)
 
-    # ── Usage% vs Eficiència (scatter) ─────────────────────────────────────
+    # ── Scatters Usage% vs Eficiència ──────────────────────────────────────
     st.markdown(sec("Usage% vs Eficiència"), unsafe_allow_html=True)
-    st.caption("Eix X = % de possessions usades · Eix Y = Pts/min · Quadrant ideal: dalt a la dreta")
 
     if imp_rows:
         df_scatter = pd.DataFrame(imp_rows).copy()
         df_scatter["_usage_num"] = df_scatter["Usage%"].str.replace("%","").astype(float)
-        # Pts totals de la jugadora (de la taula d'estadístiques)
         df_scatter["_pts"] = df_scatter["Jugadora"].apply(
             lambda j: int(df_orig[df_orig[col_j_imp]==j]["punts"].sum()))
-        # Minuts reals (dels intervals calculats)
+
+        # Minuts reals per jugadora
         MINS_Q_SC = 10
         def get_minuts(jug):
             ivs = []; ep = {}
@@ -2565,72 +2578,112 @@ with t2:
             for ti_o in ep.values():
                 fi_o = float(df_orig["quart"].max()*MINS_Q_SC)
                 if fi_o > ti_o: ivs.append((ti_o, fi_o))
-            total = sum(tf-ti for ti,tf in ivs)
-            return max(total, 1)
-        df_scatter["_min"] = df_scatter["Jugadora"].apply(get_minuts)
+            return max(sum(tf-ti for ti,tf in ivs), 1)
+
+        df_scatter["_min"]    = df_scatter["Jugadora"].apply(get_minuts)
         df_scatter["Pts/min"] = (df_scatter["_pts"] / df_scatter["_min"]).round(2)
-        df_scatter["_color"] = df_scatter["Equip"].map({nom_a: COLOR_A, nom_b: COLOR_B})
 
-        fig_sc = go.Figure()
-        for eq, color in [(nom_a, COLOR_A), (nom_b, COLOR_B)]:
-            df_eq = df_scatter[df_scatter["Equip"]==eq]
-            if df_eq.empty: continue
-            fig_sc.add_trace(go.Scatter(
-                x=df_eq["_usage_num"],
-                y=df_eq["Pts/min"],
-                mode="markers+text",
-                name=eq,
-                marker=dict(size=14, color=color,
-                            line=dict(width=1.5, color="white")),
-                text=df_eq["Jugadora"].apply(
-                    lambda n: n.split()[1] if len(n.split())>1 else n),
-                textposition="top center",
-                textfont=dict(size=9),
-                hovertemplate=(
-                    "<b>%{text}</b><br>"
-                    "Usage: %{x:.1f}%<br>"
-                    "Pts/min: %{y:.2f}<br>"
-                    "<extra></extra>"
-                )
-            ))
+        # Funció reutilitzable per construir scatter
+        def scatter_usage(df_sc, y_col, y_label, title, caption_txt,
+                          quadrants, ref_fmt):
+            fig = go.Figure()
+            for eq, color in [(nom_a, COLOR_A), (nom_b, COLOR_B)]:
+                df_eq = df_sc[df_sc["Equip"]==eq]
+                if df_eq.empty: continue
+                # Mida del punt proporcional als tirs intentats
+                sizes = df_eq["_n_tirs"].clip(lower=1)
+                sizes_norm = (sizes / sizes.max() * 18 + 8).round(0)
+                fig.add_trace(go.Scatter(
+                    x=df_eq["_usage_num"],
+                    y=df_eq[y_col],
+                    mode="markers+text",
+                    name=eq,
+                    marker=dict(size=sizes_norm, color=color,
+                                line=dict(width=1.5, color="white"),
+                                opacity=0.85),
+                    text=df_eq["Jugadora"].apply(
+                        lambda n: n.split()[1] if len(n.split())>1 else n),
+                    textposition="top center",
+                    textfont=dict(size=9),
+                    hovertemplate=(
+                        "<b>%{text}</b><br>"
+                        f"Usage: %{{x:.1f}}%<br>"
+                        f"{y_label}: %{{y:{ref_fmt}}}<br>"
+                        "Tirs int.: %{marker.size:.0f}<extra></extra>"
+                    )
+                ))
+            mx_u = df_sc["_usage_num"].mean()
+            my_v = df_sc[y_col].mean()
+            fig.add_vline(x=mx_u, line_dash="dot", line_color="#e2e4e8",
+                annotation_text=f"Mitjana {mx_u:.0f}%",
+                annotation_font_size=9, annotation_font_color="#9ca3af")
+            fig.add_hline(y=my_v, line_dash="dot", line_color="#e2e4e8",
+                annotation_text=f"Mitjana {my_v:{ref_fmt}}",
+                annotation_font_size=9, annotation_font_color="#9ca3af")
+            x_max = df_sc["_usage_num"].max() * 1.12
+            y_max = df_sc[y_col].max() * 1.12
+            for txt, xq, yq, cq in quadrants:
+                fig.add_annotation(x=xq, y=yq, text=txt,
+                    showarrow=False, font=dict(size=9, color=cq),
+                    xanchor="center", yanchor="middle", opacity=0.45)
+            fig.update_layout(
+                xaxis=dict(title="Usage% (% possessions usades)",
+                           showgrid=True, gridcolor="#f3f4f6", color="#9ca3af"),
+                yaxis=dict(title=y_label,
+                           showgrid=True, gridcolor="#f3f4f6", color="#9ca3af"),
+                paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+                font=dict(color="#374151", family="Inter"),
+                legend=dict(bgcolor="#ffffff", bordercolor="#e2e4e8",
+                            borderwidth=1, orientation="h",
+                            yanchor="bottom", y=1.02, xanchor="right", x=1),
+                margin=dict(l=0,r=0,t=40,b=0), height=390)
+            st.caption(caption_txt)
+            st.plotly_chart(chart_style(fig, 390, title), use_container_width=True)
 
-        # Línies de mitjana
-        mitjana_usage = df_scatter["_usage_num"].mean()
-        mitjana_pts   = df_scatter["Pts/min"].mean()
-        fig_sc.add_vline(x=mitjana_usage, line_dash="dot",
-            line_color="#e2e4e8",
-            annotation_text=f"Mitjana {mitjana_usage:.0f}%",
-            annotation_font_size=9, annotation_font_color="#9ca3af")
-        fig_sc.add_hline(y=mitjana_pts, line_dash="dot",
-            line_color="#e2e4e8",
-            annotation_text=f"Mitjana {mitjana_pts:.2f}",
-            annotation_font_size=9, annotation_font_color="#9ca3af")
+        q_ts = [
+            ("⭐ Molt ús · molt eficient",
+             df_scatter["_usage_num"].max()*0.92,
+             df_scatter["TS%"].max()*0.96, "#16a34a"),
+            ("⚠️ Molt ús · poc eficient",
+             df_scatter["_usage_num"].max()*0.92,
+             df_scatter["TS%"].min()*1.08, "#dc2626"),
+            ("💡 Poc ús · molt eficient",
+             df_scatter["_usage_num"].min()*1.15,
+             df_scatter["TS%"].max()*0.96, "#185FA5"),
+            ("🔄 Rol secundari",
+             df_scatter["_usage_num"].min()*1.15,
+             df_scatter["TS%"].min()*1.08, "#9ca3af"),
+        ]
+        q_pm = [
+            ("⭐ Molt ús · molt productiva",
+             df_scatter["_usage_num"].max()*0.92,
+             df_scatter["Pts/min"].max()*0.96, "#16a34a"),
+            ("⚠️ Molt ús · poc productiva",
+             df_scatter["_usage_num"].max()*0.92,
+             df_scatter["Pts/min"].min()*1.08, "#dc2626"),
+            ("💡 Poc ús · molt productiva",
+             df_scatter["_usage_num"].min()*1.15,
+             df_scatter["Pts/min"].max()*0.96, "#185FA5"),
+            ("🔄 Rol secundari",
+             df_scatter["_usage_num"].min()*1.15,
+             df_scatter["Pts/min"].min()*1.08, "#9ca3af"),
+        ]
 
-        # Etiquetes dels quadrants
-        x_max = df_scatter["_usage_num"].max() * 1.1
-        y_max = df_scatter["Pts/min"].max() * 1.1
-        for txt, x, y, color in [
-            ("⭐ Estrella", x_max*0.95, y_max*0.95, "#16a34a"),
-            ("⚠️ Massa ús", x_max*0.95, y_max*0.05, "#dc2626"),
-            ("💡 Infravalorada", x_max*0.05, y_max*0.95, "#185FA5"),
-            ("🔄 Rol secundari", x_max*0.05, y_max*0.05, "#9ca3af"),
-        ]:
-            fig_sc.add_annotation(x=x, y=y, text=txt,
-                showarrow=False, font=dict(size=9, color=color),
-                xanchor="center", yanchor="middle", opacity=0.5)
+        # ── Gràfic 1: TS% vs Usage% ────────────────────────────────────────
+        scatter_usage(
+            df_scatter, "TS%", "TS% (True Shooting)",
+            "Usage% vs True Shooting% — eficiència real de tir",
+            "TS% = Punts / (2 × (TC_int + 0.44 × TL_int)) × 100 · "
+            "Mida del punt = tirs intentats · Quadrant ideal: dalt a la dreta",
+            q_ts, ".1f")
 
-        fig_sc.update_layout(
-            xaxis=dict(title="Usage% (% possessions usades)",
-                       showgrid=True, gridcolor="#f3f4f6", color="#9ca3af"),
-            yaxis=dict(title="Pts/min",
-                       showgrid=True, gridcolor="#f3f4f6", color="#9ca3af"),
-            paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
-            font=dict(color="#374151", family="Inter"),
-            legend=dict(bgcolor="#ffffff", bordercolor="#e2e4e8",
-                        borderwidth=1, orientation="h",
-                        yanchor="bottom", y=1.02, xanchor="right", x=1),
-            margin=dict(l=0,r=0,t=40,b=0), height=380)
-        st.plotly_chart(fig_sc, use_container_width=True)
+        # ── Gràfic 2: Pts/min vs Usage% ────────────────────────────────────
+        scatter_usage(
+            df_scatter, "Pts/min", "Pts/min",
+            "Usage% vs Pts/min — productivitat per minut",
+            "Pts/min = punts anotats / minuts reals en pista · "
+            "Mida del punt = tirs intentats · Quadrant ideal: dalt a la dreta",
+            q_pm, ".2f")
 
     st.markdown(sec("Combinació de jugadores"), unsafe_allow_html=True)
     eq_combo=st.selectbox("Equip",[nom_a,nom_b],key="combo_eq")
