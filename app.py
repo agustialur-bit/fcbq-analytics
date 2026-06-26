@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import urllib.request
-import json, re, sqlite3, os, subprocess, tempfile
+import json, re, sqlite3, os
 from datetime import datetime
 
 st.set_page_config(page_title="Micki Analítica", page_icon="🏀", layout="wide", initial_sidebar_state="expanded")
@@ -2010,10 +2010,6 @@ def genera_excel_analisi():
     buf=io.BytesIO(); wb.save(buf); buf.seek(0)
     return buf.getvalue()
 
-SCRIPT_POSTPARTIT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "genera_pptx_postpartit.js")
-SCRIPT_SCOUTING   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "genera_pptx_scouting.js")
-
-
 def _calc_ts_usage_jug(df_jug, df_equip_on):
     """Retorna (ts_pct, usage, pts, pts_per_tir) per a una jugadora."""
     pts      = int(df_jug["punts"].sum())
@@ -2022,231 +2018,485 @@ def _calc_ts_usage_jug(df_jug, df_equip_on):
     denom    = n_tc + 0.44 * n_tl
     ts_pct   = round(pts / (2 * denom) * 100, 1) if denom > 0 else 0.0
     ppt      = round(pts / denom, 2) if denom > 0 else 0.0
-
-    tc_eq  = int(df_equip_on["accio"].str.contains("Tir de 2|Tir de 3|Cistella de 2|Cistella de 3", case=False, na=False).sum())
-    tl_eq  = int(df_equip_on["accio"].str.contains("Tir lliure", case=False, na=False).sum())
+    tc_eq    = int(df_equip_on["accio"].str.contains("Tir de 2|Tir de 3|Cistella de 2|Cistella de 3", case=False, na=False).sum())
+    tl_eq    = int(df_equip_on["accio"].str.contains("Tir lliure", case=False, na=False).sum())
     denom_eq = tc_eq + 0.44 * tl_eq
-    usage  = round(denom / denom_eq * 100, 1) if denom_eq > 0 else 0.0
+    usage    = round(denom / denom_eq * 100, 1) if denom_eq > 0 else 0.0
     return ts_pct, usage, pts, ppt
 
 
-def _call_node(script_path, payload_dict):
-    """Crida un script Node.js amb payload JSON i retorna el path del fitxer generat."""
-    with tempfile.NamedTemporaryFile(suffix=".pptx", delete=False) as f:
-        out_path = f.name
-    payload_dict["output_path"] = out_path
-    result = subprocess.run(
-        ["node", script_path, json.dumps(payload_dict)],
-        capture_output=True, text=True, timeout=60
-    )
-    if result.returncode != 0 or "ERR:" in result.stdout:
-        raise RuntimeError(result.stderr or result.stdout)
-    with open(out_path, "rb") as f:
-        return f.read()
+def _pptx_buf():
+    """Retorna un BytesIO amb el PPTX generat."""
+    import io
+    return io.BytesIO()
+
+
+def _px(cm): 
+    from pptx.util import Cm
+    return Cm(cm)
+
+
+def _pt(n):
+    from pptx.util import Pt
+    return Pt(n)
+
+
+def _rgb(hex6):
+    from pptx.dml.color import RGBColor
+    h = hex6.lstrip("#")
+    return RGBColor(int(h[0:2],16), int(h[2:4],16), int(h[4:6],16))
+
+
+def _add_rect(slide, x, y, w, h, fill_hex, radius=False):
+    from pptx.util import Cm
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+    if radius:
+        shp = slide.shapes.add_shape(9, Cm(x), Cm(y), Cm(w), Cm(h))  # 9 = ROUNDED_RECTANGLE
+    else:
+        shp = slide.shapes.add_shape(1, Cm(x), Cm(y), Cm(w), Cm(h))  # 1 = RECTANGLE
+    shp.fill.solid()
+    shp.fill.fore_color.rgb = _rgb(fill_hex)
+    shp.line.fill.background()
+    return shp
+
+
+def _add_text(slide, text, x, y, w, h, size, bold=False, color="1a2744",
+              align="left", italic=False, font="Calibri"):
+    from pptx.util import Cm, Pt
+    from pptx.enum.text import PP_ALIGN
+    txb = slide.shapes.add_textbox(Cm(x), Cm(y), Cm(w), Cm(h))
+    tf  = txb.text_frame
+    tf.word_wrap = True
+    p   = tf.paragraphs[0]
+    p.alignment = {"left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER,
+                   "right": PP_ALIGN.RIGHT}.get(align, PP_ALIGN.LEFT)
+    run = p.add_run()
+    run.text = str(text)
+    run.font.size  = Pt(size)
+    run.font.bold  = bold
+    run.font.italic = italic
+    run.font.name  = font
+    run.font.color.rgb = _rgb(color)
+    return txb
+
+
+def _add_table(slide, headers, rows, x, y, w, col_ws,
+               hdr_bg="185FA5", hdr_fg="FFFFFF",
+               row_bg1="FFFFFF", row_bg2="F0F5FB",
+               font_size=9):
+    from pptx.util import Cm, Pt
+    from pptx.enum.text import PP_ALIGN
+    n_cols = len(headers)
+    n_rows = len(rows) + 1
+    tbl = slide.shapes.add_table(n_rows, n_cols,
+        Cm(x), Cm(y), Cm(w), Cm(0.35*n_rows)).table
+    # Amplades
+    total_w_emu = Cm(w)
+    for ci, cw in enumerate(col_ws):
+        tbl.columns[ci].width = Cm(cw)
+    # Capçalera
+    for ci, h in enumerate(headers):
+        cell = tbl.cell(0, ci)
+        cell.fill.solid(); cell.fill.fore_color.rgb = _rgb(hdr_bg)
+        p = cell.text_frame.paragraphs[0]
+        p.alignment = PP_ALIGN.CENTER
+        run = p.add_run(); run.text = h
+        run.font.size = Pt(font_size); run.font.bold = True
+        run.font.color.rgb = _rgb(hdr_fg); run.font.name = "Calibri"
+    # Files de dades
+    for ri, row in enumerate(rows):
+        bg = row_bg1 if ri % 2 == 0 else row_bg2
+        for ci, val in enumerate(row):
+            cell = tbl.cell(ri+1, ci)
+            cell.fill.solid(); cell.fill.fore_color.rgb = _rgb(bg)
+            p = cell.text_frame.paragraphs[0]
+            p.alignment = PP_ALIGN.LEFT if ci == 0 else PP_ALIGN.CENTER
+            run = p.add_run(); run.text = str(val) if val is not None else "—"
+            run.font.size = Pt(font_size); run.font.name = "Calibri"
+            run.font.color.rgb = _rgb("1a2744")
+    return tbl
+
+
+# ── Colors ────────────────────────────────────────────────────────────────────
+_CB  = "185FA5"   # blau Micki
+_CW  = "FFFFFF"
+_CD  = "1a2744"   # fosc
+_CG  = "6b7280"   # gris
+_CGN = "16a34a"   # verd
+_CR  = "dc2626"   # vermell
+_CAM = "d97706"   # ambre
+_CBG = "F8FAFC"   # fons clar
+_CBR = "E2E8F0"   # border
+
+
+def _slide_bg(slide, color):
+    from pptx.util import Cm
+    bg = slide.background
+    fill = bg.fill
+    fill.solid()
+    fill.fore_color.rgb = _rgb(color)
 
 
 def genera_pptx_postpartit(match_id, df_plays, nom_a, nom_b, score_a, score_b,
                             teams, imp_rows_ext=None):
-    """Genera el PPTX de post-partit per al match_id indicat."""
+    """Genera el PPTX de post-partit — 100% python-pptx, sense Node.js."""
+    import io
+    from pptx import Presentation
+    from pptx.util import Cm, Pt, Emu
+    from pptx.enum.text import PP_ALIGN
+
     col_j = "jugador" if "jugador" in df_plays.columns else "jugadora"
     df    = df_plays.copy()
+    noms_equip = [nom_a.upper(), nom_b.upper()]
 
-    # Quarts
+    # ── Càlculs ───────────────────────────────────────────────────────────────
     quarts_out = []
     for q in sorted(df["quart"].dropna().unique()):
         dq = df[df["quart"] == q]
-        qa = int(dq[dq["idEquip"] == teams[0]]["punts"].sum()) if teams else 0
-        qb = int(dq[dq["idEquip"] == teams[1]]["punts"].sum()) if len(teams) > 1 else 0
+        qa = int(dq[dq["idEquip"]==teams[0]]["punts"].sum()) if teams else 0
+        qb = int(dq[dq["idEquip"]==teams[1]]["punts"].sum()) if len(teams)>1 else 0
         quarts_out.append({"label": f"Q{int(q)}", "a": qa, "b": qb})
 
-    # Mètriques d'equip A
-    pts_a  = int(df[df["idEquip"] == teams[0]]["punts"].sum()) if teams else score_a
-    tc_a   = int(df[(df["idEquip"] == teams[0]) & df["accio"].str.contains("Tir de 2|Tir de 3|Cistella", case=False, na=False)].shape[0])
-    tl_a   = int(df[(df["idEquip"] == teams[0]) & df["accio"].str.contains("Tir lliure", case=False, na=False)].shape[0])
-    denom_a = tc_a + 0.44 * tl_a
-    ts_a   = round(pts_a / (2 * denom_a) * 100, 1) if denom_a > 0 else 0.0
-    poss_a = round(tc_a + 0.44 * tl_a, 0)
-    off_rtg_a = round(pts_a / poss_a * 100, 1) if poss_a > 0 else 0.0
+    pts_a  = int(df[df["idEquip"]==teams[0]]["punts"].sum()) if teams else score_a
+    tc_a   = int(df[(df["idEquip"]==teams[0]) & df["accio"].str.contains("Tir|Cistella", case=False, na=False)].shape[0])
+    tl_a   = int(df[(df["idEquip"]==teams[0]) & df["accio"].str.contains("Tir lliure", case=False, na=False)].shape[0])
+    denom_a = tc_a + 0.44*tl_a
+    ts_a   = round(pts_a/(2*denom_a)*100, 1) if denom_a>0 else 0.0
+    off_rtg_a = round(pts_a/denom_a*100, 1) if denom_a>0 else 0.0
 
-    metriques = [
-        {"label": "TS%",         "valor": f"{ts_a}%",        "sub": ""},
-        {"label": "Off Rating",  "valor": f"{off_rtg_a}",    "sub": "pts/100 poss"},
-        {"label": "Punts",       "valor": score_a,           "sub": f"rival: {score_b}"},
-        {"label": "Resultat",    "valor": "V" if score_a > score_b else "D",
-         "sub": "+"+str(score_a-score_b) if score_a > score_b else str(score_a-score_b)},
-    ]
-
-    # Jugadores — stats
     jugs_out = []
-    noms_equip = [nom_a.upper(), nom_b.upper()]
     for jug in df[col_j].unique():
         if not jug or str(jug).upper() in noms_equip: continue
-        dj = df[df[col_j] == jug]
-        eq = dj["idEquip"].iloc[0]
-        if eq != teams[0]: continue
-        df_eq_on = df[df["idEquip"] == teams[0]]
-        ts, usage, pts_j, ppt = _calc_ts_usage_jug(dj, df_eq_on)
-        pm_row = next((r for r in (imp_rows_ext or []) if r.get("Jugadora") == jug), {})
-        pm_val = int(pm_row.get("Pts favor", 0)) - int(pm_row.get("Pts contra", 0)) if pm_row else 0
-        jugs_out.append({
-            "nom":   jug.split()[-1] if jug.split() else jug,
-            "pts":   pts_j,
-            "usage": usage,
-            "ts":    ts,
-            "ppt":   ppt,
-            "pm":    pm_val,
-            "arquetip": ""
-        })
+        dj = df[df[col_j]==jug]
+        if dj["idEquip"].iloc[0] != teams[0]: continue
+        ts, usage, pts_j, ppt = _calc_ts_usage_jug(dj, df[df["idEquip"]==teams[0]])
+        pm_row = next((r for r in (imp_rows_ext or []) if r.get("Jugadora")==jug), {})
+        pm_val = int(pm_row.get("Pts favor",0))-int(pm_row.get("Pts contra",0)) if pm_row else 0
+        jugs_out.append({"nom": jug, "pts": pts_j, "usage": usage,
+                         "ts": ts, "ppt": ppt, "pm": pm_val})
     jugs_out.sort(key=lambda x: -x["pts"])
 
-    # Rotacions (minuts per quart)
     rots_out = []
-    for jug in df[df["idEquip"] == teams[0]][col_j].unique():
+    for jug in df[df["idEquip"]==teams[0]][col_j].unique():
         if not jug or str(jug).upper() in noms_equip: continue
-        dj = df[df[col_j] == jug]
-        min_tot = int(dj["accio"].str.contains("Entra|Surt|Final", case=False, na=False).sum())
-        q_pts = {}
-        for q in range(1, 5):
-            dq = dj[dj["quart"] == q]
-            q_pts[q] = "★" if not dq.empty else "—"
-        pm_row = next((r for r in (imp_rows_ext or []) if r.get("Jugadora") == jug), {})
-        pm_val = int(pm_row.get("Pts favor", 0)) - int(pm_row.get("Pts contra", 0)) if pm_row else 0
-        jug_ts, jug_usage, jug_pts, _ = _calc_ts_usage_jug(dj, df[df["idEquip"]==teams[0]])
-        rots_out.append({
-            "nom": jug, "min": min_tot,
-            "q1": q_pts.get(1,"—"), "q2": q_pts.get(2,"—"),
-            "q3": q_pts.get(3,"—"), "q4": q_pts.get(4,"—"),
-            "pm": pm_val, "arquetip": ""
-        })
-    rots_out.sort(key=lambda x: -x.get("pm", 0))
+        dj = df[df[col_j]==jug]
+        q_marks = {q: ("Si" if not dj[dj["quart"]==q].empty else "—") for q in range(1,5)}
+        pm_row  = next((r for r in (imp_rows_ext or []) if r.get("Jugadora")==jug), {})
+        pm_val  = int(pm_row.get("Pts favor",0))-int(pm_row.get("Pts contra",0)) if pm_row else 0
+        _, _, pts_j, _ = _calc_ts_usage_jug(dj, df[df["idEquip"]==teams[0]])
+        rots_out.append({"nom": jug, "pts": pts_j,
+                         "q1": q_marks[1], "q2": q_marks[2],
+                         "q3": q_marks[3], "q4": q_marks[4], "pm": pm_val})
+    rots_out.sort(key=lambda x: -x.get("pm",0))
 
-    payload = {
-        "nom_a":    nom_a,  "nom_b":   nom_b,
-        "score_a":  score_a, "score_b": score_b,
-        "data":     datetime.now().strftime("%d/%m/%Y"),
-        "quarts":   quarts_out,
-        "metriques": metriques,
-        "jugadores": jugs_out,
-        "rot":      0.0,
-        "rotacions": rots_out,
-        "quintets":  [],
-        "ratings":   {"vals_a": [off_rtg_a, 0, 0], "vals_b": []},
-        "specials":  []
-    }
-    return _call_node(SCRIPT_POSTPARTIT, payload)
+    # ── Presentació ───────────────────────────────────────────────────────────
+    prs = Presentation()
+    prs.slide_width  = Cm(33.87)
+    prs.slide_height = Cm(19.05)
+    blank = prs.slide_layouts[6]  # layout en blanc
+
+    # ── SLIDE 1: Portada ──────────────────────────────────────────────────────
+    s1 = prs.slides.add_slide(blank)
+    _slide_bg(s1, "1a2744")
+    _add_rect(s1, 0, 0, 33.87, 0.25, _CB)
+    _add_text(s1, "ANALISI POST-PARTIT", 1.5, 1.8, 28, 1,
+              13, bold=True, color=_CB, align="left")
+    _add_text(s1, f"{nom_a}  vs  {nom_b}", 1.5, 3.2, 28, 2.5,
+              36, bold=True, color=_CW, font="Cambria", align="left")
+    _add_rect(s1, 1.5, 6.2, 10, 3.5, "1e4d8c", radius=True)
+    guanya = score_a > score_b
+    _add_text(s1, str(score_a), 1.5, 6.3, 4.5, 3.3, 52, bold=True, color=_CW,
+              font="Cambria", align="center")
+    _add_text(s1, "—", 5.8, 6.3, 1.5, 3.3, 36, color="8899BB",
+              font="Cambria", align="center")
+    _add_text(s1, str(score_b), 7.0, 6.3, 4.5, 3.3, 52, bold=True,
+              color="8899BB", font="Cambria", align="center")
+    _add_rect(s1, 1.5, 10.0, 4, 1.0, _CGN if guanya else _CR, radius=True)
+    _add_text(s1, "VICTORIA" if guanya else "DERROTA",
+              1.5, 10.0, 4, 1.0, 11, bold=True, color=_CW, align="center")
+    qtxt = "   |   ".join([f"{q['label']}  {q['a']}-{q['b']}" for q in quarts_out])
+    _add_text(s1, qtxt, 1.5, 11.3, 28, 0.8, 11, color="6688AA", align="left")
+    _add_text(s1, f"{datetime.now().strftime('%d/%m/%Y')}  ·  FCBQ  ·  Micki Analitica",
+              1.5, 12.3, 28, 0.7, 10, color="445566", align="left")
+
+    # ── SLIDE 2: Mètriques clau ───────────────────────────────────────────────
+    s2 = prs.slides.add_slide(blank)
+    _slide_bg(s2, _CBG)
+    _add_text(s2, "Metriques clau del partit", 1.5, 0.6, 28, 1.3,
+              24, bold=True, color=_CD, font="Cambria", align="left")
+    _add_text(s2, nom_a, 1.5, 1.9, 28, 0.7, 12, color=_CB, align="left")
+
+    metriques_disp = [
+        ("TS%", f"{ts_a}%", "eficiencia de tir"),
+        ("Off Rating", f"{off_rtg_a}", "pts/100 poss"),
+        ("Punts", str(score_a), f"rival: {score_b}"),
+        ("Resultat", "V" if guanya else "D",
+         f"+{score_a-score_b}" if guanya else str(score_a-score_b)),
+    ]
+    card_xs = [1.5, 9.7, 17.9, 26.1]
+    card_w  = 7.5
+    for (lbl, val, sub), cx in zip(metriques_disp, card_xs):
+        _add_rect(s2, cx, 2.8, card_w, 3.8, _CW, radius=True)
+        _add_text(s2, lbl, cx+0.4, 3.1, card_w-0.8, 0.8, 9, color=_CG, align="left")
+        _add_text(s2, val, cx+0.4, 3.9, card_w-0.8, 1.8, 28, bold=True,
+                  color=_CD, font="Cambria", align="left")
+        sub_col = _CGN if str(sub).startswith("+") else (_CR if str(sub).startswith("-") else _CG)
+        _add_text(s2, sub, cx+0.4, 5.7, card_w-0.8, 0.7, 9, color=sub_col, align="left")
+
+    # Quarts com a taula
+    _add_text(s2, "Punts per quart", 1.5, 7.2, 28, 0.8, 11, bold=True, color=_CD)
+    hdr_q  = ["Quart"] + [q["label"] for q in quarts_out] + ["TOTAL"]
+    row_a  = [nom_a]  + [str(q["a"]) for q in quarts_out] + [str(score_a)]
+    row_b  = [nom_b]  + [str(q["b"]) for q in quarts_out] + [str(score_b)]
+    n_q    = len(quarts_out)
+    cw_q   = [6.0] + [3.5]*n_q + [3.5]
+    _add_table(s2, hdr_q, [row_a, row_b], 1.5, 8.2,
+               sum(cw_q), cw_q, row_bg2="EBF4FC")
+
+    # ── SLIDE 3: Jugadores ────────────────────────────────────────────────────
+    s3 = prs.slides.add_slide(blank)
+    _slide_bg(s3, _CBG)
+    _add_text(s3, f"Rendiment individual — {nom_a}", 1.5, 0.6, 28, 1.3,
+              24, bold=True, color=_CD, font="Cambria", align="left")
+
+    hdr_j = ["Jugadora", "Pts", "Usage%", "TS%", "Pts/Tir", "+/-"]
+    rows_j = [[j["nom"], j["pts"], f"{j['usage']}%", f"{j['ts']}%",
+               j["ppt"], ("+"+str(j["pm"]) if j["pm"]>=0 else str(j["pm"]))]
+              for j in jugs_out[:10]]
+    cw_j = [9.0, 3.0, 3.5, 3.5, 3.5, 3.0]
+    _add_table(s3, hdr_j, rows_j, 1.5, 2.2, sum(cw_j), cw_j, row_bg2="EBF4FC")
+
+    # ── SLIDE 4: Eficiència comparativa ──────────────────────────────────────
+    s4 = prs.slides.add_slide(blank)
+    _slide_bg(s4, _CBG)
+    _add_text(s4, "Eficiencia i comparativa", 1.5, 0.6, 28, 1.3,
+              24, bold=True, color=_CD, font="Cambria", align="left")
+
+    pts_b  = int(df[df["idEquip"]==teams[1]]["punts"].sum()) if len(teams)>1 else score_b
+    tc_b   = int(df[(df["idEquip"]==teams[1]) & df["accio"].str.contains("Tir|Cistella", case=False, na=False)].shape[0]) if len(teams)>1 else 0
+    tl_b   = int(df[(df["idEquip"]==teams[1]) & df["accio"].str.contains("Tir lliure", case=False, na=False)].shape[0]) if len(teams)>1 else 0
+    denom_b = tc_b + 0.44*tl_b
+    ts_b   = round(pts_b/(2*denom_b)*100, 1) if denom_b>0 else 0.0
+    off_b  = round(pts_b/denom_b*100, 1) if denom_b>0 else 0.0
+
+    comps = [
+        ("Punts totals",  score_a, score_b),
+        ("TS%",           ts_a,    ts_b),
+        ("Off Rating",    off_rtg_a, off_b),
+        ("Tirs intentats", tc_a,   tc_b),
+        ("TL intentats",  tl_a,    tl_b),
+    ]
+    hdr_c  = ["Metrica", nom_a, nom_b, "Avantatge"]
+    rows_c = []
+    for lbl, va, vb in comps:
+        adv = nom_a if va >= vb else nom_b
+        rows_c.append([lbl, str(va), str(vb), adv])
+    _add_table(s4, hdr_c, rows_c, 1.5, 2.2, 30.0,
+               [9.0, 7.0, 7.0, 7.0], row_bg2="EBF4FC")
+
+    # Zona de notes
+    _add_rect(s4, 1.5, 10.5, 30.0, 7.5, _CW, radius=True)
+    _add_text(s4, "Notes tactiques", 2.0, 10.9, 15, 0.8,
+              11, bold=True, color=_CB, align="left")
+    for ly in [12.2, 13.5, 14.8, 16.1]:
+        _add_rect(s4, 2.0, ly, 28.0, 0.05, _CBR)
+
+    # ── SLIDE 5: Rotacions ────────────────────────────────────────────────────
+    s5 = prs.slides.add_slide(blank)
+    _slide_bg(s5, _CBG)
+    _add_text(s5, f"Rotacions — {nom_a}", 1.5, 0.6, 28, 1.3,
+              24, bold=True, color=_CD, font="Cambria", align="left")
+    hdr_r  = ["Jugadora", "Q1", "Q2", "Q3", "Q4", "+/-"]
+    rows_r = [[r["nom"], r["q1"], r["q2"], r["q3"], r["q4"],
+               ("+"+str(r["pm"]) if r["pm"]>=0 else str(r["pm"]))]
+              for r in rots_out]
+    _add_table(s5, hdr_r, rows_r, 1.5, 2.2, 30.0,
+               [12.0, 3.5, 3.5, 3.5, 3.5, 4.0], row_bg2="EBF4FC")
+
+    # ── SLIDE 6: Notes editables ──────────────────────────────────────────────
+    s6 = prs.slides.add_slide(blank)
+    _slide_bg(s6, _CBG)
+    _add_text(s6, "Notes tactiques i conclusions", 1.5, 0.6, 28, 1.3,
+              24, bold=True, color=_CD, font="Cambria", align="left")
+    _add_rect(s6, 1.5, 2.2, 14.5, 15.8, "F0FDF4", radius=True)
+    _add_text(s6, "Que hem fet be", 2.0, 2.7, 13.5, 0.9,
+              12, bold=True, color=_CGN, align="left")
+    _add_rect(s6, 17.5, 2.2, 14.5, 15.8, "FFF5F5", radius=True)
+    _add_text(s6, "A millorar / treballar", 18.0, 2.7, 13.5, 0.9,
+              12, bold=True, color=_CR, align="left")
+    for ly in [4.3, 6.0, 7.7, 9.4, 11.1, 12.8, 14.5, 16.2]:
+        _add_rect(s6, 2.0, ly, 13.0, 0.05, "CCEECC")
+        _add_rect(s6, 18.0, ly, 13.0, 0.05, "FFCCCC")
+
+    buf = io.BytesIO()
+    prs.save(buf)
+    buf.seek(0)
+    return buf.read()
 
 
 def genera_pptx_scouting(nom_rival, nom_manresa, df_hist_rival, df_plays_dict):
-    """Genera el PPTX de scouting del rival a partir dels seus partits de temporada."""
-    import numpy as np
+    """Genera el PPTX de scouting del rival — 100% python-pptx, sense Node.js."""
+    import io
+    from pptx import Presentation
+    from pptx.util import Cm
 
+    col_j     = "jugador"
     n_partits = len(df_hist_rival)
     if n_partits == 0:
         raise ValueError("No hi ha partits del rival a la base de dades.")
 
-    # Agrega stats de tots els partits del rival
+    # ── Agrega stats ──────────────────────────────────────────────────────────
     all_pts, all_tc, all_tl, all_poss = [], [], [], []
-    all_jug_stats = {}  # nom -> {pts, usage, ts, ...}
-    col_j = "jugador"
+    all_jug = {}
 
     for _, row_r in df_hist_rival.iterrows():
         mid = row_r["match_id"]
-        if mid not in df_plays_dict:
-            continue
+        if mid not in df_plays_dict: continue
         df_p = df_plays_dict[mid]
-        # Detecta l'equip del rival
         teams_r = [t for t in df_p["idEquip"].unique() if str(t) not in ("","nan")]
-        # L'equip rival és el que té el nom_rival
-        rival_teams = [t for t in teams_r
-                       if str(row_r.get("nom_a","")).upper() == nom_rival.upper()
-                       or str(row_r.get("nom_b","")).upper() == nom_rival.upper()]
-        if not rival_teams: rival_teams = teams_r
+        # Identifica quin team_id correspon al rival
+        nom_a_r = str(row_r.get("nom_a","")).upper()
+        nom_b_r = str(row_r.get("nom_b","")).upper()
+        rival_id = None
+        for t in teams_r:
+            noms_t = df_p[df_p["idEquip"]==t][col_j].iloc[0] if not df_p[df_p["idEquip"]==t].empty else ""
+            if nom_a_r == nom_rival.upper(): rival_id = teams_r[0]; break
+            if nom_b_r == nom_rival.upper(): rival_id = teams_r[-1]; break
+        if rival_id is None and teams_r: rival_id = teams_r[0]
+        if rival_id is None: continue
 
-        for rt in rival_teams[:1]:
-            df_rt = df_p[df_p["idEquip"] == rt]
-            pts_r = int(df_rt["punts"].sum())
-            tc_r  = int(df_rt["accio"].str.contains("Tir de 2|Tir de 3|Cistella", case=False, na=False).sum())
-            tl_r  = int(df_rt["accio"].str.contains("Tir lliure", case=False, na=False).sum())
-            poss_r = tc_r + 0.44 * tl_r
-            all_pts.append(pts_r); all_tc.append(tc_r)
-            all_tl.append(tl_r);   all_poss.append(poss_r)
+        df_rt = df_p[df_p["idEquip"]==rival_id]
+        pts_r = int(df_rt["punts"].sum())
+        tc_r  = int(df_rt["accio"].str.contains("Tir|Cistella", case=False, na=False).sum())
+        tl_r  = int(df_rt["accio"].str.contains("Tir lliure", case=False, na=False).sum())
+        all_pts.append(pts_r); all_tc.append(tc_r)
+        all_tl.append(tl_r);  all_poss.append(tc_r + 0.44*tl_r)
 
-            for jug in df_rt[col_j].unique():
-                if not jug or str(jug).upper() in (nom_rival.upper(),): continue
-                dj = df_rt[df_rt[col_j] == jug]
-                ts, usage, pts_j, ppt = _calc_ts_usage_jug(dj, df_rt)
-                if jug not in all_jug_stats:
-                    all_jug_stats[jug] = {"pts":[], "usage":[], "ts":[], "ppt":[], "n":0}
-                all_jug_stats[jug]["pts"].append(pts_j)
-                all_jug_stats[jug]["usage"].append(usage)
-                all_jug_stats[jug]["ts"].append(ts)
-                all_jug_stats[jug]["ppt"].append(ppt)
-                all_jug_stats[jug]["n"] += 1
+        for jug in df_rt[col_j].unique():
+            if not jug or str(jug).upper() in (nom_rival.upper(),): continue
+            dj = df_rt[df_rt[col_j]==jug]
+            ts, usage, pts_j, ppt = _calc_ts_usage_jug(dj, df_rt)
+            if jug not in all_jug:
+                all_jug[jug] = {"pts":[], "usage":[], "ts":[], "ppt":[]}
+            all_jug[jug]["pts"].append(pts_j)
+            all_jug[jug]["usage"].append(usage)
+            all_jug[jug]["ts"].append(ts)
+            all_jug[jug]["ppt"].append(ppt)
 
-    avg_pts   = round(sum(all_pts)/len(all_pts), 1) if all_pts else 0
-    avg_poss  = round(sum(all_poss)/len(all_poss), 1) if all_poss else 0
-    sum_tc    = sum(all_tc); sum_tl = sum(all_tl); sum_pts = sum(all_pts)
-    denom_tot = sum_tc + 0.44*sum_tl
-    ts_rival  = round(sum_pts/(2*denom_tot)*100, 1) if denom_tot > 0 else 0
-    pct_3     = 0  # simplificat, es pot afinar
+    avg_pts  = round(sum(all_pts)/len(all_pts), 1) if all_pts else 0
+    avg_poss = round(sum(all_poss)/len(all_poss), 1) if all_poss else 0
+    sum_tc   = sum(all_tc); sum_tl = sum(all_tl); sum_pts = sum(all_pts)
+    denom_t  = sum_tc + 0.44*sum_tl
+    ts_rival = round(sum_pts/(2*denom_t)*100, 1) if denom_t>0 else 0
 
-    # Jugadores rivals ordenades per pts/P
-    jugs_rivals = []
-    for jug, s in all_jug_stats.items():
-        n = s["n"]
-        jugs_rivals.append({
-            "nom":     jug,
-            "pts_pp":  round(sum(s["pts"])/n, 1),
-            "usage":   round(sum(s["usage"])/n, 1),
-            "ts":      round(sum(s["ts"])/n, 1),
-            "ppt":     round(sum(s["ppt"])/n, 2),
-            "net_rtg": "—",
-            "arquetip":"",
-            "nota":    ""
-        })
-    jugs_rivals.sort(key=lambda x: -x["pts_pp"])
+    jugs_r = []
+    for jug, s in all_jug.items():
+        n = len(s["pts"]) or 1
+        jugs_r.append({"nom": jug,
+                        "pts_pp":  round(sum(s["pts"])/n, 1),
+                        "usage":   round(sum(s["usage"])/n, 1),
+                        "ts":      round(sum(s["ts"])/n, 1),
+                        "ppt":     round(sum(s["ppt"])/n, 2)})
+    jugs_r.sort(key=lambda x: -x["pts_pp"])
 
-    # Rotacions (minuts per jugadora per partit de mitjana)
-    rots_rivals = [{"nom":j["nom"], "min_pp":j["pts_pp"],
-                    "usage":j["usage"], "ts":j["ts"],
-                    "pts_pp":j["pts_pp"], "arquetip":j["arquetip"]}
-                   for j in jugs_rivals[:8]]
+    # ── Presentació ───────────────────────────────────────────────────────────
+    prs = Presentation()
+    prs.slide_width  = Cm(33.87)
+    prs.slide_height = Cm(19.05)
+    blank = prs.slide_layouts[6]
 
-    payload = {
-        "nom_rival":    nom_rival,
-        "nom_manresa":  nom_manresa,
-        "n_partits":    n_partits,
-        "temporada":    str(datetime.now().year),
-        "data_propera": "pendent",
-        "pills": [
-            {"label": "Pts/partit",  "valor": avg_pts},
-            {"label": "TS%",         "valor": f"{ts_rival}%"},
-            {"label": "Poss/partit", "valor": avg_poss},
-        ],
-        "zones": [
-            {"nom":"Esq. 3",   "tc_pct":"—", "tirs":"—"},
-            {"nom":"Mig esq.", "tc_pct":"—", "tirs":"—"},
-            {"nom":"Pintura",  "tc_pct":"—", "tirs":"—"},
-            {"nom":"Mig dret.","tc_pct":"—", "tirs":"—"},
-            {"nom":"Dret. 3",  "tc_pct":"—", "tirs":"—"},
-        ],
-        "dist_labels": ["2pt", "3pt", "TL"],
-        "dist_vals":   [sum_tc - 0, 0, sum_tl],
-        "estil": [
-            {"label":"Pts/partit",    "valor":avg_pts,    "pct":min(avg_pts/80*100,100)},
-            {"label":"TS%",           "valor":f"{ts_rival}%","pct":ts_rival},
-            {"label":"Poss/partit",   "valor":avg_poss,   "pct":min(avg_poss/80*100,100)},
-        ],
-        "jugadores":  jugs_rivals[:5],
-        "rotacions":  rots_rivals,
-        "quintets":   [],
-        "comparativa": [
-            {"label":"Pts/P",   "manresa":"—", "rival":avg_pts},
-            {"label":"TS%",     "manresa":"—", "rival":ts_rival},
-            {"label":"Poss/P",  "manresa":"—", "rival":avg_poss},
-        ]
-    }
-    return _call_node(SCRIPT_SCOUTING, payload)
+    # ── SLIDE 1: Portada ──────────────────────────────────────────────────────
+    s1 = prs.slides.add_slide(blank)
+    _slide_bg(s1, "1e3a5f")
+    _add_rect(s1, 0, 0, 33.87, 0.25, _CR)
+    _add_text(s1, "INFORME DE SCOUTING", 1.5, 1.8, 28, 1,
+              13, bold=True, color=_CR, align="left")
+    _add_text(s1, nom_rival, 1.5, 3.2, 28, 2.5,
+              36, bold=True, color=_CW, font="Cambria", align="left")
+    _add_text(s1, f"{n_partits} partits analitzats · Temporada {datetime.now().year}",
+              1.5, 6.0, 28, 1, 13, color="8899BB", align="left")
+
+    pills = [("Pts/partit", avg_pts), ("TS%", f"{ts_rival}%"), ("Poss/partit", avg_poss)]
+    for i, (lbl, val) in enumerate(pills):
+        px2 = 1.5 + i*10.5
+        _add_rect(s1, px2, 7.5, 9.5, 2.2, "1e5080", radius=True)
+        _add_text(s1, lbl, px2+0.3, 7.7, 9.0, 0.7, 9, color="AABBCC", align="center")
+        _add_text(s1, str(val), px2+0.3, 8.4, 9.0, 1.0, 18, bold=True,
+                  color=_CW, font="Cambria", align="center")
+    _add_text(s1, f"Micki Analitica · {datetime.now().strftime('%d/%m/%Y')}",
+              1.5, 12.3, 28, 0.7, 10, color="445566", align="left")
+
+    # ── SLIDE 2: Jugadores clau ───────────────────────────────────────────────
+    s2 = prs.slides.add_slide(blank)
+    _slide_bg(s2, _CBG)
+    _add_text(s2, f"Jugadores clau — {nom_rival}", 1.5, 0.6, 28, 1.3,
+              24, bold=True, color=_CD, font="Cambria", align="left")
+    hdr_jr = ["Jugadora", "Pts/P", "Usage%", "TS%", "Pts/Tir"]
+    rows_jr = [[j["nom"], j["pts_pp"], f"{j['usage']}%", f"{j['ts']}%", j["ppt"]]
+               for j in jugs_r[:10]]
+    _add_table(s2, hdr_jr, rows_jr, 1.5, 2.2, 30.0,
+               [12.0, 4.5, 4.5, 4.5, 4.5],
+               hdr_bg=_CR, row_bg2="FFF5F5")
+    # Zona notes observació
+    _add_rect(s2, 1.5, 14.0, 30.0, 4.0, _CW, radius=True)
+    _add_text(s2, "Notes observacio video", 2.0, 14.4, 20, 0.8,
+              11, bold=True, color=_CB, align="left")
+    for ly in [15.4, 16.5, 17.5]:
+        _add_rect(s2, 2.0, ly, 28.0, 0.05, _CBR)
+
+    # ── SLIDE 3: Estil ofensiu ────────────────────────────────────────────────
+    s3 = prs.slides.add_slide(blank)
+    _slide_bg(s3, _CBG)
+    _add_text(s3, f"Perfil ofensiu — {nom_rival}", 1.5, 0.6, 28, 1.3,
+              24, bold=True, color=_CD, font="Cambria", align="left")
+    estil = [
+        ("Pts/partit",     avg_pts,     f"{avg_pts}"),
+        ("TS%",            ts_rival,    f"{ts_rival}%"),
+        ("Possessions/P",  avg_poss,    f"{avg_poss}"),
+        ("Tirs intentats", sum_tc,      f"{sum_tc}"),
+        ("TL intentats",   sum_tl,      f"{sum_tl}"),
+    ]
+    hdr_e  = ["Indicador", "Valor", "Referencia FCBQ"]
+    rows_e = [[e[0], e[2], "—"] for e in estil]
+    _add_table(s3, hdr_e, rows_e, 1.5, 2.2, 25.0,
+               [10.0, 7.5, 7.5], hdr_bg=_CR, row_bg2="FFF5F5")
+
+    # ── SLIDE 4: Comparativa ──────────────────────────────────────────────────
+    s4 = prs.slides.add_slide(blank)
+    _slide_bg(s4, _CBG)
+    _add_text(s4, f"{nom_manresa} vs {nom_rival} — comparativa",
+              1.5, 0.6, 28, 1.3, 24, bold=True, color=_CD, font="Cambria", align="left")
+    hdr_comp = ["Metrica", nom_manresa, nom_rival]
+    rows_comp = [
+        ["Pts/partit",    "—", str(avg_pts)],
+        ["TS%",           "—", f"{ts_rival}%"],
+        ["Poss/partit",   "—", str(avg_poss)],
+        ["Tirs int./P",   "—", str(round(sum_tc/max(n_partits,1),1))],
+    ]
+    _add_table(s4, hdr_comp, rows_comp, 1.5, 2.2, 25.0,
+               [9.0, 8.0, 8.0], row_bg2="F0F5FB")
+    _add_text(s4, "(Omple la columna Manresa amb les teves dades de temporada)",
+              1.5, 10.5, 25.0, 0.7, 9, color=_CG, italic=True, align="left")
+
+    # ── SLIDE 5: Pla de partit ────────────────────────────────────────────────
+    s5 = prs.slides.add_slide(blank)
+    _slide_bg(s5, _CBG)
+    _add_text(s5, f"Pla de partit — {nom_manresa} vs {nom_rival}",
+              1.5, 0.6, 28, 1.3, 22, bold=True, color=_CD, font="Cambria", align="left")
+    _add_rect(s5, 1.5, 2.2, 14.5, 15.8, "F0FDF4", radius=True)
+    _add_text(s5, "Que podem explotar", 2.0, 2.7, 13.5, 0.9,
+              12, bold=True, color=_CGN, align="left")
+    _add_rect(s5, 17.5, 2.2, 14.5, 15.8, "FFF5F5", radius=True)
+    _add_text(s5, "Que hem de neutralitzar", 18.0, 2.7, 13.5, 0.9,
+              12, bold=True, color=_CR, align="left")
+    for ly in [4.3, 6.0, 7.7, 9.4, 11.1, 12.8, 14.5, 16.2]:
+        _add_rect(s5, 2.0, ly, 13.0, 0.05, "CCEECC")
+        _add_rect(s5, 18.0, ly, 13.0, 0.05, "FFCCCC")
+
+    buf = io.BytesIO()
+    prs.save(buf)
+    buf.seek(0)
+    return buf.read()
 
 
 def genera_excel_temporada():
