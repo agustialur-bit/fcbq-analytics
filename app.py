@@ -3122,29 +3122,26 @@ with t4:
     # ANÀLISI DE CARTERA DE TIRS (Fichman & O'Brien, 2018)
     # SR ofensiu · Correlació 2pt–3pt · Proporció òptima 3pt · Shot Market Line
     # ══════════════════════════════════════════════════════════════════════
-    st.markdown(sec("📐 Anàlisi de cartera de tirs — temporada"), unsafe_allow_html=True)
+    st.markdown(sec("📐 Anàlisi de cartera de tirs"), unsafe_allow_html=True)
     st.caption(
         "Basat en la teoria moderna de carteres (MPT). Tracta els tirs de 2 i 3 punts com actius "
         "financers i calcula l'estratègia òptima maximitzant el Ràtio de Sharpe (punts esperats / risc). "
-        "Requereix almenys 3 partits a la base de dades per ser fiable."
+        "Amb 1 partit: variància binomial per tir. Amb 3+ partits: s'afegeix la correlació 2pt–3pt entre partits."
     )
 
     df_sz_cart = load_shots_zones_db()
     df_hist_cart = load_partits_db()
 
-    if df_sz_cart.empty or df_hist_cart.empty or len(df_hist_cart) < 2:
-        st.info("Carrega almenys 2 partits amb dades de zones per activar l'anàlisi de cartera.")
+    if df_sz_cart.empty or df_hist_cart.empty:
+        st.info("Carrega almenys 1 partit amb dades de zones per activar l'anàlisi de cartera.")
     else:
         import numpy as np
         from scipy import stats as sp_stats_cart
 
-        # ── Agrupa per equip i partit: TC2%, TC3%, TC% global ──────────────
         df_eq_cart = df_sz_cart[df_sz_cart["jugador"] == "__equip__"].copy()
         if df_eq_cart.empty:
             st.info("No hi ha dades d'equip (fila __equip__) a shots_zones. Consulta partits nous.")
         else:
-            # Calcula percentatges per partit i equip
-            df_eq_cart = df_eq_cart.copy()
             df_eq_cart["n2_int"] = df_eq_cart["val2_made"] + df_eq_cart["val2_miss"]
             df_eq_cart["n3_int"] = df_eq_cart["val3_made"] + df_eq_cart["val3_miss"]
             df_eq_cart["tc2"]    = df_eq_cart.apply(
@@ -3161,140 +3158,170 @@ with t4:
                 df_e_c = df_eq_cart[df_eq_cart["equip_nom"] == eq_c].dropna(
                     subset=["tc2","tc3","pts_esp_2","pts_esp_3"]).copy()
 
-                if len(df_e_c) < 2:
+                if df_e_c.empty:
                     continue
 
+                n_partits_c = len(df_e_c)
                 color_c = COLOR_A if eq_c == equips_cart[0] else COLOR_B
                 st.markdown(
-                    f'<div style="font-size:13px;font-weight:700;color:{color_c};margin:12px 0 6px">'
-                    f'🏀 {eq_c}</div>', unsafe_allow_html=True)
+                    f'<div style="font-size:13px;font-weight:700;color:{color_c};margin:12px 0 4px">'
+                    f'🏀 {eq_c} <span style="font-size:11px;font-weight:400;color:#6b7280">'
+                    f'({n_partits_c} {"partit" if n_partits_c==1 else "partits"})</span></div>',
+                    unsafe_allow_html=True)
 
-                # ── 1. Ràtio de Sharpe ofensiu ─────────────────────────────
-                # SR = μ_cartera / σ_cartera
-                # Cartera: proporcions reals de 2pt i 3pt sobre total tirs
-                n2_tot = df_e_c["n2_int"].sum()
-                n3_tot = df_e_c["n3_int"].sum()
+                # ── Agregats de temporada ──────────────────────────────────
+                n2_tot = int(df_e_c["n2_int"].sum())
+                n3_tot = int(df_e_c["n3_int"].sum())
                 n_tot  = n2_tot + n3_tot
                 alpha2 = n2_tot / n_tot if n_tot > 0 else 0.5
                 alpha3 = n3_tot / n_tot if n_tot > 0 else 0.5
 
-                mu2  = df_e_c["pts_esp_2"].mean()
-                mu3  = df_e_c["pts_esp_3"].mean()
-                sig2 = df_e_c["pts_esp_2"].std()
-                sig3 = df_e_c["pts_esp_3"].std()
+                # Punts esperats per tir (sobre agregat de temporada)
+                n2_conv = int(df_e_c["val2_made"].sum())
+                n3_conv = int(df_e_c["val3_made"].sum())
+                p2_ag = n2_conv / n2_tot if n2_tot > 0 else 0.0
+                p3_ag = n3_conv / n3_tot if n3_tot > 0 else 0.0
+                mu2   = p2_ag * 2
+                mu3   = p3_ag * 3
 
-                # Correlació entre rendiment de 2pt i 3pt entre partits
-                if len(df_e_c) >= 3:
+                # ── Variància: binomial si 1 partit, entre-partits si >=2 ──
+                # Variància binomial: Var(pts) = n_pts^2 * p*(1-p)/n_tirs
+                # = 4 * p2*(1-p2)/n2  i  9 * p3*(1-p3)/n3
+                var2_binom = (4 * p2_ag * (1 - p2_ag) / n2_tot) if n2_tot > 0 else 0
+                var3_binom = (9 * p3_ag * (1 - p3_ag) / n3_tot) if n3_tot > 0 else 0
+                sig2_binom = np.sqrt(max(var2_binom, 1e-9))
+                sig3_binom = np.sqrt(max(var3_binom, 1e-9))
+
+                if n_partits_c >= 2:
+                    # Variància entre-partits (la que fa Fichman)
+                    sig2_ep = df_e_c["pts_esp_2"].std()
+                    sig3_ep = df_e_c["pts_esp_3"].std()
+                    # Combina: màxim de les dues (conservador)
+                    sig2 = max(sig2_ep, sig2_binom) if sig2_ep > 0 else sig2_binom
+                    sig3 = max(sig3_ep, sig3_binom) if sig3_ep > 0 else sig3_binom
+                else:
+                    sig2 = sig2_binom
+                    sig3 = sig3_binom
+
+                # ── Correlació 2pt–3pt entre partits ──────────────────────
+                if n_partits_c >= 3:
                     r_23, p_23 = sp_stats_cart.pearsonr(
                         df_e_c["pts_esp_2"].fillna(0),
                         df_e_c["pts_esp_3"].fillna(0))
+                    corr_disponible = True
                 else:
                     r_23, p_23 = 0.0, 1.0
+                    corr_disponible = False
 
-                cov_23 = r_23 * sig2 * sig3
+                cov_23   = r_23 * sig2 * sig3
                 mu_cart  = alpha2 * mu2 + alpha3 * mu3
                 var_cart = (4 * alpha2**2 * sig2**2 +
                             9 * alpha3**2 * sig3**2 +
                             12 * alpha2 * alpha3 * cov_23)
-                sig_cart = np.sqrt(max(var_cart, 0))
-                sr_actual = round(mu_cart / sig_cart, 2) if sig_cart > 0 else None
+                sig_cart = np.sqrt(max(var_cart, 1e-9))
+                sr_actual = round(mu_cart / sig_cart, 2)
 
-                # ── 2. Proporció òptima 3pt (maximitza SR) ─────────────────
+                # ── Proporció òptima 3pt (maximitza SR) ───────────────────
                 best_sr, best_a3 = -np.inf, alpha3
                 for a3_try in np.linspace(0, 1, 201):
                     a2_try = 1 - a3_try
-                    mu_t = a2_try * mu2 + a3_try * mu3
-                    var_t = (4*a2_try**2*sig2**2 + 9*a3_try**2*sig3**2 +
-                             12*a2_try*a3_try*cov_23)
-                    sig_t = np.sqrt(max(var_t, 0))
-                    sr_t  = mu_t / sig_t if sig_t > 0 else 0
+                    mu_t   = a2_try * mu2 + a3_try * mu3
+                    var_t  = (4*a2_try**2*sig2**2 + 9*a3_try**2*sig3**2 +
+                              12*a2_try*a3_try*cov_23)
+                    sig_t  = np.sqrt(max(var_t, 1e-9))
+                    sr_t   = mu_t / sig_t
                     if sr_t > best_sr:
-                        best_sr  = sr_t
-                        best_a3  = a3_try
+                        best_sr = sr_t
+                        best_a3 = a3_try
 
-                sr_optim   = round(best_sr, 2)
-                a3_optim   = round(best_a3 * 100, 1)
-                a3_actual  = round(alpha3 * 100, 1)
-                diff_a3    = round(a3_optim - a3_actual, 1)
+                sr_optim  = round(best_sr, 2)
+                a3_optim  = round(best_a3 * 100, 1)
+                a3_actual = round(alpha3 * 100, 1)
+                diff_a3   = round(a3_optim - a3_actual, 1)
 
-                # ── 3. Shot Market Line (pendents beta2, beta3) ────────────
-                # beta_j = E(pts_j) / E(pts_cartera)  (Eq. 2 de l'article)
-                mu_opt = best_a3 * mu3 + (1 - best_a3) * mu2
-                beta2  = round(mu2 / mu_opt, 3) if mu_opt > 0 else None
-                beta3  = round(mu3 / mu_opt, 3) if mu_opt > 0 else None
+                # ── Shot Market Line ───────────────────────────────────────
+                mu_opt    = best_a3 * mu3 + (1 - best_a3) * mu2
+                beta2     = round(mu2 / mu_opt, 3) if mu_opt > 0 else None
+                beta3     = round(mu3 / mu_opt, 3) if mu_opt > 0 else None
                 slope_sml = round(beta3 / beta2, 3) if (beta2 and beta2 > 0) else None
 
-                # ── Targetes principals ─────────────────────────────────────
+                # ── Targetes principals ────────────────────────────────────
                 ca, cb, cc, cd = st.columns(4)
                 with ca:
+                    src_label = "var. binomial" if n_partits_c < 2 else "entre-partits"
                     st.markdown(card(
                         "SR Ofensiu actual",
-                        f"{sr_actual}" if sr_actual else "N/D",
-                        "Punts esperats / risc",
+                        f"{sr_actual}",
+                        f"Pts esp./risc ({src_label})",
                         color_c), unsafe_allow_html=True)
                 with cb:
                     st.markdown(card(
                         "SR Ofensiu òptim",
-                        f"{sr_optim}" if sr_optim > -np.inf else "N/D",
+                        f"{sr_optim}",
                         f"amb {a3_optim}% triples",
-                        "#16a34a" if sr_optim >= (sr_actual or 0) else "#dc2626"),
+                        "#16a34a" if sr_optim >= sr_actual else "#dc2626"),
                         unsafe_allow_html=True)
                 with cc:
-                    signe_c = "+" if diff_a3 >= 0 else ""
+                    signe_c   = "+" if diff_a3 >= 0 else ""
                     interp_a3 = ("✅ Proporció òptima" if abs(diff_a3) < 5
-                                 else f"{'⬆ Tirar més triples' if diff_a3 > 0 else '⬇ Tirar menys triples'}")
+                                 else ("⬆ Tirar més triples" if diff_a3 > 0
+                                       else "⬇ Tirar menys triples"))
                     st.markdown(card(
-                        "% 3pt actual vs òptim",
+                        "% 3pt actual → òptim",
                         f"{a3_actual}% → {a3_optim}%",
                         f"{signe_c}{diff_a3}pp  {interp_a3}",
                         "#374151"), unsafe_allow_html=True)
                 with cd:
-                    interp_r = ("↘ Distensió defensiva activa" if r_23 < -0.2
-                                else ("↗ 2pt i 3pt fallen junts" if r_23 > 0.3
-                                      else "↔ Independents"))
-                    sig_str  = f"p={p_23:.2f}" if len(df_e_c) >= 3 else "pocs partits"
+                    if corr_disponible:
+                        interp_r = ("↘ Distensió defensiva" if r_23 < -0.2
+                                    else ("↗ 2pt i 3pt fallen junts" if r_23 > 0.3
+                                          else "↔ Independents"))
+                        val_r    = f"{r_23:+.3f}"
+                        sub_r    = f"{interp_r} (p={p_23:.2f})"
+                    else:
+                        val_r = "N/D"
+                        sub_r = f"Cal ≥3 partits (ara {n_partits_c})"
                     st.markdown(card(
                         "Correlació 2pt–3pt",
-                        f"{r_23:+.3f}",
-                        f"{interp_r} ({sig_str})",
-                        "#6366f1"), unsafe_allow_html=True)
+                        val_r, sub_r, "#6366f1"), unsafe_allow_html=True)
 
-                # ── Shot Market Line (gràfic) ───────────────────────────────
-                st.markdown(
-                    f'<p style="font-size:12px;color:#6b7280;margin-top:8px">'
-                    f'<b>Shot Market Line</b> — β₂={beta2}  β₃={beta3}  '
-                    f'Pendient SML={slope_sml}  '
-                    f'{"(ofensa forta en triple ✅)" if slope_sml and slope_sml > 1 else "(ofensa forta en bàsquet ✅)" if slope_sml and slope_sml < 1 else ""}'
-                    f'</p>', unsafe_allow_html=True)
+                # ── Shot Market Line (text) ────────────────────────────────
+                if slope_sml:
+                    sml_interp = ("avantatge en triple ✅" if slope_sml > 1
+                                  else "avantatge en joc interior ✅")
+                    st.markdown(
+                        f'<p style="font-size:12px;color:#6b7280;margin-top:6px">'
+                        f'<b>Shot Market Line</b> — β₂={beta2}  β₃={beta3}  '
+                        f'Pendient SML={slope_sml} ({sml_interp})</p>',
+                        unsafe_allow_html=True)
 
-                # Gràfic: evolució SR per proporció de triples (la "frontera eficient")
+                # ── Gràfic: frontera eficient ──────────────────────────────
                 alphas_plot = np.linspace(0, 1, 201)
                 srs_plot    = []
                 for a3p in alphas_plot:
-                    a2p = 1 - a3p
+                    a2p   = 1 - a3p
                     mu_p  = a2p * mu2 + a3p * mu3
-                    var_p = (4*a2p**2*sig2**2 + 9*a3p**2*sig3**2 + 12*a2p*a3p*cov_23)
-                    sig_p = np.sqrt(max(var_p, 0))
-                    srs_plot.append(mu_p / sig_p if sig_p > 0 else 0)
+                    var_p = (4*a2p**2*sig2**2 + 9*a3p**2*sig3**2 +
+                             12*a2p*a3p*cov_23)
+                    sig_p = np.sqrt(max(var_p, 1e-9))
+                    srs_plot.append(mu_p / sig_p)
 
                 fig_sml = go.Figure()
                 fig_sml.add_trace(go.Scatter(
                     x=alphas_plot * 100, y=srs_plot,
                     mode="lines", name="SR per % triples",
                     line=dict(color=color_c, width=2.5)))
-                # Punt actual
                 fig_sml.add_trace(go.Scatter(
-                    x=[a3_actual], y=[sr_actual] if sr_actual else [0],
+                    x=[a3_actual], y=[sr_actual],
                     mode="markers", name=f"Actual ({a3_actual}%)",
-                    marker=dict(size=12, color="#d97706",
-                                symbol="circle", line=dict(width=2, color="white")),
+                    marker=dict(size=12, color="#d97706", symbol="circle",
+                                line=dict(width=2, color="white")),
                     hovertemplate=f"Actual: {a3_actual}%<br>SR={sr_actual}<extra></extra>"))
-                # Punt òptim
                 fig_sml.add_trace(go.Scatter(
                     x=[a3_optim], y=[sr_optim],
                     mode="markers", name=f"Òptim ({a3_optim}%)",
-                    marker=dict(size=12, color="#16a34a",
-                                symbol="star", line=dict(width=2, color="white")),
+                    marker=dict(size=12, color="#16a34a", symbol="star",
+                                line=dict(width=2, color="white")),
                     hovertemplate=f"Òptim: {a3_optim}%<br>SR={sr_optim}<extra></extra>"))
                 fig_sml.add_vline(x=a3_actual, line_dash="dot",
                                   line_color="#d97706", opacity=0.6)
@@ -3302,50 +3329,58 @@ with t4:
                                   line_color="#16a34a", opacity=0.6)
                 fig_sml.update_xaxes(title="% de tirs de 3 punts sobre el total")
                 fig_sml.update_yaxes(title="Ràtio de Sharpe (SR)")
+                aviso_binom = " · variància binomial (1 partit)" if n_partits_c < 2 else ""
                 st.plotly_chart(
-                    chart_style(fig_sml, 300,
-                                f"{eq_c} — Frontera eficient de tirs (SR màx = {sr_optim})"),
+                    chart_style(fig_sml, 290,
+                                f"{eq_c} — Frontera eficient{aviso_binom} (SR màx={sr_optim})"),
                     use_container_width=True)
 
-                # ── Gràfic dispersió TC2% vs TC3% per partit ───────────────
-                fig_corr = go.Figure()
-                fig_corr.add_trace(go.Scatter(
-                    x=df_e_c["tc2"] * 100,
-                    y=df_e_c["tc3"] * 100,
-                    mode="markers+text",
-                    text=df_e_c["data_consulta"].str[:10],
-                    textposition="top center",
-                    textfont=dict(size=8),
-                    marker=dict(size=9, color=color_c,
-                                line=dict(width=1, color="white")),
-                    hovertemplate="TC2%: %{x:.1f}%<br>TC3%: %{y:.1f}%<extra></extra>"))
-                if len(df_e_c) >= 3:
-                    m_c, b_c = np.polyfit(df_e_c["tc2"].fillna(0) * 100,
-                                          df_e_c["tc3"].fillna(0) * 100, 1)
-                    x_lr_c = [df_e_c["tc2"].min()*100, df_e_c["tc2"].max()*100]
-                    y_lr_c = [m_c * x + b_c for x in x_lr_c]
+                # ── Gràfic dispersió TC2% vs TC3% (només ≥2 partits) ──────
+                if n_partits_c >= 2:
+                    fig_corr = go.Figure()
                     fig_corr.add_trace(go.Scatter(
-                        x=x_lr_c, y=y_lr_c, mode="lines",
-                        line=dict(color="#d97706", width=1.5, dash="dot"),
-                        name=f"Tendència (ρ={r_23:+.2f})", showlegend=True))
-                fig_corr.add_hline(y=33, line_dash="dot", line_color="#e2e4e8",
-                    annotation_text="33% ref.", annotation_font_size=9)
-                fig_corr.add_vline(x=40, line_dash="dot", line_color="#e2e4e8",
-                    annotation_text="40% ref.", annotation_font_size=9)
-                fig_corr.update_xaxes(title="TC de 2 punts (%)")
-                fig_corr.update_yaxes(title="TC de 3 punts (%)")
-                st.plotly_chart(
-                    chart_style(fig_corr, 260,
-                                f"{eq_c} — Correlació TC2% vs TC3% per partit (ρ={r_23:+.2f})"),
-                    use_container_width=True)
+                        x=df_e_c["tc2"] * 100,
+                        y=df_e_c["tc3"] * 100,
+                        mode="markers+text",
+                        text=df_e_c["data_consulta"].str[:10],
+                        textposition="top center",
+                        textfont=dict(size=8),
+                        marker=dict(size=9, color=color_c,
+                                    line=dict(width=1, color="white")),
+                        hovertemplate="TC2%: %{x:.1f}%<br>TC3%: %{y:.1f}%<extra></extra>"))
+                    if n_partits_c >= 3:
+                        m_c, b_c = np.polyfit(
+                            df_e_c["tc2"].fillna(0) * 100,
+                            df_e_c["tc3"].fillna(0) * 100, 1)
+                        x_lr_c = [df_e_c["tc2"].min()*100, df_e_c["tc2"].max()*100]
+                        y_lr_c = [m_c*x + b_c for x in x_lr_c]
+                        fig_corr.add_trace(go.Scatter(
+                            x=x_lr_c, y=y_lr_c, mode="lines",
+                            line=dict(color="#d97706", width=1.5, dash="dot"),
+                            name=f"Tendència (ρ={r_23:+.2f})", showlegend=True))
+                    fig_corr.add_hline(y=33, line_dash="dot", line_color="#e2e4e8",
+                        annotation_text="33% ref.", annotation_font_size=9)
+                    fig_corr.add_vline(x=40, line_dash="dot", line_color="#e2e4e8",
+                        annotation_text="40% ref.", annotation_font_size=9)
+                    fig_corr.update_xaxes(title="TC de 2 punts (%)")
+                    fig_corr.update_yaxes(title="TC de 3 punts (%)")
+                    titol_corr = (f"{eq_c} — TC2% vs TC3% per partit (ρ={r_23:+.2f})"
+                                  if corr_disponible else
+                                  f"{eq_c} — TC2% vs TC3% per partit (cal ≥3 per ρ)")
+                    st.plotly_chart(
+                        chart_style(fig_corr, 250, titol_corr),
+                        use_container_width=True)
 
                 with st.expander(f"📋 Dades per partit — {eq_c}"):
                     df_det_c = df_e_c[[
                         "data_consulta","match_id",
                         "val2_made","n2_int","val3_made","n3_int"]].copy()
-                    df_det_c["TC2%"] = (df_det_c["val2_made"] / df_det_c["n2_int"] * 100).round(1)
-                    df_det_c["TC3%"] = (df_det_c["val3_made"] / df_det_c["n3_int"] * 100).round(1)
-                    df_det_c["%3pt"] = (df_det_c["n3_int"] / (df_det_c["n2_int"]+df_det_c["n3_int"]) * 100).round(1)
+                    df_det_c["TC2%"]  = (df_det_c["val2_made"] / df_det_c["n2_int"] * 100).round(1)
+                    df_det_c["TC3%"]  = (df_det_c["val3_made"] / df_det_c["n3_int"] * 100).round(1)
+                    df_det_c["%3pt"]  = (df_det_c["n3_int"] /
+                                         (df_det_c["n2_int"]+df_det_c["n3_int"]) * 100).round(1)
+                    df_det_c["PtsEsp2"] = (df_det_c["TC2%"] / 100 * 2).round(3)
+                    df_det_c["PtsEsp3"] = (df_det_c["TC3%"] / 100 * 3).round(3)
                     df_det_c = df_det_c.rename(columns={
                         "data_consulta":"Data","match_id":"ID",
                         "val2_made":"2pt conv","n2_int":"2pt int",
