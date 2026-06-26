@@ -2783,6 +2783,342 @@ with t3:
             fig_to.update_traces(texttemplate="%{text}%", textposition="outside")
             st.plotly_chart(chart_style(fig_to, 220, "Efectivitat dels temps morts per equip"), use_container_width=True)
 
+    # ══════════════════════════════════════════════════════════════════════
+    # POSSESSIONS POST-TEMPS MORT (basat en Euroleague 2023-24, Frontiers 2025)
+    # Analitza les 5 primeres possessions ofensives després de cada temps mort
+    # ══════════════════════════════════════════════════════════════════════
+    st.markdown(sec("⏸ Eficiència post-temps mort — 5 primeres possessions"), unsafe_allow_html=True)
+    st.caption(
+        "La recerca a l'EuroLeague (2023–24) mostra que la 1a possessió és la més efectiva "
+        "després d'un temps mort. Aquí veiem les 5 primeres possessions ofensives de l'equip "
+        "que ha demanat el temps mort, amb els punts anotats a cada una."
+    )
+
+    if to_data:
+        import numpy as np
+        df_to2 = pd.DataFrame(to_data)
+
+        # Per cada temps mort, calculem les 5 primeres possessions ofensives
+        # Una "possessió" acaba amb: cistella, tir fallit + rebot defensiu, pèrdua, falta que genera TL
+        moves_all = df_orig.sort_values("num").to_dict("records")
+
+        def get_post_timeout_possessions(moves, timeout_idx, eq_id, max_poss=5, max_q_diff=0):
+            """Retorna llista de {poss_num, punts} per les N primeres possessions post-TM."""
+            poss_results = []
+            poss_num = 0
+            i = timeout_idx + 1
+            quart_to = moves[timeout_idx].get("quart", 1)
+            pts_poss = 0
+            en_possessio = False
+
+            while i < len(moves) and poss_num < max_poss:
+                m = moves[i]
+                q = int(m.get("quart", 1)) if m.get("quart", "") != "" else 1
+                # Si canvia de quart, parem
+                if q != quart_to and max_q_diff == 0:
+                    if en_possessio:
+                        poss_results.append({"poss": poss_num + 1, "punts": pts_poss})
+                    break
+                a = str(m.get("accio", ""))
+                eid = str(m.get("idEquip", ""))
+
+                # Inici de possessió ofensiva de l'equip que va demanar el TM
+                if not en_possessio:
+                    if eid == str(eq_id) and any(x in a for x in
+                            ["Cistella", "Tir de 2", "Tir de 3", "Tir lliure", "Pèrdua", "Pilota perduda"]):
+                        en_possessio = True
+                        pts_poss = 0
+
+                if en_possessio:
+                    # Acumula punts de l'equip
+                    if eid == str(eq_id):
+                        pts_poss += int(m.get("punts", 0))
+
+                    # Fi de possessió: tir convertit o fallit, pèrdua, o acció rival
+                    fi_poss = False
+                    if eid == str(eq_id) and any(x in a for x in
+                            ["Cistella de 2", "Cistella de 3", "Cistella de 1"]):
+                        fi_poss = True
+                    elif eid == str(eq_id) and any(x in a for x in
+                            ["Tir de 2 fallat", "Tir de 3 fallat", "Tir lliure fallat",
+                             "Pèrdua", "Pilota perduda"]):
+                        fi_poss = True
+                    elif eid != str(eq_id) and any(x in a for x in
+                            ["Cistella", "Tir", "Rebot defensiu"]):
+                        fi_poss = True
+
+                    if fi_poss:
+                        poss_num += 1
+                        poss_results.append({"poss": poss_num, "punts": pts_poss})
+                        pts_poss = 0
+                        en_possessio = False
+                i += 1
+
+            return poss_results
+
+        # Construïm index de posicions dels temps morts al play-by-play
+        timeout_indices = []
+        for idx, m in enumerate(moves_all):
+            if "Temps mort" in str(m.get("accio", "")):
+                timeout_indices.append((idx, str(m.get("idEquip", ""))))
+
+        # Acumula possessions per posició (1–5) per equip
+        poss_acum = {}  # {equip_nom: {poss_n: [punts, ...]}}
+        for (t_idx, eq_id_t), to_row in zip(timeout_indices, to_data):
+            eq_nom_t = to_row["equip_nom"]
+            if eq_nom_t not in poss_acum:
+                poss_acum[eq_nom_t] = {n: [] for n in range(1, 6)}
+            poss_list = get_post_timeout_possessions(moves_all, t_idx, eq_id_t)
+            for p in poss_list:
+                if p["poss"] <= 5:
+                    poss_acum[eq_nom_t][p["poss"]].append(p["punts"])
+
+        if poss_acum:
+            for eq_nom_t, poss_dict in poss_acum.items():
+                color_t = COLOR_A if eq_nom_t == nom_a else COLOR_B
+                st.markdown(
+                    f'<div style="font-size:13px;font-weight:700;color:{color_t};margin:8px 0 4px">'
+                    f'🏀 {eq_nom_t}</div>', unsafe_allow_html=True)
+
+                # Targetes: punts esperats per possessió
+                cols_p = st.columns(5)
+                poss_labels = ["1a", "2a", "3a", "4a", "5a"]
+                for i_p, (poss_n, label) in enumerate(zip(range(1, 6), poss_labels)):
+                    vals = poss_dict[poss_n]
+                    if vals:
+                        mitjana = round(sum(vals) / len(vals), 2)
+                        pct_anota = round(sum(1 for v in vals if v > 0) / len(vals) * 100)
+                        # Color: verd si supera 1.0 pts/poss (referència EuroLeague)
+                        col_p = "#16a34a" if mitjana >= 1.0 else ("#d97706" if mitjana >= 0.7 else "#dc2626")
+                        with cols_p[i_p]:
+                            st.markdown(card(
+                                f"{label} possessió",
+                                f"{mitjana} pts",
+                                f"{pct_anota}% anoten · n={len(vals)}",
+                                col_p), unsafe_allow_html=True)
+                    else:
+                        with cols_p[i_p]:
+                            st.markdown(card(f"{label} possessió", "—", "sense dades", "#9ca3af"),
+                                unsafe_allow_html=True)
+
+                # Gràfic de barres: punts per possessió
+                poss_plot = []
+                for poss_n in range(1, 6):
+                    vals = poss_dict[poss_n]
+                    if vals:
+                        poss_plot.append({
+                            "Possessió": f"{poss_labels[poss_n-1]} poss.",
+                            "Pts/poss": round(sum(vals)/len(vals), 2),
+                            "n": len(vals)
+                        })
+                if poss_plot:
+                    df_pp = pd.DataFrame(poss_plot)
+                    fig_pp = go.Figure()
+                    fig_pp.add_trace(go.Bar(
+                        x=df_pp["Possessió"],
+                        y=df_pp["Pts/poss"],
+                        marker_color=[
+                            "#16a34a" if v >= 1.0 else ("#d97706" if v >= 0.7 else "#dc2626")
+                            for v in df_pp["Pts/poss"]
+                        ],
+                        text=[f"{v:.2f}" for v in df_pp["Pts/poss"]],
+                        textposition="outside",
+                        hovertemplate="<b>%{x}</b><br>Pts/poss: %{y:.2f}<extra></extra>"
+                    ))
+                    # Línia de referència EuroLeague (~1.1 pts/poss)
+                    fig_pp.add_hline(y=1.1, line_dash="dot", line_color="#6366f1",
+                        annotation_text="Ref. EuroLeague (1.1)", annotation_font_size=9,
+                        annotation_font_color="#6366f1")
+                    fig_pp.update_layout(yaxis=dict(range=[0, max(df_pp["Pts/poss"].max() * 1.3, 1.5)]))
+                    st.plotly_chart(
+                        chart_style(fig_pp, 260,
+                            f"{eq_nom_t} — pts per possessió post-temps mort"),
+                        use_container_width=True)
+        else:
+            st.info("No s'han pogut calcular les possessions post-temps mort en aquest partit.")
+    else:
+        st.info("No s'han detectat temps morts en aquest partit per analitzar possessions.")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # CLUTCH TIME (últims 5 min, diferència ≤5 pts)
+    # Definició estàndard de la literatura (B.League 2024, NBA clutch stats)
+    # ══════════════════════════════════════════════════════════════════════
+    st.markdown(sec("🔥 Clutch Time — últims 5 min amb ≤5 pts de diferència"), unsafe_allow_html=True)
+    st.caption(
+        "Clutch time = últims 5 minuts del 4t quart (o pròrroga) amb diferència ≤5 punts. "
+        "Compara l'eficiència ofensiva i defensiva de cada equip en situació de pressió."
+    )
+
+    # Detecta moments clutch: Q4 (min 35–40) o Q5+ (pròrroga), diferència ≤5 pts
+    MINS_TOTAL_REG = 40  # 4 quarts × 10 min
+    CLUTCH_WINDOW  = 5   # últims 5 minuts
+    CLUTCH_MARGIN  = 5   # ≤5 punts de diferència
+
+    # Reconstruïm el marcador acumulat amb el play-by-play
+    clutch_rows_a, clutch_rows_b = [], []  # jugades en clutch per equip
+    total_rows_a,  total_rows_b  = [], []  # totes les jugades (per comparar)
+
+    if not score_df.empty and len(teams) >= 2:
+        score_clutch = score_df.copy()
+        # t_abs = minut absolut de joc
+        score_clutch["t_abs"] = score_clutch.apply(
+            lambda r: (int(r["quart"])-1)*10 + (10 - float(r.get("min_num", 0)))
+            if float(r.get("min_num", 0)) <= 10
+            else float(r.get("min_num", 0)), axis=1)
+
+        # Acumula marcador
+        pts_a_acc, pts_b_acc = 0, 0
+        clutch_events = []
+        for _, row in score_clutch.iterrows():
+            q = int(row.get("quart", 1))
+            t_abs = row["t_abs"]
+            eid   = str(row.get("idEquip", ""))
+            pts   = int(row.get("punts", 0))
+
+            if eid == str(teams[0]):
+                pts_a_acc += pts
+            elif eid == str(teams[1]):
+                pts_b_acc += pts
+
+            diff = abs(pts_a_acc - pts_b_acc)
+            # Clutch: últims 5 min del Q4 o pròrroga, diferència ≤5
+            is_q4_clutch = (q == 4 and t_abs >= MINS_TOTAL_REG - CLUTCH_WINDOW)
+            is_ot_clutch = (q >= 5)  # tota la pròrroga és clutch
+            if (is_q4_clutch or is_ot_clutch) and diff <= CLUTCH_MARGIN:
+                clutch_events.append({
+                    "t_abs": t_abs, "quart": q,
+                    "eid": eid, "punts": pts,
+                    "accio": str(row.get("accio", "")),
+                    "jugador": str(row.get("jugador", "")),
+                    "diff": diff
+                })
+
+        df_clutch_ev = pd.DataFrame(clutch_events) if clutch_events else pd.DataFrame()
+
+        if df_clutch_ev.empty:
+            st.info("No hi ha hagut situació de clutch en aquest partit (últims 5 min amb ≤5 pts).")
+        else:
+            n_clutch = len(df_clutch_ev)
+            durada_clutch = round(
+                df_clutch_ev["t_abs"].max() - df_clutch_ev["t_abs"].min(), 1
+            ) if n_clutch > 1 else 0
+
+            # Mètriques generals del clutch
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                st.markdown(card("Accions clutch", n_clutch, "en situació de pressió", "#6366f1"),
+                    unsafe_allow_html=True)
+            with c2:
+                st.markdown(card("Durada clutch", f"~{durada_clutch:.0f} min",
+                    "minuts en ≤5 pts", "#6366f1"), unsafe_allow_html=True)
+
+            # Estadístiques per equip en clutch
+            for i_eq, (tid, tnom, tcol) in enumerate([
+                    (teams[0], nom_a, COLOR_A),
+                    (teams[1] if len(teams) > 1 else None, nom_b, COLOR_B)]):
+                if tid is None:
+                    continue
+                df_eq_cl = df_clutch_ev[df_clutch_ev["eid"] == str(tid)]
+                df_eq_tot = score_df[score_df["idEquip"] == tid] if "idEquip" in score_df.columns else pd.DataFrame()
+
+                pts_clutch  = int(df_eq_cl["punts"].sum())
+                cist_clutch = df_eq_cl["accio"].str.contains("Cistella", case=False, na=False).sum()
+                tirs_clutch = df_eq_cl["accio"].str.contains("Tir|Cistella", case=False, na=False).sum()
+                tc_clutch   = round(cist_clutch / tirs_clutch * 100, 1) if tirs_clutch > 0 else 0
+
+                # Comparació amb stats globals (tot el partit)
+                df_eq_all = df_orig[df_orig["idEquip"] == tid]
+                pts_total  = int(df_eq_all["punts"].sum())
+                cist_total = df_eq_all["accio"].str.contains("Cistella", case=False, na=False).sum()
+                tirs_total = df_eq_all["accio"].str.contains("Tir|Cistella", case=False, na=False).sum()
+                tc_total   = round(cist_total / tirs_total * 100, 1) if tirs_total > 0 else 0
+
+                if i_eq == 0:
+                    with c3:
+                        diff_tc = round(tc_clutch - tc_total, 1)
+                        signe_tc = "+" if diff_tc >= 0 else ""
+                        st.markdown(card(
+                            f"{tnom} — TC% clutch",
+                            f"{tc_clutch}%",
+                            f"{signe_tc}{diff_tc}pp vs global ({tc_total}%)",
+                            tcol), unsafe_allow_html=True)
+                else:
+                    with c4:
+                        diff_tc = round(tc_clutch - tc_total, 1)
+                        signe_tc = "+" if diff_tc >= 0 else ""
+                        st.markdown(card(
+                            f"{tnom} — TC% clutch",
+                            f"{tc_clutch}%",
+                            f"{signe_tc}{diff_tc}pp vs global ({tc_total}%)",
+                            tcol), unsafe_allow_html=True)
+
+            # Taula comparativa clutch vs global
+            comp_rows = []
+            for tid, tnom in [(teams[0], nom_a), (teams[1] if len(teams)>1 else None, nom_b)]:
+                if tid is None:
+                    continue
+                df_eq_cl  = df_clutch_ev[df_clutch_ev["eid"] == str(tid)]
+                df_eq_all = df_orig[df_orig["idEquip"] == tid]
+
+                def stats_bloc(df_b, label):
+                    pts   = int(df_b["punts"].sum()) if "punts" in df_b.columns else 0
+                    cist  = df_b["accio"].str.contains("Cistella", case=False, na=False).sum() if "accio" in df_b.columns else 0
+                    tirs  = df_b["accio"].str.contains("Tir|Cistella", case=False, na=False).sum() if "accio" in df_b.columns else 0
+                    tl    = df_b["accio"].str.contains("Tir lliure", case=False, na=False).sum() if "accio" in df_b.columns else 0
+                    perd  = df_b["accio"].str.contains("Pèrdua|Pilota perduda", case=False, na=False).sum() if "accio" in df_b.columns else 0
+                    tc_p  = round(cist/tirs*100, 1) if tirs > 0 else 0
+                    return {"Equip": tnom, "Context": label,
+                            "Punts": pts, "Cistelles": int(cist),
+                            "Tirs int.": int(tirs), "TC%": tc_p,
+                            "TL int.": int(tl), "Pèrdues": int(perd)}
+
+                comp_rows.append(stats_bloc(df_eq_cl,  "🔥 Clutch"))
+                comp_rows.append(stats_bloc(df_eq_all, "📊 Global"))
+
+            if comp_rows:
+                df_comp = pd.DataFrame(comp_rows)
+                # Taula HTML amb color per clutch vs global
+                html_cl = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;color:#1a2744">'
+                cols_cl = ["Equip","Context","Punts","Cistelles","Tirs int.","TC%","TL int.","Pèrdues"]
+                html_cl += "<tr>" + "".join(
+                    f'<th style="background:#D6E8F7;color:#0C447C;padding:6px 10px;text-align:center;border:1px solid #B5D4F4">{c}</th>'
+                    for c in cols_cl) + "</tr>"
+                for _, row_cl in df_comp.iterrows():
+                    is_clutch = "Clutch" in str(row_cl["Context"])
+                    bg_row = "#FFF7ED" if is_clutch else "#ffffff"
+                    html_cl += "<tr>"
+                    for ci_cl, col_cl in enumerate(cols_cl):
+                        val_cl = row_cl[col_cl]
+                        align  = "left" if ci_cl <= 1 else "center"
+                        bold   = ' font-weight:700;' if is_clutch else ''
+                        html_cl += (f'<td style="padding:5px 10px;border:1px solid #B5D4F4;'
+                                    f'background:{bg_row};color:#1a2744;'
+                                    f'text-align:{align};{bold}">{val_cl}</td>')
+                    html_cl += "</tr>"
+                html_cl += "</table></div>"
+                st.markdown(html_cl, unsafe_allow_html=True)
+                st.caption("🔥 Clutch = últims 5 min amb ≤5 pts · 📊 Global = tot el partit")
+
+            # Jugadores que han actuat en clutch
+            if not df_clutch_ev.empty:
+                st.markdown("**Jugadores actives en clutch time**", unsafe_allow_html=True)
+                jug_clutch = df_clutch_ev[df_clutch_ev["punts"] > 0].groupby(
+                    ["eid", "jugador"]).agg(
+                    Punts=("punts", "sum"),
+                    Accions=("accio", "count")
+                ).reset_index()
+                jug_clutch["Equip"] = jug_clutch["eid"].map(
+                    {str(teams[0]): nom_a,
+                     str(teams[1]) if len(teams)>1 else "": nom_b})
+                jug_clutch = jug_clutch.sort_values("Punts", ascending=False)
+                if not jug_clutch.empty:
+                    st.dataframe(
+                        jug_clutch[["Equip","jugador","Punts","Accions"]].rename(
+                            columns={"jugador":"Jugadora"}),
+                        use_container_width=True, hide_index=True)
+    else:
+        st.info("Calen dades de marcador per calcular el clutch time.")
+
     st.markdown(sec("Momentum shifts"), unsafe_allow_html=True)
     st.caption("Runs de 5+ punts consecutius sense resposta del rival.")
     THRESHOLD=5; shift_rows=[]
