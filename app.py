@@ -4789,6 +4789,149 @@ with t5:
             )
             st.plotly_chart(fig_hm, use_container_width=True)
             st.caption("Diagonal = la pròpia jugadora (0). Caselles buides = no han jugat juntes.")
+
+            # ── Mapes de calor addicionals per parelles ──────────────────────
+            st.markdown(sec("Mapes de calor per parelles — minuts i ratings"), unsafe_allow_html=True)
+
+            # Funció base: calcula minuts juntes + pf + pc per a cada parella
+            def stats_parella(j1, j2):
+                ivs1 = [(ti,tf) for ti,tf,ei in intervals_jug.get(j1,[]) if ei==tid_rot]
+                ivs2 = [(ti,tf) for ti,tf,ei in intervals_jug.get(j2,[]) if ei==tid_rot]
+                juntes = []
+                for a1,a2 in ivs1:
+                    for b1,b2 in ivs2:
+                        ini=max(a1,b1); fi=min(a2,b2)
+                        if fi > ini: juntes.append((ini,fi))
+                if not juntes:
+                    return None
+                mins = sum(tf-ti for ti,tf in juntes)
+                pf = pc = 0
+                for ti,tf in juntes:
+                    df_j = df_orig_tab[
+                        (df_orig_tab["t_abs"]>=ti) &
+                        (df_orig_tab["t_abs"]<=tf)]
+                    pf += int(df_j[df_j["idEquip"]==tid_rot]["punts"].sum())
+                    if rival_rot_id2:
+                        pc += int(df_j[df_j["idEquip"]==rival_rot_id2]["punts"].sum())
+                return {"mins": round(mins,1), "pf": pf, "pc": pc}
+
+            # Precalcula tota la matriu de stats
+            stats_mat = [[None]*n for _ in range(n)]
+            for i, j1 in enumerate(jugs_eq_all):
+                for j, j2 in enumerate(jugs_eq_all):
+                    if i == j:
+                        stats_mat[i][j] = {"mins":0.0, "pf":0, "pc":0}
+                    elif i < j:
+                        val = stats_parella(j1, j2)
+                        stats_mat[i][j] = val
+                        stats_mat[j][i] = val
+
+            def _off_rtg(s):
+                if s is None or s["mins"] < 0.5: return None
+                poss = s["pf"] + 0.44 * s["pc"]  # aproximació simple
+                return round(s["pf"] / max(poss, 1) * 100, 1)
+
+            def _def_rtg(s):
+                if s is None or s["mins"] < 0.5: return None
+                poss = s["pf"] + 0.44 * s["pc"]
+                return round(s["pc"] / max(poss, 1) * 100, 1)
+
+            def _net_rtg(s):
+                off = _off_rtg(s)
+                def_ = _def_rtg(s)
+                if off is None or def_ is None: return None
+                return round(off - def_, 1)
+
+            # Construeix les 4 matrius de valors
+            mat_mins = [[None]*n for _ in range(n)]
+            mat_off  = [[None]*n for _ in range(n)]
+            mat_def  = [[None]*n for _ in range(n)]
+            mat_net  = [[None]*n for _ in range(n)]
+
+            for i in range(n):
+                for j in range(n):
+                    s = stats_mat[i][j]
+                    mat_mins[i][j] = s["mins"] if s and i!=j else (0.0 if i==j else None)
+                    mat_off[i][j]  = _off_rtg(s) if i!=j else None
+                    mat_def[i][j]  = _def_rtg(s) if i!=j else None
+                    mat_net[i][j]  = _net_rtg(s) if i!=j else None
+
+            def heatmap_parelles(matrix, title, fmt, colorscale, zmid=None,
+                                  label_fn=None, caption=""):
+                z_v  = [[v if v is not None else float("nan") for v in row]
+                         for row in matrix]
+                t_v  = [[(label_fn(v) if label_fn else
+                          (f"{v:.1f}" if isinstance(v,float) else str(v)))
+                          if v is not None else "—"
+                          for v in row] for row in matrix]
+                fig  = go.Figure(go.Heatmap(
+                    z=z_v, x=noms_curts, y=noms_curts,
+                    text=t_v, texttemplate="%{text}",
+                    textfont=dict(size=10, color="#1a2744"),
+                    colorscale=colorscale,
+                    zmid=zmid,
+                    showscale=True,
+                    colorbar=dict(thickness=12, len=0.85),
+                    hoverongaps=False
+                ))
+                fig.update_layout(
+                    height=max(320, n*48+80),
+                    paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+                    font=dict(color="#374151", family="Inter", size=11),
+                    xaxis=dict(side="top", tickangle=-30),
+                    margin=dict(l=0,r=60,t=60,b=0)
+                )
+                st.plotly_chart(
+                    chart_style(fig, max(320,n*48+80), title),
+                    use_container_width=True)
+                if caption:
+                    st.caption(caption)
+
+            # 4 pestanyes per als 4 mapes
+            hm1, hm2, hm3, hm4 = st.tabs([
+                "⏱ Minuts juntes", "⚡ Off Rating", "🛡 Def Rating", "📊 Net Rating"
+            ])
+
+            with hm1:
+                heatmap_parelles(
+                    mat_mins,
+                    "Minuts jugant juntes per parella",
+                    ".1f",
+                    colorscale=[[0,"#EBF4FC"],[0.5,"#378ADD"],[1.0,"#0C447C"]],
+                    label_fn=lambda v: f"{v:.1f}'",
+                    caption="Quants minuts han coincidit a pista. Blau fosc = molt temps juntes."
+                )
+
+            with hm2:
+                heatmap_parelles(
+                    mat_off,
+                    "Off Rating per parella (pts/100 poss ofensives)",
+                    ".1f",
+                    colorscale=[[0,"#EBF4FC"],[0.5,"#f9fafb"],[1.0,"#16a34a"]],
+                    label_fn=lambda v: f"{v:.0f}",
+                    caption="Punts anotats per 100 possessions quan les dues juguen juntes. Verd = atac eficient."
+                )
+
+            with hm3:
+                heatmap_parelles(
+                    mat_def,
+                    "Def Rating per parella (pts rivals/100 poss)",
+                    ".1f",
+                    colorscale=[[0,"#16a34a"],[0.5,"#f9fafb"],[1.0,"#dc2626"]],
+                    label_fn=lambda v: f"{v:.0f}",
+                    caption="Punts rebuts per 100 possessions quan les dues juguen juntes. Verd = defensa eficient (valor baix)."
+                )
+
+            with hm4:
+                heatmap_parelles(
+                    mat_net,
+                    "Net Rating per parella",
+                    ".1f",
+                    colorscale=[[0,"#dc2626"],[0.5,"#f9fafb"],[1.0,"#16a34a"]],
+                    zmid=0,
+                    label_fn=lambda v: f"+{v:.0f}" if v > 0 else f"{v:.0f}",
+                    caption="Off Rating − Def Rating. Verd = parella que guanya el seu temps a pista. Vermell = parella que perd."
+                )
         else:
             st.info("Cal tenir almenys 2 jugadores amb events d'entrada/sortida.")
 
