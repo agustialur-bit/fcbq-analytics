@@ -3014,15 +3014,18 @@ with t2:
         PAT_TL_T2 = "Cistella de 1|Intent fallat de 1|Tir lliure convertit|Tir lliure fallat"
         n_tc_jug = int(dj["accio"].str.contains(PAT_TC_T2, case=False, na=False).sum())
         n_tl_jug = int(dj["accio"].str.contains(PAT_TL_T2, case=False, na=False).sum())
-        ts_denom_jug = 2 * (n_tc_jug + 0.44 * n_tl_jug)
-        ts_pct_jug = round(dj_pts / ts_denom_jug * 100, 1) if ts_denom_jug > 0 else 0.0
+        denom_jug    = n_tc_jug + 0.44 * n_tl_jug
+        ts_denom_jug = 2 * denom_jug
+        ts_pct_jug   = round(dj_pts / ts_denom_jug * 100, 1) if ts_denom_jug > 0 else 0.0
+        pts_per_tir  = round(dj_pts / denom_jug, 2) if denom_jug > 0 else 0.0
 
         imp_rows.append({"Equip":eq_nom,"Jugadora":jug,"Pts favor":pf,"Pts contra":pc,
             "Parcial":f"+{pf-pc}" if pf>=pc else str(pf-pc),
             "Usage%": f"{usage_disp}%",
             "TS%": ts_pct_jug,
+            "Pts/Tir": pts_per_tir,
             "_diff":pf-pc,
-            "_n_tirs": int(n_tc_jug + 0.44*n_tl_jug)})
+            "_n_tirs": int(denom_jug)})
     df_imp=pd.DataFrame(imp_rows).sort_values("_diff",ascending=False).drop(columns=["_diff","_n_tirs"])
     t_ia,t_ib=st.tabs([nom_a,nom_b])
     for it,in_nom in [(t_ia,nom_a),(t_ib,nom_b)]:
@@ -3171,6 +3174,31 @@ with t2:
             "Pts/min = punts anotats / minuts reals en pista · "
             "Mida del punt = tirs intentats · Quadrant ideal: dalt a la dreta",
             q_pm, ".2f")
+
+        # ── Gràfic 3: Pts/Tir vs Usage% ────────────────────────────────────
+        ppt_map = {r["Jugadora"]: r["Pts/Tir"] for r in imp_rows}
+        df_scatter["Pts/Tir"] = df_scatter["Jugadora"].map(ppt_map).fillna(0.0)
+        q_ppt = [
+            ("⭐ Molt ús · molt eficient",
+             df_scatter["_usage_num"].max()*0.92,
+             df_scatter["Pts/Tir"].max()*0.96, "#16a34a"),
+            ("⚠️ Molt ús · poc eficient",
+             df_scatter["_usage_num"].max()*0.92,
+             df_scatter["Pts/Tir"].min()*1.08, "#dc2626"),
+            ("💡 Poc ús · molt eficient",
+             df_scatter["_usage_num"].min()*1.15,
+             df_scatter["Pts/Tir"].max()*0.96, "#185FA5"),
+            ("🔄 Rol secundari",
+             df_scatter["_usage_num"].min()*1.15,
+             df_scatter["Pts/Tir"].min()*1.08, "#9ca3af"),
+        ]
+        scatter_usage(
+            df_scatter, "Pts/Tir", "Pts/Tir",
+            "Usage% vs Pts/Tir — eficiència bruta per acció ofensiva",
+            "Pts/Tir = punts / (TC_int + 0.44 × TL_int) · "
+            "Referència: >1.0 = eficient · >1.5 = molt eficient · "
+            "Mida del punt = tirs intentats",
+            q_ppt, ".2f")
 
     st.markdown(sec("Combinació de jugadores"), unsafe_allow_html=True)
     eq_combo=st.selectbox("Equip",[nom_a,nom_b],key="combo_eq")
