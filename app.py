@@ -1971,6 +1971,10 @@ def genera_excel_analisi():
 
     for ci,cap in zip(range(2,10),['Equip','Parella','Partits','Min junts','Pts favor','Pts contra','+/-','+/- per min']):
         fc(ws7,row7,ci,cap,bold=True,bg=BLAU_MIG,fg=BLANC,size=9)
+    # Columnes addicionals: Off Rtg, Def Rtg, Net Rtg
+    for ci,cap in zip(range(10,13),['Off Rtg','Def Rtg','Net Rtg']):
+        fc(ws7,row7,ci,cap,bold=True,bg=BLAU_MIG,fg=BLANC,size=9)
+        ws7.column_dimensions[get_column_letter(ci)].width=9
     ws7.row_dimensions[row7].height=18; row7+=1
 
     parelles_acum = {}
@@ -2005,6 +2009,17 @@ def genera_excel_analisi():
         fc(ws7,row7,7,d_par['pc'],bg=bg)
         fc(ws7,row7,8,f"{'+'if pm_tot>=0 else ''}{pm_tot}",bold=True,bg=pm_bg,fg=pm_fg)
         fc(ws7,row7,9,pm_min_tot,num_fmt='+0.00;-0.00;0.00',bg=bg)
+        # Off Rtg / Def Rtg / Net Rtg per parella
+        poss_par = d_par['pf'] + 0.44 * d_par['pc']
+        off_rtg_par = round(d_par['pf'] / poss_par * 100, 1) if poss_par > 0 else 0
+        def_rtg_par = round(d_par['pc'] / poss_par * 100, 1) if poss_par > 0 else 0
+        net_rtg_par = round(off_rtg_par - def_rtg_par, 1)
+        net_bg = 'D5F5E3' if net_rtg_par >= 0 else 'FADBD8'
+        net_fg = '0F6E56' if net_rtg_par >= 0 else '993C1D'
+        fc(ws7,row7,10,off_rtg_par,bg=bg,size=9)
+        fc(ws7,row7,11,def_rtg_par,bg=bg,size=9)
+        fc(ws7,row7,12,f"{'+'if net_rtg_par>=0 else ''}{net_rtg_par}",
+           bold=True,bg=net_bg,fg=net_fg,size=9)
         ws7.row_dimensions[row7].height=16; row7+=1
 
     buf=io.BytesIO(); wb.save(buf); buf.seek(0)
@@ -3768,122 +3783,6 @@ with t9:
             )
 
         # ── Informes PPTX ───────────────────────────────────────────────────
-        st.markdown(sec("📊 Genera informes en PowerPoint"), unsafe_allow_html=True)
-
-        tab_pp, tab_sc = st.tabs(["📋 Post-Partit (Manresa)", "🔍 Scouting Rival"])
-
-        with tab_pp:
-            st.caption("Genera un informe de 6 diapositives amb les mètriques del partit seleccionat.")
-            ids_pp = df_hist["match_id"].tolist()
-            sel_pp = st.selectbox(
-                "Selecciona el partit",
-                ids_pp,
-                format_func=lambda x: (
-                    f"{df_hist[df_hist['match_id']==x]['nom_a'].values[0]} "
-                    f"{df_hist[df_hist['match_id']==x]['score_a'].values[0]}–"
-                    f"{df_hist[df_hist['match_id']==x]['score_b'].values[0]} "
-                    f"{df_hist[df_hist['match_id']==x]['nom_b'].values[0]} "
-                    f"({df_hist[df_hist['match_id']==x]['data_consulta'].values[0][:10]})"
-                ),
-                key="sel_pp_pptx"
-            )
-            if st.button("⬇ Generar informe post-partit (.pptx)", key="btn_pp_pptx"):
-                row_pp = df_hist[df_hist["match_id"] == sel_pp].iloc[0]
-                with st.spinner("Generant informe..."):
-                    try:
-                        df_pp_plays = load_jugades_db(sel_pp)
-                        teams_pp    = get_teams(df_pp_plays)
-                        # Recupera imp_rows si el partit carregat és el mateix
-                        imp_ext = imp_rows if (
-                            "match_id" in st.session_state and
-                            st.session_state.match_id == sel_pp
-                        ) else []
-                        pptx_bytes = genera_pptx_postpartit(
-                            match_id  = sel_pp,
-                            df_plays  = df_pp_plays,
-                            nom_a     = row_pp["nom_a"],
-                            nom_b     = row_pp["nom_b"],
-                            score_a   = int(row_pp["score_a"]),
-                            score_b   = int(row_pp["score_b"]),
-                            teams     = teams_pp,
-                            imp_rows_ext = imp_ext
-                        )
-                        nom_fitxer = (
-                            f"postpartit_{row_pp['nom_a'].replace(' ','_')}_vs_"
-                            f"{row_pp['nom_b'].replace(' ','_')}_"
-                            f"{row_pp['data_consulta'][:10]}.pptx"
-                        )
-                        st.download_button(
-                            label="📥 Descarregar informe post-partit",
-                            data=pptx_bytes,
-                            file_name=nom_fitxer,
-                            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                            key="dl_pp_pptx"
-                        )
-                        st.success(f"Informe generat: {nom_fitxer}")
-                    except Exception as e:
-                        st.error(f"Error generant el PPTX: {e}")
-
-        with tab_sc:
-            st.caption(
-                "Carrega tots els partits del rival que tinguis a la BD i genera un informe "
-                "de scouting de 6 diapositives. Les zones de tir s'omplen si tens dades de "
-                "`tirs_fcbq` del rival."
-            )
-            # Detecta equips disponibles a la BD
-            equips_disponibles = sorted(set(
-                df_hist["nom_a"].tolist() + df_hist["nom_b"].tolist()
-            ))
-            nom_rival_sc = st.selectbox(
-                "Selecciona el rival a analitzar",
-                equips_disponibles,
-                key="sel_rival_sc"
-            )
-            nom_manresa_sc = st.text_input(
-                "Nom del teu equip (per a la comparativa)",
-                value="Manresa",
-                key="nom_manresa_sc"
-            )
-            # Filtra partits del rival
-            df_hist_rival_sc = df_hist[
-                (df_hist["nom_a"] == nom_rival_sc) | (df_hist["nom_b"] == nom_rival_sc)
-            ].copy()
-            st.info(f"Partits trobats del rival a la BD: **{len(df_hist_rival_sc)}**")
-
-            if st.button("⬇ Generar informe scouting (.pptx)", key="btn_sc_pptx"):
-                if df_hist_rival_sc.empty:
-                    st.warning("No hi ha partits d'aquest equip a la BD. Carrega primer algun partit seu.")
-                else:
-                    with st.spinner(f"Carregant {len(df_hist_rival_sc)} partits i generant scouting..."):
-                        try:
-                            # Carrega play-by-play de cada partit del rival
-                            df_plays_dict_sc = {}
-                            for mid_sc in df_hist_rival_sc["match_id"].tolist():
-                                try:
-                                    df_plays_dict_sc[mid_sc] = load_jugades_db(mid_sc)
-                                except Exception:
-                                    pass
-                            pptx_bytes_sc = genera_pptx_scouting(
-                                nom_rival   = nom_rival_sc,
-                                nom_manresa = nom_manresa_sc,
-                                df_hist_rival = df_hist_rival_sc,
-                                df_plays_dict = df_plays_dict_sc
-                            )
-                            nom_fitxer_sc = (
-                                f"scouting_{nom_rival_sc.replace(' ','_')}_"
-                                f"{datetime.now().strftime('%Y%m%d')}.pptx"
-                            )
-                            st.download_button(
-                                label="📥 Descarregar scouting",
-                                data=pptx_bytes_sc,
-                                file_name=nom_fitxer_sc,
-                                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                                key="dl_sc_pptx"
-                            )
-                            st.success(f"Scouting generat: {nom_fitxer_sc}")
-                        except Exception as e:
-                            st.error(f"Error generant el PPTX: {e}")
-
         if len(df_hist)>1:
             st.markdown(sec("Evolució de resultats"), unsafe_allow_html=True)
             rows_comp=[]
@@ -4175,16 +4074,20 @@ with t4:
             equips_cart = df_eq_cart["equip_nom"].dropna().unique().tolist()
             equips_cart = [e for e in equips_cart if e and e != "?"]
 
-            for eq_c in equips_cart:
+            eq_c = st.selectbox(
+                "Selecciona l'equip",
+                equips_cart,
+                key="sel_eq_cartera"
+            )
+
+            if eq_c:
                 df_e_c = df_eq_cart[df_eq_cart["equip_nom"] == eq_c].dropna(
                     subset=["tc2","tc3","pts_esp_2","pts_esp_3"]).copy()
 
-                if df_e_c.empty:
-                    continue
-
-                n_partits_c = len(df_e_c)
-                color_c = COLOR_A if eq_c == equips_cart[0] else COLOR_B
-                st.markdown(
+                if not df_e_c.empty:
+                  n_partits_c = len(df_e_c)
+                  color_c = COLOR_A if eq_c == equips_cart[0] else COLOR_B
+                  st.markdown(
                     f'<div style="font-size:13px;font-weight:700;color:{color_c};margin:12px 0 4px">'
                     f'🏀 {eq_c} <span style="font-size:11px;font-weight:400;color:#6b7280">'
                     f'({n_partits_c} {"partit" if n_partits_c==1 else "partits"})</span></div>',
@@ -4407,8 +4310,6 @@ with t4:
                         "val2_made":"2pt conv","n2_int":"2pt int",
                         "val3_made":"3pt conv","n3_int":"3pt int"})
                     st.dataframe(df_det_c, use_container_width=True, hide_index=True)
-
-                st.markdown("---")
 
     # ── Exporta Excel ───────────────────────────────────────────────────────
     st.markdown(sec("Exporta a Excel"), unsafe_allow_html=True)
