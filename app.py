@@ -2022,6 +2022,173 @@ def genera_excel_analisi():
            bold=True,bg=net_bg,fg=net_fg,size=9)
         ws7.row_dimensions[row7].height=16; row7+=1
 
+    # ── Pestanya 8: Impacte en companyes ───────────────────────────────────
+    ws8 = wb.create_sheet("🤝 Impacte Companyes")
+    ws8.sheet_view.showGridLines = False
+    ws8.column_dimensions['A'].width = 2
+
+    ws8.merge_cells('B1:L1')
+    c = ws8['B1']; c.value = '🏀  MICKI ANALÍTICA — IMPACTE EN LES COMPANYES'
+    c.font = Font(bold=True, size=14, color=BLANC, name='Calibri')
+    c.fill = PatternFill("solid", fgColor=BLAU_FOSC)
+    c.alignment = Alignment(horizontal='center', vertical='center')
+    ws8.row_dimensions[1].height = 36
+
+    ws8.merge_cells('B2:L2')
+    c = ws8['B2']
+    c.value = (f"Generat: {datetime.now().strftime('%d/%m/%Y %H:%M')}  ·  "
+               f"Pts/min de cada companya quan juga AMB vs SENSE la jugadora seleccionada")
+    c.font = Font(size=9, color=BLAU_FOSC, italic=True, name='Calibri')
+    c.alignment = Alignment(horizontal='center')
+    ws8.row_dimensions[2].height = 18
+    ws8.row_dimensions[3].height = 6
+
+    col_ws8 = [2,3,4,5,6,7,8,9,10,11,12]
+    widths_ws8 = [18,22,6,11,11,9,9,9,9,8,8]
+    for ci, w in zip(col_ws8, widths_ws8):
+        ws8.column_dimensions[get_column_letter(ci)].width = w
+
+    row8 = 4
+
+    # Itera per cada equip i cada partit acumulat
+    intervals_all = {}   # jugadora -> [(ti,tf,eq_id,match_id)]
+
+    for df_x in df_p:
+        ivs_x = get_intervals_jugadores_global(df_x)
+        mid_x = df_x["match_id"].iloc[0] if "match_id" in df_x.columns else "?"
+
+        # Afegeix t_abs si no existeix
+        if "t_abs" not in df_x.columns:
+            MINS_Q_X = 10
+            df_x = df_x.copy()
+            df_x["t_abs"] = df_x.apply(
+                lambda r: (int(r["quart"])-1)*MINS_Q_X +
+                (MINS_Q_X - float(r.get("min_num",0))
+                 if float(r.get("min_num",0)) <= MINS_Q_X
+                 else float(r.get("min_num",0))), axis=1)
+
+        teams_x = [t for t in df_x["idEquip"].dropna().unique()
+                   if str(t) not in ("","nan","0")]
+
+        for tid_x in teams_x[:2]:
+            jugs_eq_x = [j for j,ivs in ivs_x.items()
+                         if ivs and str(ivs[0][2]) == str(tid_x)]
+            if len(jugs_eq_x) < 2:
+                continue
+
+            # Nom equip
+            nom_eq_x = df_x[df_x["idEquip"]==tid_x].iloc[0].get("equip_nom","?") \
+                if "equip_nom" in df_x.columns else str(tid_x)
+
+            # Capçalera de secció per equip i partit
+            ws8.merge_cells(f'B{row8}:L{row8}')
+            c = ws8[f'B{row8}']
+            c.value = f"  {nom_eq_x}  ·  Partit {mid_x}"
+            c.font = Font(bold=True, size=10, color=BLANC, name='Calibri')
+            c.fill = PatternFill("solid", fgColor=BLAU_MIG)
+            c.alignment = Alignment(horizontal='left', vertical='center')
+            ws8.row_dimensions[row8].height = 18
+            row8 += 1
+
+            # Capçalera de columnes
+            caps8 = ['Jugadora X','Companya Y','Partits','Min amb X',
+                     'Min sense X','Pts/min amb X','Pts/min sense X',
+                     'Diferència','Impacte']
+            for ci, cap in zip(range(2, 11), caps8):
+                fc(ws8, row8, ci, cap, bold=True, bg=BLAU_MIG, fg=BLANC, size=9)
+            ws8.row_dimensions[row8].height = 18
+            row8 += 1
+
+            # Calcula per cada parella (X, Y)
+            for jug_x in sorted(jugs_eq_x):
+                ivs_jx = [(ti,tf) for ti,tf,ei in ivs_x.get(jug_x,[])
+                          if str(ei)==str(tid_x)]
+                if not ivs_jx:
+                    continue
+
+                resultats_x = []
+                for jug_y in sorted(jugs_eq_x):
+                    if jug_y == jug_x:
+                        continue
+                    ivs_jy = [(ti,tf) for ti,tf,ei in ivs_x.get(jug_y,[])
+                              if str(ei)==str(tid_x)]
+                    if not ivs_jy:
+                        continue
+
+                    with_min = with_pts = 0.0
+                    without_min = without_pts = 0.0
+
+                    for yi,yf in ivs_jy:
+                        dur_y = yf - yi
+                        overlap = sum(
+                            min(yf,xf) - max(yi,xi)
+                            for xi,xf in ivs_jx
+                            if min(yf,xf) > max(yi,xi)
+                        )
+                        no_overlap = dur_y - overlap
+
+                        # Punts de l'equip durant la coincidència
+                        for xi,xf in ivs_jx:
+                            ti_o = max(yi,xi); tf_o = min(yf,xf)
+                            if tf_o > ti_o:
+                                mask = ((df_x["t_abs"]>=ti_o) &
+                                        (df_x["t_abs"]<=tf_o) &
+                                        (df_x["idEquip"]==tid_x))
+                                with_pts += float(df_x[mask]["punts"].sum())
+
+                        # Punts sense X (proporcional)
+                        pts_y_tot = float(df_x[
+                            (df_x["t_abs"]>=yi) & (df_x["t_abs"]<=yf) &
+                            (df_x["idEquip"]==tid_x)]["punts"].sum())
+                        without_pts += pts_y_tot * (no_overlap/dur_y) if dur_y>0 else 0
+
+                        with_min    += overlap
+                        without_min += no_overlap
+
+                    pm_with    = round(with_pts    / with_min    * 60, 2) if with_min    > 1 else None
+                    pm_without = round(without_pts / without_min * 60, 2) if without_min > 1 else None
+
+                    if pm_with is not None and pm_without is not None:
+                        diff = round(pm_with - pm_without, 2)
+                        resultats_x.append({
+                            "jug_x": jug_x, "jug_y": jug_y,
+                            "min_amb": round(with_min,1),
+                            "min_sense": round(without_min,1),
+                            "pm_amb": pm_with, "pm_sense": pm_without,
+                            "diff": diff
+                        })
+
+                if not resultats_x:
+                    continue
+
+                # Escriu les files
+                for ri, r8 in enumerate(sorted(resultats_x, key=lambda x: -x["diff"])):
+                    bg = "FFFFFF" if ri % 2 == 0 else "F0F5FB"
+                    diff_v = r8["diff"]
+                    diff_bg = "D5F5E3" if diff_v > 0 else ("FADBD8" if diff_v < 0 else bg)
+                    diff_fg = "0F6E56" if diff_v > 0 else ("7B1818" if diff_v < 0 else "374151")
+                    impacte = ("⬆ Eleva" if diff_v > 0.5
+                               else ("⬇ Deprimeix" if diff_v < -0.5
+                                     else "↔ Neutre"))
+
+                    fc(ws8, row8, 2,  r8["jug_x"],   bg=bg, align="left", size=9)
+                    fc(ws8, row8, 3,  r8["jug_y"],   bg=bg, align="left", size=9)
+                    fc(ws8, row8, 4,  1,              bg=bg, size=9)
+                    fc(ws8, row8, 5,  r8["min_amb"],  bg=bg, size=9)
+                    fc(ws8, row8, 6,  r8["min_sense"],bg=bg, size=9)
+                    fc(ws8, row8, 7,  r8["pm_amb"],   bg=bg, size=9)
+                    fc(ws8, row8, 8,  r8["pm_sense"], bg=bg, size=9)
+                    fc(ws8, row8, 9,
+                       f"{'+'if diff_v>=0 else ''}{diff_v:.2f}",
+                       bold=True, bg=diff_bg, fg=diff_fg, size=9)
+                    fc(ws8, row8, 10, impacte, bg=diff_bg, fg=diff_fg, size=9)
+                    ws8.row_dimensions[row8].height = 16
+                    row8 += 1
+
+                row8 += 1  # espai entre jugadores X
+
+            row8 += 1  # espai entre equips/partits
+
     buf=io.BytesIO(); wb.save(buf); buf.seek(0)
     return buf.getvalue()
 
