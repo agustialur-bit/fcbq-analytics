@@ -2118,35 +2118,41 @@ def genera_excel_analisi():
                     with_min = with_pts = 0.0
                     without_min = without_pts = 0.0
 
-                    for yi,yf in ivs_jy:
-                        dur_y = yf - yi
-                        overlap = sum(
-                            min(yf,xf) - max(yi,xi)
-                            for xi,xf in ivs_jx
-                            if min(yf,xf) > max(yi,xi)
-                        )
-                        no_overlap = dur_y - overlap
+                    col_j_xl = "jugador" if "jugador" in df_x.columns else "jugadora"
 
-                        # Punts de l'equip durant la coincidència
-                        for xi,xf in ivs_jx:
+                    for yi, yf in ivs_jy:
+                        # Punts de Y durant la coincidència amb X
+                        for xi, xf in ivs_jx:
                             ti_o = max(yi,xi); tf_o = min(yf,xf)
                             if tf_o > ti_o:
                                 mask = ((df_x["t_abs"]>=ti_o) &
                                         (df_x["t_abs"]<=tf_o) &
-                                        (df_x["idEquip"]==tid_x))
+                                        (df_x[col_j_xl]==jug_y))
                                 with_pts += float(df_x[mask]["punts"].sum())
+                                with_min += tf_o - ti_o
 
-                        # Punts sense X (proporcional)
-                        pts_y_tot = float(df_x[
-                            (df_x["t_abs"]>=yi) & (df_x["t_abs"]<=yf) &
-                            (df_x["idEquip"]==tid_x)]["punts"].sum())
-                        without_pts += pts_y_tot * (no_overlap/dur_y) if dur_y>0 else 0
+                        # Punts de Y durant els sub-intervals sense X
+                        punts_jx = sorted([(max(yi,xi), min(yf,xf))
+                                           for xi,xf in ivs_jx
+                                           if min(yf,xf) > max(yi,xi)])
+                        cursor = yi
+                        for a, b in punts_jx:
+                            if a > cursor:
+                                mask = ((df_x["t_abs"]>=cursor) &
+                                        (df_x["t_abs"]<=a) &
+                                        (df_x[col_j_xl]==jug_y))
+                                without_pts += float(df_x[mask]["punts"].sum())
+                                without_min += a - cursor
+                            cursor = max(cursor, b)
+                        if cursor < yf:
+                            mask = ((df_x["t_abs"]>=cursor) &
+                                    (df_x["t_abs"]<=yf) &
+                                    (df_x[col_j_xl]==jug_y))
+                            without_pts += float(df_x[mask]["punts"].sum())
+                            without_min += yf - cursor
 
-                        with_min    += overlap
-                        without_min += no_overlap
-
-                    pm_with    = round(with_pts    / with_min    * 60, 2) if with_min    > 1 else None
-                    pm_without = round(without_pts / without_min * 60, 2) if without_min > 1 else None
+                    pm_with    = round(with_pts    / with_min    * 60, 2) if with_min    >= 2 else None
+                    pm_without = round(without_pts / without_min * 60, 2) if without_min >= 2 else None
 
                     if pm_with is not None and pm_without is not None:
                         diff = round(pm_with - pm_without, 2)
@@ -4277,8 +4283,11 @@ with t4:
                      else float(r.get("min_num",0))),
                     axis=1)
 
-            # Per a cada companya Y, calcula pts/min amb X i sense X
+            # Per a cada companya Y, calcula pts/min de Y amb X i sense X
             rows_imp = []
+
+            col_j_imp3 = "jugador" if "jugador" in df_jug_imp.columns else "jugadora"
+
             for jug_y in jugs_eq_imp:
                 if jug_y == jug_x_sel:
                     continue
@@ -4287,53 +4296,63 @@ with t4:
                 if not ivs_y:
                     continue
 
-                # Intervals on Y i X coincideixen
+                # Punts de Y (no de l'equip) en un interval concret
+                def pts_jugadora_interval(ti, tf, jug, df_p):
+                    mask = (
+                        (df_p["t_abs"] >= ti) &
+                        (df_p["t_abs"] <= tf) &
+                        (df_p[col_j_imp3] == jug)
+                    )
+                    return float(df_p[mask]["punts"].sum())
+
                 with_x_min = with_x_pts = 0.0
                 without_x_min = without_x_pts = 0.0
 
-                for yi,yf in ivs_y:
-                    dur_y = yf - yi
-                    # Quant d'aquest interval coincideix amb X a pista?
-                    overlap = sum(
-                        min(yf,xf) - max(yi,xi)
-                        for xi,xf in ivs_x
-                        if min(yf,xf) > max(yi,xi)
-                    )
-                    no_overlap = dur_y - overlap
-
-                    # Punts de l'equip durant la coincidència
-                    for xi,xf in ivs_x:
-                        ti_o = max(yi,xi); tf_o = min(yf,xf)
+                for yi, yf in ivs_y:
+                    # Sub-intervals on Y i X coincideixen (amb X)
+                    for xi, xf in ivs_x:
+                        ti_o = max(yi, xi); tf_o = min(yf, xf)
                         if tf_o > ti_o:
-                            with_x_pts += pts_equip_interval(ti_o, tf_o, tid_imp, df_jug_imp)
-                    # Punts durant la no-coincidència (Y sola, sense X)
-                    for xi,xf in ivs_x:
-                        # Segmentos de [yi,yf] sense [xi,xf]
-                        pass
-                    # Aproximació: pts sense X proporcional al temps
-                    pts_y_total = pts_equip_interval(yi, yf, tid_imp, df_jug_imp)
-                    pts_without = pts_y_total * (no_overlap / dur_y) if dur_y > 0 else 0
+                            with_x_min += tf_o - ti_o
+                            with_x_pts += pts_jugadora_interval(
+                                ti_o, tf_o, jug_y, df_jug_imp)
 
-                    with_x_min    += overlap
-                    without_x_min += no_overlap
-                    without_x_pts += pts_without
+                    # Sub-intervals on Y juga però X NO és a pista (sense X)
+                    punts_x = sorted([(max(yi,xi), min(yf,xf))
+                                      for xi,xf in ivs_x
+                                      if min(yf,xf) > max(yi,xi)])
+                    cursor = yi
+                    for a, b in punts_x:
+                        if a > cursor:
+                            without_x_min += a - cursor
+                            without_x_pts += pts_jugadora_interval(
+                                cursor, a, jug_y, df_jug_imp)
+                        cursor = max(cursor, b)
+                    if cursor < yf:
+                        without_x_min += yf - cursor
+                        without_x_pts += pts_jugadora_interval(
+                            cursor, yf, jug_y, df_jug_imp)
 
-                pm_with    = round(with_x_pts    / with_x_min    * 60, 2) if with_x_min    > 0 else None
-                pm_without = round(without_x_pts / without_x_min * 60, 2) if without_x_min > 0 else None
+                # Mínim 2 minuts per banda
+                pm_with    = round(with_x_pts    / with_x_min    * 60, 2) \
+                             if with_x_min    >= 2 else None
+                pm_without = round(without_x_pts / without_x_min * 60, 2) \
+                             if without_x_min >= 2 else None
 
                 if pm_with is not None and pm_without is not None:
                     diff = round(pm_with - pm_without, 2)
                     rows_imp.append({
-                        "Companya":   jug_y,
-                        "Pts/min amb": pm_with,
+                        "Companya":      jug_y,
+                        "Pts/min amb":   pm_with,
                         "Pts/min sense": pm_without,
-                        "Diferència": diff,
-                        "Min amb":    round(with_x_min, 1),
-                        "Min sense":  round(without_x_min, 1),
+                        "Diferència":    diff,
+                        "Min amb":       round(with_x_min, 1),
+                        "Min sense":     round(without_x_min, 1),
                     })
 
             if not rows_imp:
-                st.info("No hi ha prou intervals comuns per calcular l'impacte.")
+                st.info("No hi ha prou intervals comuns per calcular l'impacte "
+                        "(cal ≥2 min amb X i ≥2 min sense X per companya).")
                 continue
 
             df_imp2 = pd.DataFrame(rows_imp).sort_values("Diferència", ascending=False)
@@ -4384,21 +4403,46 @@ with t4:
                 )
                 st.plotly_chart(
                     chart_style(fig_imp, max(200, len(df_imp2)*42+60),
-                                f"Pts/min de les companyes amb vs sense {jug_x_sel.split()[-1] if jug_x_sel.split() else jug_x_sel}"),
+                                f"Pts/min de les companyes amb vs sense "
+                                f"{jug_x_sel.split()[-1] if jug_x_sel.split() else jug_x_sel}"),
                     use_container_width=True)
 
-            # Taula detall
+            # Taula detall — HTML per evitar text blanc sobre blanc
             with st.expander("📋 Veure detall per companya"):
-                df_show_imp = df_imp2.copy()
-                df_show_imp["Diferència"] = df_show_imp["Diferència"].apply(
-                    lambda d: f"{'+'if d>=0 else ''}{d:.2f}")
-                df_show_imp["Pts/min amb"]   = df_show_imp["Pts/min amb"].round(2)
-                df_show_imp["Pts/min sense"] = df_show_imp["Pts/min sense"].round(2)
-                st.dataframe(df_show_imp, use_container_width=True, hide_index=True)
+                cols_det = ["Companya","Pts/min amb","Pts/min sense",
+                            "Diferència","Min amb","Min sense"]
+                html_det = ('<div style="overflow-x:auto"><table style="width:100%;'
+                            'border-collapse:collapse;font-size:12px;color:#1a2744">')
+                html_det += '<tr>' + ''.join(
+                    f'<th style="background:#D6E8F7;color:#0C447C;padding:6px 10px;'
+                    f'text-align:center;border:1px solid #B5D4F4;font-weight:600">{c}</th>'
+                    for c in cols_det) + '</tr>'
+                for ri, (_, rw) in enumerate(df_imp2.iterrows()):
+                    bg_row = "#ffffff" if ri % 2 == 0 else "#f0f5fb"
+                    diff_v = rw["Diferència"]
+                    diff_bg = "#D5F5E3" if diff_v > 0 else ("#FADBD8" if diff_v < 0 else bg_row)
+                    html_det += '<tr>'
+                    for ci2, col2 in enumerate(cols_det):
+                        val2 = rw[col2]
+                        if col2 == "Diferència":
+                            val2 = f"{'+'if diff_v>=0 else ''}{diff_v:.2f}"
+                            bg_c = diff_bg
+                        elif col2 in ("Pts/min amb","Pts/min sense"):
+                            val2 = f"{val2:.2f}"
+                            bg_c = bg_row
+                        else:
+                            bg_c = bg_row
+                        align2 = "left" if ci2 == 0 else "center"
+                        html_det += (f'<td style="padding:5px 10px;border:1px solid #B5D4F4;'
+                                     f'background:{bg_c};color:#1a2744;text-align:{align2}">'
+                                     f'{val2}</td>')
+                    html_det += '</tr>'
+                html_det += '</table></div>'
+                st.markdown(html_det, unsafe_allow_html=True)
                 st.caption(
                     "Min amb = minuts que Y i X han coincidit a pista · "
                     "Min sense = minuts que Y ha jugat sense X · "
-                    "Mínim recomanat: 4+ minuts per banda per ser fiable"
+                    "Mínim 2 min per banda per mostrar el valor"
                 )
 
     # ══════════════════════════════════════════════════════════════════════
