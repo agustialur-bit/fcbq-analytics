@@ -2151,8 +2151,11 @@ def genera_excel_analisi():
                             without_pts += float(df_x[mask]["punts"].sum())
                             without_min += yf - cursor
 
-                    pm_with    = round(with_pts    / with_min    * 60, 2) if with_min    >= 2 else None
-                    pm_without = round(without_pts / without_min * 60, 2) if without_min >= 2 else None
+                    pm_with    = round(with_pts    / with_min    * 60, 2) if with_min    >= 4 else None
+                    pm_without = round(without_pts / without_min * 60, 2) if without_min >= 4 else None
+                    # Filtra valors impossibles (>3 pts/min = >120 pts/40min)
+                    if pm_with    is not None and pm_with    > 3.0: pm_with    = None
+                    if pm_without is not None and pm_without > 3.0: pm_without = None
 
                     if pm_with is not None and pm_without is not None:
                         diff = round(pm_with - pm_without, 2)
@@ -4333,11 +4336,15 @@ with t4:
                         without_x_pts += pts_jugadora_interval(
                             cursor, yf, jug_y, df_jug_imp)
 
-                # Mínim 2 minuts per banda
+                # Mínim 4 minuts per banda + cap màxim raonable (3 pts/min = 120 pts/40min)
+                MAX_PTS_MIN = 3.0
                 pm_with    = round(with_x_pts    / with_x_min    * 60, 2) \
-                             if with_x_min    >= 2 else None
+                             if with_x_min    >= 4 else None
                 pm_without = round(without_x_pts / without_x_min * 60, 2) \
-                             if without_x_min >= 2 else None
+                             if without_x_min >= 4 else None
+                # Filtra valors impossibles
+                if pm_with    is not None and pm_with    > MAX_PTS_MIN: pm_with    = None
+                if pm_without is not None and pm_without > MAX_PTS_MIN: pm_without = None
 
                 if pm_with is not None and pm_without is not None:
                     diff = round(pm_with - pm_without, 2)
