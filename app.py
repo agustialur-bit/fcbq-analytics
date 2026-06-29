@@ -2151,11 +2151,10 @@ def genera_excel_analisi():
                             without_pts += float(df_x[mask]["punts"].sum())
                             without_min += yf - cursor
 
-                    pm_with    = round(with_pts    / with_min    * 60, 2) if with_min    >= 4 else None
-                    pm_without = round(without_pts / without_min * 60, 2) if without_min >= 4 else None
-                    # Filtra valors impossibles (>3 pts/min = >120 pts/40min)
-                    if pm_with    is not None and pm_with    > 3.0: pm_with    = None
-                    if pm_without is not None and pm_without > 3.0: pm_without = None
+                    pm_with    = round(with_pts    / with_min    * 60, 2) if with_min    >= 1 else None
+                    pm_without = round(without_pts / without_min * 60, 2) if without_min >= 1 else None
+                    if pm_with    is not None and pm_with    > 2.0: pm_with    = None
+                    if pm_without is not None and pm_without > 2.0: pm_without = None
 
                     if pm_with is not None and pm_without is not None:
                         diff = round(pm_with - pm_without, 2)
@@ -4336,25 +4335,28 @@ with t4:
                         without_x_pts += pts_jugadora_interval(
                             cursor, yf, jug_y, df_jug_imp)
 
-                # Mínim 4 minuts per banda + cap màxim raonable (3 pts/min = 120 pts/40min)
-                MAX_PTS_MIN = 3.0
+                # Llindar: mínim 1 minut per banda
+                # Cap màxim: 2 pts/min (80 pts en 40 min, molt per sobre del real)
+                MAX_PTS_MIN = 2.0
                 pm_with    = round(with_x_pts    / with_x_min    * 60, 2) \
-                             if with_x_min    >= 4 else None
+                             if with_x_min    >= 1 else None
                 pm_without = round(without_x_pts / without_x_min * 60, 2) \
-                             if without_x_min >= 4 else None
-                # Filtra valors impossibles
+                             if without_x_min >= 1 else None
                 if pm_with    is not None and pm_with    > MAX_PTS_MIN: pm_with    = None
                 if pm_without is not None and pm_without > MAX_PTS_MIN: pm_without = None
 
                 if pm_with is not None and pm_without is not None:
                     diff = round(pm_with - pm_without, 2)
+                    # Fiabilitat: verd si ambdós >3 min, taronja si algun <3 min
+                    fiable = with_x_min >= 3 and without_x_min >= 3
                     rows_imp.append({
-                        "Companya":      jug_y,
-                        "Pts/min amb":   pm_with,
-                        "Pts/min sense": pm_without,
-                        "Diferència":    diff,
-                        "Min amb":       round(with_x_min, 1),
-                        "Min sense":     round(without_x_min, 1),
+                        "Companya":        jug_y,
+                        "Pts/min amb":     pm_with,
+                        "Pts/min sense":   pm_without,
+                        "Diferència":      diff,
+                        "Min amb":         round(with_x_min, 1),
+                        "Min sense":       round(without_x_min, 1),
+                        "Fiable":          "✅" if fiable else "⚠️ poc temps",
                     })
 
             if not rows_imp:
@@ -4417,7 +4419,7 @@ with t4:
             # Taula detall — HTML per evitar text blanc sobre blanc
             with st.expander("📋 Veure detall per companya"):
                 cols_det = ["Companya","Pts/min amb","Pts/min sense",
-                            "Diferència","Min amb","Min sense"]
+                            "Diferència","Min amb","Min sense","Fiable"]
                 html_det = ('<div style="overflow-x:auto"><table style="width:100%;'
                             'border-collapse:collapse;font-size:12px;color:#1a2744">')
                 html_det += '<tr>' + ''.join(
@@ -4449,7 +4451,7 @@ with t4:
                 st.caption(
                     "Min amb = minuts que Y i X han coincidit a pista · "
                     "Min sense = minuts que Y ha jugat sense X · "
-                    "Mínim 2 min per banda per mostrar el valor"
+                    "✅ = ≥3 min per banda (fiable) · ⚠️ = poc temps, valor orientatiu"
                 )
 
     # ══════════════════════════════════════════════════════════════════════
