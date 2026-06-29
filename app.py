@@ -4039,6 +4039,202 @@ with t4:
                     st.info("No hi ha prou dades per calcular l'On/Off Rating.")
 
     # ══════════════════════════════════════════════════════════════════════
+    # IMPACTE EN LES COMPANYES — Pts/min de la resta quan X juga / no juga
+    # ══════════════════════════════════════════════════════════════════════
+    st.markdown(sec("🤝 Impacte en les companyes — Pts/min amb/sense cada jugadora"), unsafe_allow_html=True)
+    st.caption(
+        "Per a cada jugadora X, calcula si les seves companyes anoten més o menys quan ella és a pista. "
+        "Compara els punts/min de cada companya Y en intervals amb X vs intervals sense X. "
+        "Un valor positiu (verd) indica que X eleva el rendiment de les companyes."
+    )
+
+    df_hist_imp = load_partits_db()
+    df_jug_imp  = load_jugades_db(match_id) if match_id else pd.DataFrame()
+
+    if df_jug_imp.empty:
+        st.info("Carrega un partit per activar l'anàlisi d'impacte en companyes.")
+    else:
+        col_j_imp2 = "jugador" if "jugador" in df_jug_imp.columns else "jugadora"
+
+        # Calcula intervals de totes les jugadores
+        ivs_imp = get_intervals_jugadores_global(df_jug_imp)
+        teams_imp = [t for t in df_jug_imp["idEquip"].dropna().unique()
+                     if str(t) not in ("","nan","0")]
+
+        for tid_imp in teams_imp[:2]:
+            # Jugadores de l'equip amb intervals
+            jugs_eq_imp = [j for j,ivs in ivs_imp.items()
+                           if ivs and str(ivs[0][2]) == str(tid_imp)]
+            if len(jugs_eq_imp) < 2:
+                continue
+
+            # Nom de l'equip
+            nom_eq_imp = df_jug_imp[df_jug_imp["idEquip"]==tid_imp][col_j_imp2]
+            eq_nom_imp = nom_a if str(tid_imp) == str(teams[0]) else nom_b
+            color_imp  = COLOR_A if str(tid_imp) == str(teams[0]) else COLOR_B
+
+            st.markdown(
+                f'<div style="font-size:13px;font-weight:700;color:{color_imp};'
+                f'margin:14px 0 6px">🏀 {eq_nom_imp}</div>',
+                unsafe_allow_html=True)
+
+            # Desplegable per seleccionar la jugadora "X"
+            jug_x_sel = st.selectbox(
+                "Selecciona la jugadora",
+                jugs_eq_imp,
+                key=f"sel_imp_{tid_imp}"
+            )
+
+            ivs_x = [(ti,tf) for ti,tf,ei in ivs_imp.get(jug_x_sel,[])
+                     if str(ei)==str(tid_imp)]
+
+            if not ivs_x:
+                st.info(f"No hi ha intervals per a {jug_x_sel}.")
+                continue
+
+            # Funció: punts de l'equip en un interval concret
+            def pts_equip_interval(ti, tf, eq_id, df_p):
+                mask = (
+                    (df_p["t_abs"] >= ti) &
+                    (df_p["t_abs"] <= tf) &
+                    (df_p["idEquip"] == eq_id)
+                )
+                return float(df_p[mask]["punts"].sum())
+
+            # Afegim t_abs al df si no existeix
+            if "t_abs" not in df_jug_imp.columns:
+                MINS_Q_IMP = 10
+                df_jug_imp["t_abs"] = df_jug_imp.apply(
+                    lambda r: (int(r["quart"])-1)*MINS_Q_IMP +
+                    (MINS_Q_IMP - float(r["min_num"]) if float(r.get("min_num",0)) <= MINS_Q_IMP
+                     else float(r.get("min_num",0))),
+                    axis=1)
+
+            # Per a cada companya Y, calcula pts/min amb X i sense X
+            rows_imp = []
+            for jug_y in jugs_eq_imp:
+                if jug_y == jug_x_sel:
+                    continue
+                ivs_y = [(ti,tf) for ti,tf,ei in ivs_imp.get(jug_y,[])
+                         if str(ei)==str(tid_imp)]
+                if not ivs_y:
+                    continue
+
+                # Intervals on Y i X coincideixen
+                with_x_min = with_x_pts = 0.0
+                without_x_min = without_x_pts = 0.0
+
+                for yi,yf in ivs_y:
+                    dur_y = yf - yi
+                    # Quant d'aquest interval coincideix amb X a pista?
+                    overlap = sum(
+                        min(yf,xf) - max(yi,xi)
+                        for xi,xf in ivs_x
+                        if min(yf,xf) > max(yi,xi)
+                    )
+                    no_overlap = dur_y - overlap
+
+                    # Punts de l'equip durant la coincidència
+                    for xi,xf in ivs_x:
+                        ti_o = max(yi,xi); tf_o = min(yf,xf)
+                        if tf_o > ti_o:
+                            with_x_pts += pts_equip_interval(ti_o, tf_o, tid_imp, df_jug_imp)
+                    # Punts durant la no-coincidència (Y sola, sense X)
+                    for xi,xf in ivs_x:
+                        # Segmentos de [yi,yf] sense [xi,xf]
+                        pass
+                    # Aproximació: pts sense X proporcional al temps
+                    pts_y_total = pts_equip_interval(yi, yf, tid_imp, df_jug_imp)
+                    pts_without = pts_y_total * (no_overlap / dur_y) if dur_y > 0 else 0
+
+                    with_x_min    += overlap
+                    without_x_min += no_overlap
+                    without_x_pts += pts_without
+
+                pm_with    = round(with_x_pts    / with_x_min    * 60, 2) if with_x_min    > 0 else None
+                pm_without = round(without_x_pts / without_x_min * 60, 2) if without_x_min > 0 else None
+
+                if pm_with is not None and pm_without is not None:
+                    diff = round(pm_with - pm_without, 2)
+                    rows_imp.append({
+                        "Companya":   jug_y,
+                        "Pts/min amb": pm_with,
+                        "Pts/min sense": pm_without,
+                        "Diferència": diff,
+                        "Min amb":    round(with_x_min, 1),
+                        "Min sense":  round(without_x_min, 1),
+                    })
+
+            if not rows_imp:
+                st.info("No hi ha prou intervals comuns per calcular l'impacte.")
+                continue
+
+            df_imp2 = pd.DataFrame(rows_imp).sort_values("Diferència", ascending=False)
+            diff_mitj = round(df_imp2["Diferència"].mean(), 2)
+            signe_m   = "+" if diff_mitj >= 0 else ""
+
+            # Targeta resum
+            col_res1, col_res2 = st.columns([1,3])
+            with col_res1:
+                color_res = "#16a34a" if diff_mitj >= 0 else "#dc2626"
+                st.markdown(card(
+                    f"Impacte mitjà de {jug_x_sel.split()[-1] if jug_x_sel.split() else jug_x_sel}",
+                    f"{signe_m}{diff_mitj}",
+                    "pts/min de les companyes (amb − sense)",
+                    color_res
+                ), unsafe_allow_html=True)
+
+            # Gràfic de barres horitzontals
+            with col_res2:
+                colors_imp = ["#16a34a" if d >= 0 else "#dc2626"
+                              for d in df_imp2["Diferència"]]
+                noms_curts_imp = [n.split()[-1] if n.split() else n
+                                  for n in df_imp2["Companya"]]
+                fig_imp = go.Figure()
+                fig_imp.add_trace(go.Bar(
+                    x=df_imp2["Diferència"],
+                    y=noms_curts_imp,
+                    orientation="h",
+                    marker_color=colors_imp,
+                    text=[f"{'+'if d>=0 else ''}{d:.2f}" for d in df_imp2["Diferència"]],
+                    textposition="outside",
+                    hovertemplate=(
+                        "<b>%{y}</b><br>"
+                        "Amb %{customdata[0]}: %{customdata[1]:.2f} pts/min<br>"
+                        "Sense %{customdata[0]}: %{customdata[2]:.2f} pts/min<br>"
+                        "Diferència: %{x:+.2f}<extra></extra>"
+                    ),
+                    customdata=[[jug_x_sel.split()[-1], r["Pts/min amb"], r["Pts/min sense"]]
+                                for _, r in df_imp2.iterrows()]
+                ))
+                fig_imp.add_vline(x=0, line_dash="solid", line_color="#e2e4e8")
+                fig_imp.update_layout(
+                    xaxis_title="Diferència Pts/min (amb − sense)",
+                    paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+                    font=dict(color="#374151", family="Inter"),
+                    margin=dict(l=0,r=60,t=30,b=0),
+                    height=max(200, len(df_imp2)*42+60)
+                )
+                st.plotly_chart(
+                    chart_style(fig_imp, max(200, len(df_imp2)*42+60),
+                                f"Pts/min de les companyes amb vs sense {jug_x_sel.split()[-1] if jug_x_sel.split() else jug_x_sel}"),
+                    use_container_width=True)
+
+            # Taula detall
+            with st.expander("📋 Veure detall per companya"):
+                df_show_imp = df_imp2.copy()
+                df_show_imp["Diferència"] = df_show_imp["Diferència"].apply(
+                    lambda d: f"{'+'if d>=0 else ''}{d:.2f}")
+                df_show_imp["Pts/min amb"]   = df_show_imp["Pts/min amb"].round(2)
+                df_show_imp["Pts/min sense"] = df_show_imp["Pts/min sense"].round(2)
+                st.dataframe(df_show_imp, use_container_width=True, hide_index=True)
+                st.caption(
+                    "Min amb = minuts que Y i X han coincidit a pista · "
+                    "Min sense = minuts que Y ha jugat sense X · "
+                    "Mínim recomanat: 4+ minuts per banda per ser fiable"
+                )
+
+    # ══════════════════════════════════════════════════════════════════════
     # ANÀLISI DE CARTERA DE TIRS (Fichman & O'Brien, 2018)
     # SR ofensiu · Correlació 2pt–3pt · Proporció òptima 3pt · Shot Market Line
     # ══════════════════════════════════════════════════════════════════════
