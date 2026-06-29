@@ -2197,6 +2197,94 @@ def genera_excel_analisi():
 
                     row8 += 1  # espai entre jugadores X
 
+                    # ── Opció B: pts propis de la jugadora Y ────────────
+                    col_j_xl = "jugador" if "jugador" in df_x.columns else "jugadora"
+                    resultats_b = []
+                    for jug_y in sorted(jugs_eq_x):
+                        if jug_y == jug_x:
+                            continue
+                        ivs_jy = [(ti,tf) for ti,tf,ei in ivs_x.get(jug_y,[])
+                                  if str(ei)==tid_x_str]
+                        if not ivs_jy:
+                            continue
+
+                        wb_min = wb_pts = wob_min = wob_pts = 0.0
+
+                        for yi, yf in ivs_jy:
+                            for xi, xf in ivs_jx:
+                                ti_o = max(yi,xi); tf_o = min(yf,xf)
+                                if tf_o > ti_o:
+                                    mask = ((df_x["t_abs"]>=ti_o) &
+                                            (df_x["t_abs"]<=tf_o) &
+                                            (df_x[col_j_xl]==jug_y))
+                                    wb_pts += float(df_x[mask]["punts"].sum())
+                                    wb_min += tf_o - ti_o
+
+                            punts_jx2 = sorted([(max(yi,xi), min(yf,xf))
+                                                for xi,xf in ivs_jx
+                                                if min(yf,xf) > max(yi,xi)])
+                            cursor2 = yi
+                            for a, b in punts_jx2:
+                                if a > cursor2:
+                                    mask = ((df_x["t_abs"]>=cursor2) &
+                                            (df_x["t_abs"]<=a) &
+                                            (df_x[col_j_xl]==jug_y))
+                                    wob_pts += float(df_x[mask]["punts"].sum())
+                                    wob_min += a - cursor2
+                                cursor2 = max(cursor2, b)
+                            if cursor2 < yf:
+                                mask = ((df_x["t_abs"]>=cursor2) &
+                                        (df_x["t_abs"]<=yf) &
+                                        (df_x[col_j_xl]==jug_y))
+                                wob_pts += float(df_x[mask]["punts"].sum())
+                                wob_min += yf - cursor2
+
+                        pm_bw  = round(wb_pts  / wb_min  * 60, 2) if wb_min  >= 1 else None
+                        pm_bwo = round(wob_pts / wob_min * 60, 2) if wob_min >= 1 else None
+
+                        if pm_bw is not None or pm_bwo is not None:
+                            diff_b = round(pm_bw - pm_bwo, 2) if (pm_bw is not None and pm_bwo is not None) else None
+                            resultats_b.append({
+                                "jug_x": jug_x, "jug_y": jug_y,
+                                "min_amb": round(wb_min,1),
+                                "min_sense": round(wob_min,1),
+                                "pm_amb": pm_bw, "pm_sense": pm_bwo,
+                                "diff": diff_b
+                            })
+
+                    if resultats_b:
+                        # Sub-capçalera opció B
+                        fc(ws8, row8, 2, f"  ↳ Pts propis de Y — {jug_x}",
+                           bold=True, bg="EBF4FC", fg=BLAU_FOSC,
+                           align="left", size=8)
+                        for ci_b in range(3, 10):
+                            ws8.cell(row8, ci_b).fill = PatternFill("solid", fgColor="EBF4FC")
+                        ws8.row_dimensions[row8].height = 15
+                        row8 += 1
+
+                        for ri_b, rb in enumerate(sorted(resultats_b,
+                                key=lambda x: -x["diff"] if x["diff"] is not None else -999)):
+                            bg_b = "F8FAFF" if ri_b % 2 == 0 else "EBF4FC"
+                            dv_b = rb["diff"]
+                            diff_bg_b = "D5F5E3" if (dv_b is not None and dv_b > 0) else \
+                                        ("FADBD8" if (dv_b is not None and dv_b < 0) else bg_b)
+                            diff_fg_b = "0F6E56" if (dv_b is not None and dv_b > 0) else \
+                                        ("7B1818" if (dv_b is not None and dv_b < 0) else "374151")
+                            fc(ws8, row8, 2, rb["jug_x"],    bg=bg_b, align="left", size=9)
+                            fc(ws8, row8, 3, rb["jug_y"],    bg=bg_b, align="left", size=9)
+                            fc(ws8, row8, 4, rb["min_amb"],  bg=bg_b, size=9)
+                            fc(ws8, row8, 5, rb["min_sense"],bg=bg_b, size=9)
+                            fc(ws8, row8, 6, rb["pm_amb"]   if rb["pm_amb"]   is not None else "—", bg=bg_b, size=9)
+                            fc(ws8, row8, 7, rb["pm_sense"] if rb["pm_sense"] is not None else "—", bg=bg_b, size=9)
+                            fc(ws8, row8, 8,
+                               f"{'+'if dv_b>=0 else ''}{dv_b:.2f}" if dv_b is not None else "—",
+                               bold=True, bg=diff_bg_b, fg=diff_fg_b, size=9)
+                            fc(ws8, row8, 9, "", bg=bg_b, size=9)
+                            ws8.row_dimensions[row8].height = 16
+                            row8 += 1
+
+                        row8 += 1
+
                 row8 += 1  # espai entre equips/partits
 
     buf=io.BytesIO(); wb.save(buf); buf.seek(0)
