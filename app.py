@@ -1407,6 +1407,45 @@ def calc_metriques_partit(df_jug, match_id, nom_equip, nom_rival):
         "3pts% ef":     round(c3_conv / c3_int * 100, 1) if c3_int > 0 else 0,
     }
 
+def classifica_arquetip_global(usage, p2, p3, ptl, min_p):
+    """Classifica una jugadora en un arquetip simplificat (versió global, usada per UI i Excel)."""
+    if usage >= 25:
+        if p3 >= 35: return "🎯 Anotadora exterior (alt ús)"
+        elif p2 >= 55: return "💪 Anotadora interior (alt ús)"
+        else: return "⚡ Motor ofensiu"
+    elif usage >= 15:
+        if p3 >= 35: return "🏹 Especialista de triple"
+        elif p2 >= 55: return "🏀 Anotadora interior (rol)"
+        elif ptl >= 30: return "🎁 Generadora de contacte"
+        else: return "⚖️ Anotadora equilibrada"
+    else:
+        if min_p >= 15: return "🛡️ Rol defensiu/suport"
+        else: return "🔄 Rol secundari"
+
+def load_tirs_fcbq_global(match_id=None, equip_nom=None):
+    con_t = sqlite3.connect(DB_PATH)
+    q = "SELECT * FROM tirs_fcbq WHERE 1=1"
+    params = []
+    if match_id: q += " AND match_id=?"; params.append(match_id)
+    if equip_nom: q += " AND equip_nom=?"; params.append(equip_nom)
+    df_t = pd.read_sql(q, con_t, params=params)
+    con_t.close()
+    return df_t
+
+def classifica_zona_tir_global(x_raw, y_raw):
+    """Classifica un tir en una de 7 zones segons les coordenades x,y del web FCBQ."""
+    if y_raw <= 28 and 30 <= x_raw <= 70:
+        return "🎯 Zona pintada"
+    es_triple = (y_raw >= 58) or (y_raw >= 35 and (x_raw <= 18 or x_raw >= 82))
+    if es_triple:
+        if x_raw < 38: return "🏹 Triple esquerra"
+        elif x_raw > 62: return "🏹 Triple dreta"
+        else: return "🏹 Triple centre"
+    else:
+        if x_raw < 38: return "📍 Mig esquerra"
+        elif x_raw > 62: return "📍 Mig dreta"
+        else: return "📍 Mig centre"
+
 def genera_excel_analisi():
     """Genera Excel amb mètriques avançades de tots els partits de la BD."""
     from openpyxl import Workbook
@@ -2182,6 +2221,189 @@ def genera_excel_analisi():
         fc(ws7,row7,8,f"{'+'if pm_tot>=0 else ''}{pm_tot}",bold=True,bg=pm_bg,fg=pm_fg)
         fc(ws7,row7,9,pm_min_tot,num_fmt='+0.00;-0.00;0.00',bg=bg)
         ws7.row_dimensions[row7].height=16; row7+=1
+
+    # ── PESTANYA 8: ECOSISTEMA (contribució amb companyes) ─────────────────
+    ws8 = wb.create_sheet("Ecosistema")
+    ws8.sheet_view.showGridLines=False; ws8.column_dimensions['A'].width=2
+    ws8.merge_cells('B1:I1')
+    c=ws8['B1']; c.value='🏀  MICKI ANALÍTICA — ECOSISTEMA (RENDIMENT AMB ALTRES ARQUETIPS)'
+    c.font=Font(name='Arial',bold=True,color=BLANC,size=14)
+    c.fill=fons(BLAU_FOSC); c.alignment=Alignment(horizontal='center',vertical='center')
+    ws8.row_dimensions[1].height=36
+    ws8.merge_cells('B2:I2')
+    c=ws8['B2']; c.value=f"Generat: {datetime.now().strftime('%d/%m/%Y %H:%M')}  ·  +/- per minut segons l'arquetip de la companya en pista"
+    c.font=Font(name='Arial',color=BLANC,size=10); c.fill=fons(BLAU_MIG)
+    c.alignment=Alignment(horizontal='center',vertical='center')
+    ws8.row_dimensions[2].height=18; ws8.row_dimensions[3].height=6
+
+    for ci,w in zip(range(2,10),[22,28,12,10,10,10,38]):
+        ws8.column_dimensions[get_column_letter(ci)].width=w
+
+    row8=4
+
+    # Calcula arquetips per jugadora (mateixa lògica que la UI)
+    df_sj_arq8 = load_stats_jugador_db()
+    arq_map8 = {}
+    if not df_sj_arq8.empty:
+        col_j_arq8 = "jugador" if "jugador" in df_sj_arq8.columns else "jugadora"
+        agg_arq8 = df_sj_arq8.groupby(col_j_arq8).agg(
+            c2=("cistelles_2","sum"), c3=("cistelles_3","sum"), tl=("tirs_lliures","sum"),
+            minuts=("minuts","sum") if "minuts" in df_sj_arq8.columns else ("punts","count"),
+            partits=("match_id","nunique"),
+            usage=("usage_rate","mean") if "usage_rate" in df_sj_arq8.columns else ("punts","mean"),
+        ).reset_index()
+        agg_arq8["pts2"] = agg_arq8["c2"]*2
+        agg_arq8["pts3"] = agg_arq8["c3"]*3
+        agg_arq8["ptstl"] = agg_arq8["tl"]
+        agg_arq8["pts_tot"] = agg_arq8["pts2"]+agg_arq8["pts3"]+agg_arq8["ptstl"]
+        agg_arq8["p2_pct"] = (agg_arq8["pts2"]/agg_arq8["pts_tot"].replace(0,1)*100)
+        agg_arq8["p3_pct"] = (agg_arq8["pts3"]/agg_arq8["pts_tot"].replace(0,1)*100)
+        agg_arq8["ptl_pct"] = (agg_arq8["ptstl"]/agg_arq8["pts_tot"].replace(0,1)*100)
+        agg_arq8["usage_pct"] = (agg_arq8["usage"]*100) if "usage_rate" in df_sj_arq8.columns else 0
+        agg_arq8["min_p"] = (agg_arq8["minuts"]/agg_arq8["partits"].replace(0,1))
+        for _,r8 in agg_arq8.iterrows():
+            arq_map8[r8[col_j_arq8]] = classifica_arquetip_global(
+                r8["usage_pct"], r8["p2_pct"], r8["p3_pct"], r8["ptl_pct"], r8["min_p"])
+
+    # Reorganitza parelles_acum per jugadora individual (cada parella aporta a ambdues)
+    eco_per_jugadora = {}  # jug -> {company_arquetip: {minuts,pf,pc}}
+    for (eq_nom_par8, combo_par8), d_par8 in parelles_acum.items():
+        if len(combo_par8) != 2: continue
+        j1, j2 = combo_par8
+        for jug_self, jug_company in [(j1,j2),(j2,j1)]:
+            arq_company = arq_map8.get(jug_company, "—")
+            key8 = (jug_self, arq_company)
+            if key8 not in eco_per_jugadora:
+                eco_per_jugadora[key8] = {'minuts':0.0,'pf':0,'pc':0}
+            eco_per_jugadora[key8]['minuts'] += d_par8['minuts']
+            eco_per_jugadora[key8]['pf'] += d_par8['pf']
+            eco_per_jugadora[key8]['pc'] += d_par8['pc']
+
+    # Agrupa per jugadora
+    jugadores_eco = sorted(set(j for j,_ in eco_per_jugadora.keys()))
+
+    for jug8 in jugadores_eco:
+        rows_jug8 = [(arq8, vals8) for (j8,arq8),vals8 in eco_per_jugadora.items() if j8==jug8 and vals8['minuts']>=2]
+        if not rows_jug8: continue
+        rows_jug8_calc = []
+        for arq8, vals8 in rows_jug8:
+            pm8 = vals8['pf']-vals8['pc']
+            pm_min8 = round(pm8/vals8['minuts'],3) if vals8['minuts']>0 else 0
+            rows_jug8_calc.append({'arq':arq8,'minuts':vals8['minuts'],'pf':vals8['pf'],'pc':vals8['pc'],'pm':pm8,'pm_min':pm_min8})
+        rows_jug8_calc.sort(key=lambda x: x['pm_min'], reverse=True)
+
+        arquetip_propi8 = arq_map8.get(jug8, "—")
+        ws8.merge_cells(f'B{row8}:I{row8}')
+        c=ws8[f'B{row8}']; c.value=f'{jug8}  ({arquetip_propi8})'
+        c.font=Font(name='Arial',bold=True,color=BLANC,size=11)
+        c.fill=fons(BLAU_MIG); c.alignment=Alignment(horizontal='left',vertical='center')
+        ws8.row_dimensions[row8].height=20; row8+=1
+
+        for ci8,cap8 in zip(range(2,9),['Arquetip company','Min junts','Pts favor','Pts contra','+/-','+/- per min','Conclusió']):
+            fc(ws8,row8,ci8,cap8,bold=True,bg=BLAU_CLAR,fg=BLAU_FOSC,size=9)
+        ws8.row_dimensions[row8].height=18; row8+=1
+
+        millor8 = rows_jug8_calc[0]
+        pitjor8 = rows_jug8_calc[-1]
+
+        for i8,r8c in enumerate(rows_jug8_calc):
+            bg8 = BLANC if i8%2==0 else BLAU_CLAR
+            pm_v8 = r8c['pm_min']
+            pm_bg8 = 'D5F5E3' if pm_v8>=0 else 'FADBD8'
+            pm_fg8 = '0F6E56' if pm_v8>=0 else '993C1D'
+            concl8 = ''
+            if r8c['arq']==millor8['arq']: concl8='⭐ Millor combinació'
+            elif r8c['arq']==pitjor8['arq']: concl8='⚠️ Pitjor combinació'
+
+            fc(ws8,row8,2,r8c['arq'],bg=bg8,align='left',size=9)
+            fc(ws8,row8,3,round(r8c['minuts'],1),bg=bg8,size=9)
+            fc(ws8,row8,4,int(r8c['pf']),bg=bg8,size=9)
+            fc(ws8,row8,5,int(r8c['pc']),bg=bg8,size=9)
+            fc(ws8,row8,6,f"{'+'if r8c['pm']>=0 else ''}{r8c['pm']}",bold=True,bg=bg8,size=9)
+            fc(ws8,row8,7,f"{'+'if pm_v8>=0 else ''}{pm_v8}",bold=True,bg=pm_bg8,fg=pm_fg8,size=9)
+            fc(ws8,row8,8,concl8,bg=bg8,align='left',size=9)
+            ws8.row_dimensions[row8].height=16; row8+=1
+
+        row8 += 1
+
+    # ── PESTANYA 9: MAPA DE TIR — SHOT QUALITY PER ZONA ─────────────────────
+    ws9 = wb.create_sheet("Shot Quality")
+    ws9.sheet_view.showGridLines=False; ws9.column_dimensions['A'].width=2
+    ws9.merge_cells('B1:J1')
+    c=ws9['B1']; c.value='🏀  MICKI ANALÍTICA — SHOT QUALITY PER ZONA'
+    c.font=Font(name='Arial',bold=True,color=BLANC,size=14)
+    c.fill=fons(BLAU_FOSC); c.alignment=Alignment(horizontal='center',vertical='center')
+    ws9.row_dimensions[1].height=36
+    ws9.merge_cells('B2:J2')
+    c=ws9['B2']; c.value="Eficiència i valor real (PPS) per zona de tir, basat en totes les coordenades de tir guardades"
+    c.font=Font(name='Arial',color=BLANC,size=10); c.fill=fons(BLAU_MIG)
+    c.alignment=Alignment(horizontal='center',vertical='center')
+    ws9.row_dimensions[2].height=18; ws9.row_dimensions[3].height=6
+
+    df_tirs_sq = load_tirs_fcbq_global()
+    if df_tirs_sq.empty:
+        fc(ws9,4,2,"No hi ha tirs guardats a la BD. Guarda tirs des de la pestanya 🎯 Mapa de Tir per veure aquesta anàlisi.",bg=GROC,align='left')
+        ws9.column_dimensions['B'].width=80
+    else:
+        for ci,w in zip(range(2,11),[20,11,11,11,11,11,13,13,30]):
+            ws9.column_dimensions[get_column_letter(ci)].width=w
+
+        row9 = 4
+        for ci,cap in zip(range(2,11),['Zona','Tirs totals','Cistelles','Eficiència %','Valor tir','PPS (punts/tir)','Tirs equip A','Tirs equip B','Interpretació']):
+            fc(ws9,row9,ci,cap,bold=True,bg=BLAU_MIG,fg=BLANC,size=9)
+        ws9.row_dimensions[row9].height=18; row9+=1
+
+        df_tirs_sq = df_tirs_sq.copy()
+        df_tirs_sq["zona"] = df_tirs_sq.apply(lambda r: classifica_zona_tir_global(float(r["x"]), float(r["y"])), axis=1)
+
+        zones_sq = df_tirs_sq.groupby("zona").agg(
+            tirs=("fet","count"), fets=("fet","sum")
+        ).reset_index()
+        zones_sq["ef"] = (zones_sq["fets"]/zones_sq["tirs"]*100).round(1)
+        zones_sq["valor"] = zones_sq["zona"].apply(lambda z: 3 if "Triple" in z else 2)
+        zones_sq["pps"] = (zones_sq["ef"]/100*zones_sq["valor"]).round(2)
+
+        ordre_zones9 = ["🎯 Zona pintada","📍 Mig esquerra","📍 Mig centre","📍 Mig dreta",
+                        "🏹 Triple esquerra","🏹 Triple centre","🏹 Triple dreta"]
+        zones_sq["_ordre"] = zones_sq["zona"].apply(lambda z: ordre_zones9.index(z) if z in ordre_zones9 else 99)
+        zones_sq = zones_sq.sort_values("_ordre")
+
+        zones_sq_sorted_pps = zones_sq.sort_values("pps", ascending=False).reset_index(drop=True)
+        millor_zona_sq = zones_sq_sorted_pps.iloc[0]["zona"] if len(zones_sq_sorted_pps)>0 else None
+        pitjor_zona_sq = zones_sq_sorted_pps.iloc[-1]["zona"] if len(zones_sq_sorted_pps)>0 else None
+
+        for i9,r9 in zones_sq.iterrows():
+            bg9 = BLAU_CLAR if list(zones_sq.index).index(i9)%2==0 else BLANC
+            interp9 = ''
+            if r9['zona']==millor_zona_sq and r9['tirs']>=5: interp9 = '⭐ Millor valor per tir'
+            elif r9['zona']==pitjor_zona_sq and r9['tirs']>=5: interp9 = '⚠️ Pitjor valor per tir'
+            fc(ws9,row9,2,r9['zona'],bold=True,fg=BLAU_FOSC,bg=bg9,align='left')
+            fc(ws9,row9,3,int(r9['tirs']),bg=bg9)
+            fc(ws9,row9,4,int(r9['fets']),bg=bg9)
+            fc(ws9,row9,5,r9['ef'],bg=bg9)
+            fc(ws9,row9,6,f"{r9['valor']} punts",bg=bg9)
+            pps_bg9 = 'D5F5E3' if r9['pps']>=1.0 else 'FADBD8'
+            pps_fg9 = '0F6E56' if r9['pps']>=1.0 else '993C1D'
+            fc(ws9,row9,7,r9['pps'],bold=True,bg=pps_bg9,fg=pps_fg9)
+            # Tirs per equip (si hi ha equip_nom)
+            equips_zona = df_tirs_sq[df_tirs_sq["zona"]==r9['zona']]["equip_nom"].value_counts()
+            eq_a_txt = str(equips_zona.index[0])[:14] + f" ({equips_zona.iloc[0]})" if len(equips_zona)>=1 else "—"
+            eq_b_txt = str(equips_zona.index[1])[:14] + f" ({equips_zona.iloc[1]})" if len(equips_zona)>=2 else "—"
+            fc(ws9,row9,8,eq_a_txt,size=8,bg=bg9)
+            fc(ws9,row9,9,eq_b_txt,size=8,bg=bg9)
+            fc(ws9,row9,10,interp9,bg=bg9,align='left',size=9,fg='555555')
+            ws9.row_dimensions[row9].height=17; row9+=1
+
+        row9 += 1
+        if millor_zona_sq:
+            ws9.merge_cells(f'B{row9}:J{row9}')
+            c=ws9[f'B{row9}']
+            c.value = (f"💡 Recomanació: la zona amb millor valor real per tir és '{millor_zona_sq}' "
+                       f"— buscar més tirs des d'aquesta zona maximitza els punts generats. "
+                       f"La zona '{pitjor_zona_sq}' té el pitjor valor real, tot i que pugui tenir bon % d'encert.")
+            c.font=Font(name='Arial',italic=True,color=BLAU_FOSC,size=10)
+            c.fill=fons(BLAU_CLAR); c.alignment=Alignment(horizontal='left',vertical='center',wrap_text=True)
+            ws9.row_dimensions[row9].height=40
 
     buf=io.BytesIO(); wb.save(buf); buf.seek(0)
     return buf.getvalue()
@@ -5213,8 +5435,18 @@ console.log(`✅ Copiat! Total: ${punts.length} | Cistelles: ${punts.filter(p=>p
                 ).reset_index()
                 sel_zones["ef_sel"] = (sel_zones["fets_sel"]/sel_zones["tirs_sel"]*100).round(1)
 
-                df_sq = sel_zones.merge(ref_zones[["zona","tirs_ref","ef_ref"]], on="zona", how="left")
+                # Valor del tir: 3 punts si és zona de triple, 2 punts altrament
+                def valor_zona(z):
+                    return 3 if "Triple" in z else 2
+                sel_zones["valor_tir"] = sel_zones["zona"].apply(valor_zona)
+                sel_zones["pps_sel"] = (sel_zones["ef_sel"]/100 * sel_zones["valor_tir"]).round(2)
+
+                ref_zones["valor_tir"] = ref_zones["zona"].apply(valor_zona)
+                ref_zones["pps_ref"] = (ref_zones["ef_ref"]/100 * ref_zones["valor_tir"]).round(2)
+
+                df_sq = sel_zones.merge(ref_zones[["zona","tirs_ref","ef_ref","pps_ref"]], on="zona", how="left")
                 df_sq["diff_sq"] = (df_sq["ef_sel"] - df_sq["ef_ref"]).round(1)
+                df_sq["diff_pps"] = (df_sq["pps_sel"] - df_sq["pps_ref"]).round(2)
                 ordre_zones = ["🎯 Zona pintada","📍 Mig esquerra","📍 Mig centre","📍 Mig dreta",
                                "🏹 Triple esquerra","🏹 Triple centre","🏹 Triple dreta"]
                 df_sq["_ordre"] = df_sq["zona"].apply(lambda z: ordre_zones.index(z) if z in ordre_zones else 99)
@@ -5238,10 +5470,62 @@ console.log(`✅ Copiat! Total: ${punts.length} | Cistelles: ${punts.filter(p=>p
                     st.plotly_chart(chart_style(fig_sq, 280, "Eficiència real vs mitjana esperada per zona"),
                         use_container_width=True)
 
+                    # ── Valor en punts per tir (PPS) — quina zona val més atacar ──
+                    st.markdown("**💰 Valor real per tir — quina zona genera més punts**")
+                    st.caption(
+                        "PPS (Punts Per Tir) = % d'encert × valor del tir (2 o 3 punts). "
+                        "Un alt % en una zona de 2 pot valer menys que un % moderat en una zona de 3. "
+                        "Aquest és el càlcul que de veritat indica des d'on convé atacar."
+                    )
+
+                    df_pps = df_sq[["zona","valor_tir","tirs_sel","ef_sel","pps_sel","pps_ref"]].copy()
+                    df_pps = df_pps.sort_values("pps_sel", ascending=False)
+
+                    fig_pps = go.Figure()
+                    colors_pps = ["#185FA5" if "Triple" in z else "#0F6E56" for z in df_pps["zona"]]
+                    fig_pps.add_trace(go.Bar(
+                        x=df_pps["zona"], y=df_pps["pps_sel"],
+                        name="PPS actual",
+                        marker_color=colors_pps,
+                        text=[f"{v:.2f}" for v in df_pps["pps_sel"]],
+                        textposition="outside",
+                        customdata=df_pps[["tirs_sel","ef_sel","valor_tir"]].values,
+                        hovertemplate="<b>%{x}</b><br>PPS: %{y:.2f}<br>Tirs: %{customdata[0]}<br>"
+                                      "Eficiència: %{customdata[1]}%<br>Valor tir: %{customdata[2]} punts<extra></extra>"
+                    ))
+                    fig_pps.add_trace(go.Scatter(
+                        x=df_pps["zona"], y=df_pps["pps_ref"],
+                        mode="markers", name="PPS mitjana temporada",
+                        marker=dict(symbol="diamond", size=11, color="#d97706",
+                                   line=dict(width=1.5, color="white"))
+                    ))
+                    fig_pps.add_hline(y=1.0, line_dash="dot", line_color="#9ca3af",
+                        annotation_text="PPS=1.0 (referència)", annotation_font_size=9)
+                    fig_pps.update_layout(
+                        yaxis_title="Punts per tir (PPS)",
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                    st.plotly_chart(chart_style(fig_pps, 300, "Punts per tir — quina zona val més"),
+                        use_container_width=True)
+
+                    # Recomanació tàctica automàtica
+                    millor_pps = df_pps.iloc[0]
+                    zones_amb_mostra = df_pps[df_pps["tirs_sel"] >= 5].sort_values("pps_sel", ascending=False)
+                    if not zones_amb_mostra.empty:
+                        rec_zona = zones_amb_mostra.iloc[0]
+                        st.success(
+                            f"💡 **Recomanació tàctica**: la zona amb millor valor real per tir "
+                            f"(amb mostra suficient, ≥5 tirs) és **{rec_zona['zona']}** amb "
+                            f"**{rec_zona['pps_sel']:.2f} punts/tir** ({rec_zona['ef_sel']}% d'encert, "
+                            f"{int(rec_zona['tirs_sel'])} tirs). Buscar més tirs des d'aquesta zona "
+                            f"maximitzaria els punts generats."
+                        )
+                    else:
+                        st.info("Cap zona amb mostra suficient (≥5 tirs) per fer una recomanació fiable.")
+
                     # Taula detall
                     with st.expander("Veure detall per zona"):
-                        df_show_sq = df_sq[["zona","tirs_sel","fets_sel","ef_sel","tirs_ref","ef_ref","diff_sq"]].copy()
-                        df_show_sq.columns = ["Zona","Tirs (selecció)","Cistelles","Ef. real %","Tirs (ref. temporada)","Ef. mitjana %","Diferència pp"]
+                        df_show_sq = df_sq[["zona","tirs_sel","fets_sel","ef_sel","pps_sel","tirs_ref","ef_ref","pps_ref","diff_sq"]].copy()
+                        df_show_sq.columns = ["Zona","Tirs (selecció)","Cistelles","Ef. real %","PPS real","Tirs (ref. temporada)","Ef. mitjana %","PPS mitjana","Diferència pp"]
                         html_sq = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;color:#1a2744">'
                         html_sq += '<tr>' + ''.join(f'<th style="background:#D6E8F7;color:#0C447C;padding:6px 10px;text-align:center;border:1px solid #B5D4F4;font-weight:600">{c}</th>' for c in df_show_sq.columns) + '</tr>'
                         for i_sq,(_,row_sq) in enumerate(df_show_sq.iterrows()):
