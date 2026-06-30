@@ -4826,6 +4826,26 @@ with t7:
         con_t.close()
         return df_t
 
+    def classifica_zona_tir(x_raw, y_raw):
+        """Classifica un tir en una de 7 zones segons les coordenades x,y del web FCBQ.
+        x: 0-100% (eix horitzontal, cistella a x≈48-50%)
+        y: ~11-100% (eix vertical, y baix = a prop de la cistella)
+        """
+        # Zona pintada: a prop de la cistella i centrada
+        if y_raw <= 28 and 30 <= x_raw <= 70:
+            return "🎯 Zona pintada"
+        # Per sobre del llindar de triple aproximat (a partir d'on l'arc toca als laterals)
+        # Triple si y és gran (lluny) i a més x és extrem (cantons) o y molt gran (centre)
+        es_triple = (y_raw >= 58) or (y_raw >= 35 and (x_raw <= 18 or x_raw >= 82))
+        if es_triple:
+            if x_raw < 38: return "🏹 Triple esquerra"
+            elif x_raw > 62: return "🏹 Triple dreta"
+            else: return "🏹 Triple centre"
+        else:
+            if x_raw < 38: return "📍 Mig esquerra"
+            elif x_raw > 62: return "📍 Mig dreta"
+            else: return "📍 Mig centre"
+
     def dibuixa_mapa_tir_fcbq(tirs_list, titol="Mapa de tir", W=340, H=400):
         """Mig camp vertical. Cistella dalt al centre.
         Cada tir (x,y) és 0-100% relatiu al SEU PROPI mig camp individual.
@@ -5160,6 +5180,88 @@ console.log(`✅ Copiat! Total: ${punts.length} | Cistelles: ${punts.filter(p=>p
                 st.markdown(dibuixa_heatmap_fcbq(tirs_acum, f"{titol_acum} — cistelles", "cistelles"), unsafe_allow_html=True)
             else:
                 st.markdown(dibuixa_heatmap_fcbq(tirs_acum, f"{titol_acum} — fallats", "fallats"), unsafe_allow_html=True)
+
+            # ── Shot Quality casolà: eficiència real vs mitjana de zona ──────
+            st.markdown(sec("📐 Shot Quality — eficiència per zona"), unsafe_allow_html=True)
+            st.caption(
+                "Compara l'eficiència real de cada zona amb la mitjana pròpia de temporada "
+                "(basada en tots els tirs acumulats a la BD). Inspirat en el concepte 'Shot Quality' "
+                "de Synergy Sports, adaptat a les nostres dades."
+            )
+
+            # Calcula la mitjana de referència amb TOTS els tirs de la BD (no només els seleccionats)
+            df_tots_tirs = load_tirs_fcbq()
+            if len(df_tots_tirs) < 30:
+                st.info(f"Tens {len(df_tots_tirs)} tirs acumulats. Calen almenys 30 tirs "
+                        "per tenir una referència de zona mínimament fiable.")
+            else:
+                df_tots_tirs = df_tots_tirs.copy()
+                df_tots_tirs["zona"] = df_tots_tirs.apply(
+                    lambda r: classifica_zona_tir(float(r["x"]), float(r["y"])), axis=1)
+
+                ref_zones = df_tots_tirs.groupby("zona").agg(
+                    tirs_ref=("fet","count"), fets_ref=("fet","sum")
+                ).reset_index()
+                ref_zones["ef_ref"] = (ref_zones["fets_ref"]/ref_zones["tirs_ref"]*100).round(1)
+
+                # Zona dels tirs seleccionats (filtre actual)
+                df_acum_z = df_acum.copy()
+                df_acum_z["zona"] = df_acum_z.apply(
+                    lambda r: classifica_zona_tir(float(r["x"]), float(r["y"])), axis=1)
+                sel_zones = df_acum_z.groupby("zona").agg(
+                    tirs_sel=("fet","count"), fets_sel=("fet","sum")
+                ).reset_index()
+                sel_zones["ef_sel"] = (sel_zones["fets_sel"]/sel_zones["tirs_sel"]*100).round(1)
+
+                df_sq = sel_zones.merge(ref_zones[["zona","tirs_ref","ef_ref"]], on="zona", how="left")
+                df_sq["diff_sq"] = (df_sq["ef_sel"] - df_sq["ef_ref"]).round(1)
+                ordre_zones = ["🎯 Zona pintada","📍 Mig esquerra","📍 Mig centre","📍 Mig dreta",
+                               "🏹 Triple esquerra","🏹 Triple centre","🏹 Triple dreta"]
+                df_sq["_ordre"] = df_sq["zona"].apply(lambda z: ordre_zones.index(z) if z in ordre_zones else 99)
+                df_sq = df_sq.sort_values("_ordre")
+
+                if not df_sq.empty:
+                    colors_sq = ["#16a34a" if v>=0 else "#dc2626" for v in df_sq["diff_sq"]]
+                    fig_sq = go.Figure()
+                    fig_sq.add_trace(go.Bar(
+                        x=df_sq["zona"], y=df_sq["diff_sq"],
+                        marker_color=colors_sq,
+                        text=[f"{'+'if v>=0 else ''}{v}pp" for v in df_sq["diff_sq"]],
+                        textposition="outside",
+                        customdata=df_sq[["tirs_sel","ef_sel","ef_ref"]].values,
+                        hovertemplate="<b>%{x}</b><br>Tirs: %{customdata[0]}<br>"
+                                      "Eficiència real: %{customdata[1]}%<br>"
+                                      "Mitjana temporada: %{customdata[2]}%<extra></extra>"
+                    ))
+                    fig_sq.add_hline(y=0, line_dash="solid", line_color="#e2e4e8")
+                    fig_sq.update_layout(yaxis_title="Diferència vs mitjana de zona (punts %)")
+                    st.plotly_chart(chart_style(fig_sq, 280, "Eficiència real vs mitjana esperada per zona"),
+                        use_container_width=True)
+
+                    # Taula detall
+                    with st.expander("Veure detall per zona"):
+                        df_show_sq = df_sq[["zona","tirs_sel","fets_sel","ef_sel","tirs_ref","ef_ref","diff_sq"]].copy()
+                        df_show_sq.columns = ["Zona","Tirs (selecció)","Cistelles","Ef. real %","Tirs (ref. temporada)","Ef. mitjana %","Diferència pp"]
+                        html_sq = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;color:#1a2744">'
+                        html_sq += '<tr>' + ''.join(f'<th style="background:#D6E8F7;color:#0C447C;padding:6px 10px;text-align:center;border:1px solid #B5D4F4;font-weight:600">{c}</th>' for c in df_show_sq.columns) + '</tr>'
+                        for i_sq,(_,row_sq) in enumerate(df_show_sq.iterrows()):
+                            bg_sq = '#ffffff' if i_sq%2==0 else '#EBF4FC'
+                            html_sq += '<tr>'
+                            for ci_sq,col_sq in enumerate(df_show_sq.columns):
+                                align_sq = 'left' if ci_sq==0 else 'center'
+                                html_sq += f'<td style="padding:5px 10px;border:1px solid #B5D4F4;background:{bg_sq};color:#1a2744;text-align:{align_sq}">{row_sq[col_sq]}</td>'
+                            html_sq += '</tr>'
+                        html_sq += '</table></div>'
+                        st.markdown(html_sq, unsafe_allow_html=True)
+
+                    millor_z = df_sq.loc[df_sq["diff_sq"].idxmax()]
+                    pitjor_z = df_sq.loc[df_sq["diff_sq"].idxmin()]
+                    st.info(f"📊 Zona amb millor rendiment relatiu: **{millor_z['zona']}** "
+                            f"({millor_z['diff_sq']:+.1f}pp vs mitjana). "
+                            f"Zona amb pitjor rendiment: **{pitjor_z['zona']}** "
+                            f"({pitjor_z['diff_sq']:+.1f}pp vs mitjana).")
+                else:
+                    st.info("No hi ha prou tirs a la selecció actual per a aquesta anàlisi.")
 
     col_ma,col_mb=st.columns(2)
     for col_m,tid,tnom,tcol in [
