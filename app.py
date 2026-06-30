@@ -2405,6 +2405,82 @@ def genera_excel_analisi():
             c.fill=fons(BLAU_CLAR); c.alignment=Alignment(horizontal='left',vertical='center',wrap_text=True)
             ws9.row_dimensions[row9].height=40
 
+    # ── PESTANYA 10: CONTRIBUCIÓ PER COMPANYA ───────────────────────────────
+    ws10 = wb.create_sheet("Contribució per companya")
+    ws10.sheet_view.showGridLines=False; ws10.column_dimensions['A'].width=2
+    ws10.merge_cells('B1:I1')
+    c=ws10['B1']; c.value='🏀  MICKI ANALÍTICA — CONTRIBUCIÓ PER COMPANYA'
+    c.font=Font(name='Arial',bold=True,color=BLANC,size=14)
+    c.fill=fons(BLAU_FOSC); c.alignment=Alignment(horizontal='center',vertical='center')
+    ws10.row_dimensions[1].height=36
+    ws10.merge_cells('B2:I2')
+    c=ws10['B2']; c.value="Per cada jugadora, el +/- amb CADA companya concreta amb qui ha compartit pista (no agrupat per arquetip)"
+    c.font=Font(name='Arial',color=BLANC,size=10); c.fill=fons(BLAU_MIG)
+    c.alignment=Alignment(horizontal='center',vertical='center')
+    ws10.row_dimensions[2].height=18; ws10.row_dimensions[3].height=6
+
+    for ci,w in zip(range(2,10),[22,24,12,10,10,10,11,30]):
+        ws10.column_dimensions[get_column_letter(ci)].width=w
+
+    row10 = 4
+
+    # Reorganitza parelles_acum per jugadora individual (cada parella aporta a ambdues bandes)
+    contrib_per_jugadora = {}  # jug -> [{company, minuts, pf, pc}]
+    for (eq_nom_par10, combo_par10), d_par10 in parelles_acum.items():
+        if len(combo_par10) != 2: continue
+        j1, j2 = combo_par10
+        for jug_self10, jug_company10 in [(j1,j2),(j2,j1)]:
+            contrib_per_jugadora.setdefault(jug_self10, []).append({
+                'company': jug_company10, 'equip': eq_nom_par10,
+                'minuts': d_par10['minuts'], 'pf': d_par10['pf'], 'pc': d_par10['pc']
+            })
+
+    jugadores_contrib = sorted(contrib_per_jugadora.keys())
+
+    for jug10 in jugadores_contrib:
+        rows10 = [r for r in contrib_per_jugadora[jug10] if r['minuts'] >= 1]
+        if not rows10: continue
+        rows10_calc = []
+        for r10 in rows10:
+            pm10 = r10['pf'] - r10['pc']
+            pm_min10 = round(pm10/r10['minuts'], 3) if r10['minuts'] > 0 else 0
+            rows10_calc.append({**r10, 'pm': pm10, 'pm_min': pm_min10})
+        rows10_calc.sort(key=lambda x: x['minuts'], reverse=True)
+
+        equip_jug10 = rows10_calc[0]['equip'] if rows10_calc else '?'
+        ws10.merge_cells(f'B{row10}:I{row10}')
+        c=ws10[f'B{row10}']; c.value=f'{jug10}  —  {equip_jug10}'
+        c.font=Font(name='Arial',bold=True,color=BLANC,size=11)
+        c.fill=fons(BLAU_MIG); c.alignment=Alignment(horizontal='left',vertical='center')
+        ws10.row_dimensions[row10].height=20; row10+=1
+
+        for ci10,cap10 in zip(range(2,9),['Companya','Min junts','Pts favor','Pts contra','+/-','+/- per min','Interpretació']):
+            fc(ws10,row10,ci10,cap10,bold=True,bg=BLAU_CLAR,fg=BLAU_FOSC,size=9)
+        ws10.row_dimensions[row10].height=18; row10+=1
+
+        millor10 = max(rows10_calc, key=lambda x: x['pm_min']) if rows10_calc else None
+        pitjor10 = min(rows10_calc, key=lambda x: x['pm_min']) if rows10_calc else None
+
+        for i10,r10c in enumerate(rows10_calc):
+            bg10 = BLANC if i10%2==0 else BLAU_CLAR
+            pm_v10 = r10c['pm_min']
+            pm_bg10 = 'D5F5E3' if pm_v10>=0 else 'FADBD8'
+            pm_fg10 = '0F6E56' if pm_v10>=0 else '993C1D'
+            interp10 = ''
+            if r10c is millor10: interp10 = '⭐ Millor parella'
+            elif r10c is pitjor10: interp10 = '⚠️ Pitjor parella'
+
+            fc(ws10,row10,2,r10c['company'],bold=True,fg=BLAU_FOSC,bg=bg10,align='left',size=9)
+            fc(ws10,row10,3,round(r10c['minuts'],1),bg=bg10,size=9)
+            fc(ws10,row10,4,int(r10c['pf']),bg=bg10,size=9)
+            fc(ws10,row10,5,int(r10c['pc']),bg=bg10,size=9)
+            fc(ws10,row10,6,f"{'+'if r10c['pm']>=0 else ''}{r10c['pm']}",bold=True,bg=bg10,size=9)
+            fc(ws10,row10,7,f"{'+'if pm_v10>=0 else ''}{pm_v10}",bold=True,bg=pm_bg10,fg=pm_fg10,size=9)
+            fc(ws10,row10,8,interp10,bg=bg10,align='left',size=9,fg='555555')
+            ws10.row_dimensions[row10].height=16; row10+=1
+
+        row10 += 1
+
     buf=io.BytesIO(); wb.save(buf); buf.seek(0)
     return buf.getvalue()
 
