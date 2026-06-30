@@ -2242,11 +2242,8 @@ def genera_excel_analisi():
                                 wob_pts += float(df_x[mask]["punts"].sum())
                                 wob_min += yf - cursor2
 
-                        pm_bw  = round(wb_pts  / wb_min  * 60, 2) if wb_min  >= 1 else None
-                        pm_bwo = round(wob_pts / wob_min * 60, 2) if wob_min >= 1 else None
-                        # Cap màxim: 3 pts/min per a una sola jugadora (120 pts/40min, impossible)
-                        if pm_bw  is not None and pm_bw  > 3.0: pm_bw  = None
-                        if pm_bwo is not None and pm_bwo > 3.0: pm_bwo = None
+                        pm_bw  = round(wb_pts  / wb_min  * 10, 2) if wb_min  >= 1 else None
+                        pm_bwo = round(wob_pts / wob_min * 10, 2) if wob_min >= 1 else None
 
                         if pm_bw is not None or pm_bwo is not None:
                             diff_b = round(pm_bw - pm_bwo, 2) if (pm_bw is not None and pm_bwo is not None) else None
@@ -4404,6 +4401,9 @@ with t4:
                 for ti2, tf2 in ivs_x[:5]:
                     pts_d = _pts_equip_imp(ti2, tf2, tid_imp_str, df_jug_imp)
                     st.write(f"  [{ti2:.1f}–{tf2:.1f} min] → {pts_d:.0f} pts equip")
+                st.write("**Punts totals per jugadora al partit (verificació de noms):**")
+                pts_per_jug_debug = df_jug_imp[df_jug_imp["idEquip"].astype(str)==tid_imp_str].groupby(col_j_imp2)["punts"].sum()
+                st.write(pts_per_jug_debug[pts_per_jug_debug > 0].to_dict())
 
             rows_imp_a = []
             rows_imp_b = []
@@ -4438,19 +4438,23 @@ with t4:
                 def _pm(pts, mins):
                     v = round(pts/mins*60, 2) if mins >= 1.0 else None
                     return None if (v is not None and v > 3.0) else v
+                def _p10(pts, mins):
+                    """Punts per cada 10 minuts — més estable que pts/min en finestres curtes."""
+                    return round(pts/mins*10, 2) if mins >= 1.0 else None
                 def _fmt(v): return f"{'+'if v>=0 else ''}{v:.2f}" if v is not None else "—"
 
                 pm_aw  = _pm(wa_pts,  wa_min);  pm_awo = _pm(woa_pts, woa_min)
-                pm_bw  = _pm(wb_pts,  wb_min);  pm_bwo = _pm(wob_pts, wob_min)
+                p10_bw = _p10(wb_pts, wb_min);  p10_bwo = _p10(wob_pts, wob_min)
                 da = round(pm_aw  - pm_awo, 2) if (pm_aw  is not None and pm_awo is not None) else None
-                db = round(pm_bw  - pm_bwo, 2) if (pm_bw  is not None and pm_bwo is not None) else None
+                db = round(p10_bw - p10_bwo, 2) if (p10_bw is not None and p10_bwo is not None) else None
                 fiable = (wa_min >= 3 and woa_min >= 3)
 
                 rows_imp_a.append({"Companya":jug_y,"Min amb":round(wa_min,1),"Min sense":round(woa_min,1),
                     "Pts equip/min amb":_fmt(pm_aw),"Pts equip/min sense":_fmt(pm_awo),
                     "Diferència":_fmt(da),"Fiable":"✅" if fiable else "⚠️","_diff":da})
                 rows_imp_b.append({"Companya":jug_y,"Min amb":round(wb_min,1),"Min sense":round(wob_min,1),
-                    "Pts Y/min amb":_fmt(pm_bw),"Pts Y/min sense":_fmt(pm_bwo),
+                    "Pts Y /10min amb":f"{wb_pts:.0f} pts ({p10_bw:.1f}/10m)" if p10_bw is not None else f"{wb_pts:.0f} pts",
+                    "Pts Y /10min sense":f"{wob_pts:.0f} pts ({p10_bwo:.1f}/10m)" if p10_bwo is not None else f"{wob_pts:.0f} pts",
                     "Diferència":_fmt(db),"Fiable":"✅" if fiable else "⚠️","_diff":db})
 
             if not rows_imp_a:
@@ -4459,7 +4463,7 @@ with t4:
 
             tab_a, tab_b = st.tabs([
                 "A — Pts equip/min quan Y juga",
-                "B — Pts propis de Y/min"
+                "B — Pts propis de Y (per 10 min)"
             ])
 
             def _render_imp(rows, cols_show, titol):
@@ -4515,11 +4519,12 @@ with t4:
                     ["Companya","Min amb","Min sense","Pts equip/min amb","Pts equip/min sense","Diferència","Fiable"],
                     f"Pts equip/min — amb vs sense {nom_x}")
             with tab_b:
-                st.caption("Punts anotats per la pròpia companya Y per minut. "
-                           "0.00 = ha jugat però no ha anotat en aquells intervals.")
+                st.caption("Punts totals anotats per la pròpia companya Y, normalitzats a 10 minuts "
+                           "(més estable que pts/min en finestres curtes). "
+                           "0 pts = ha jugat però no ha anotat en aquells intervals.")
                 _render_imp(rows_imp_b,
-                    ["Companya","Min amb","Min sense","Pts Y/min amb","Pts Y/min sense","Diferència","Fiable"],
-                    f"Pts propis de Y — amb vs sense {nom_x}")
+                    ["Companya","Min amb","Min sense","Pts Y /10min amb","Pts Y /10min sense","Diferència","Fiable"],
+                    f"Pts propis de Y (per 10 min) — amb vs sense {nom_x}")
 
 
 
