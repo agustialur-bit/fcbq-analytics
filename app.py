@@ -2160,6 +2160,9 @@ def genera_excel_analisi():
 
                         pm_with    = round(with_pts    / with_min    * 60, 2) if with_min    >= 1 else None
                         pm_without = round(without_pts / without_min * 60, 2) if without_min >= 1 else None
+                        # Cap màxim: 3 pts/min = 120 pts/40min (impossible per a un equip)
+                        if pm_with    is not None and pm_with    > 3.0: pm_with    = None
+                        if pm_without is not None and pm_without > 3.0: pm_without = None
 
                         if pm_with is not None and pm_without is not None:
                             diff = round(pm_with - pm_without, 2)
@@ -2241,6 +2244,9 @@ def genera_excel_analisi():
 
                         pm_bw  = round(wb_pts  / wb_min  * 60, 2) if wb_min  >= 1 else None
                         pm_bwo = round(wob_pts / wob_min * 60, 2) if wob_min >= 1 else None
+                        # Cap màxim: 3 pts/min per a una sola jugadora (120 pts/40min, impossible)
+                        if pm_bw  is not None and pm_bw  > 3.0: pm_bw  = None
+                        if pm_bwo is not None and pm_bwo > 3.0: pm_bwo = None
 
                         if pm_bw is not None or pm_bwo is not None:
                             diff_b = round(pm_bw - pm_bwo, 2) if (pm_bw is not None and pm_bwo is not None) else None
@@ -4429,7 +4435,9 @@ with t4:
                         wob_min += dur
                         wob_pts += _pts_jug_imp(a, b, jug_y, df_jug_imp, col_j_imp2)
 
-                def _pm(pts, mins): return round(pts/mins*60, 2) if mins >= 1.0 else None
+                def _pm(pts, mins):
+                    v = round(pts/mins*60, 2) if mins >= 1.0 else None
+                    return None if (v is not None and v > 3.0) else v
                 def _fmt(v): return f"{'+'if v>=0 else ''}{v:.2f}" if v is not None else "—"
 
                 pm_aw  = _pm(wa_pts,  wa_min);  pm_awo = _pm(woa_pts, woa_min)
