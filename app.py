@@ -2329,81 +2329,96 @@ def genera_excel_analisi():
     # ── PESTANYA 9: MAPA DE TIR — SHOT QUALITY PER ZONA ─────────────────────
     ws9 = wb.create_sheet("Shot Quality")
     ws9.sheet_view.showGridLines=False; ws9.column_dimensions['A'].width=2
-    ws9.merge_cells('B1:J1')
-    c=ws9['B1']; c.value='🏀  MICKI ANALÍTICA — SHOT QUALITY PER ZONA'
+    ws9.merge_cells('B1:H1')
+    c=ws9['B1']; c.value='🏀  MICKI ANALÍTICA — SHOT QUALITY PER ZONA (per equip)'
     c.font=Font(name='Arial',bold=True,color=BLANC,size=14)
     c.fill=fons(BLAU_FOSC); c.alignment=Alignment(horizontal='center',vertical='center')
     ws9.row_dimensions[1].height=36
-    ws9.merge_cells('B2:J2')
-    c=ws9['B2']; c.value="Eficiència i valor real (PPS) per zona de tir, basat en totes les coordenades de tir guardades"
+    ws9.merge_cells('B2:H2')
+    c=ws9['B2']; c.value="Eficiència i PPS per zona, separat per equip. Referència = mitjana de temporada de cada equip."
     c.font=Font(name='Arial',color=BLANC,size=10); c.fill=fons(BLAU_MIG)
     c.alignment=Alignment(horizontal='center',vertical='center')
     ws9.row_dimensions[2].height=18; ws9.row_dimensions[3].height=6
 
     df_tirs_sq = load_tirs_fcbq_global()
     if df_tirs_sq.empty:
-        fc(ws9,4,2,"No hi ha tirs guardats a la BD. Guarda tirs des de la pestanya 🎯 Mapa de Tir per veure aquesta anàlisi.",bg=GROC,align='left')
+        fc(ws9,4,2,"No hi ha tirs guardats a la BD. Guarda tirs des de la pestanya 🎯 Mapa de Tir.",bg=GROC,align='left')
         ws9.column_dimensions['B'].width=80
     else:
-        for ci,w in zip(range(2,11),[20,11,11,11,11,11,13,13,30]):
+        for ci,w in zip(range(2,9),[20,11,11,11,11,11,30]):
             ws9.column_dimensions[get_column_letter(ci)].width=w
 
-        row9 = 4
-        for ci,cap in zip(range(2,11),['Zona','Tirs totals','Cistelles','Eficiència %','Valor tir','PPS (punts/tir)','Tirs equip A','Tirs equip B','Interpretació']):
-            fc(ws9,row9,ci,cap,bold=True,bg=BLAU_MIG,fg=BLANC,size=9)
-        ws9.row_dimensions[row9].height=18; row9+=1
-
         df_tirs_sq = df_tirs_sq.copy()
-        df_tirs_sq["zona"] = df_tirs_sq.apply(lambda r: classifica_zona_tir_global(float(r["x"]), float(r["y"])), axis=1)
-
-        zones_sq = df_tirs_sq.groupby("zona").agg(
-            tirs=("fet","count"), fets=("fet","sum")
-        ).reset_index()
-        zones_sq["ef"] = (zones_sq["fets"]/zones_sq["tirs"]*100).round(1)
-        zones_sq["valor"] = zones_sq["zona"].apply(lambda z: 3 if "Triple" in z else 2)
-        zones_sq["pps"] = (zones_sq["ef"]/100*zones_sq["valor"]).round(2)
+        df_tirs_sq["zona"] = df_tirs_sq.apply(
+            lambda r: classifica_zona_tir_global(float(r["x"]), float(r["y"])), axis=1)
 
         ordre_zones9 = ["🎯 Zona pintada","📍 Mig esquerra","📍 Mig centre","📍 Mig dreta",
                         "🏹 Triple esquerra","🏹 Triple centre","🏹 Triple dreta"]
-        zones_sq["_ordre"] = zones_sq["zona"].apply(lambda z: ordre_zones9.index(z) if z in ordre_zones9 else 99)
-        zones_sq = zones_sq.sort_values("_ordre")
 
-        zones_sq_sorted_pps = zones_sq.sort_values("pps", ascending=False).reset_index(drop=True)
-        millor_zona_sq = zones_sq_sorted_pps.iloc[0]["zona"] if len(zones_sq_sorted_pps)>0 else None
-        pitjor_zona_sq = zones_sq_sorted_pps.iloc[-1]["zona"] if len(zones_sq_sorted_pps)>0 else None
+        equips_sq9 = sorted(df_tirs_sq["equip_nom"].dropna().unique().tolist())
+        # Afegeix "Tots" al principi
+        equips_sq9 = ["Tots els equips"] + equips_sq9
 
-        for i9,r9 in zones_sq.iterrows():
-            bg9 = BLAU_CLAR if list(zones_sq.index).index(i9)%2==0 else BLANC
-            interp9 = ''
-            if r9['zona']==millor_zona_sq and r9['tirs']>=5: interp9 = '⭐ Millor valor per tir'
-            elif r9['zona']==pitjor_zona_sq and r9['tirs']>=5: interp9 = '⚠️ Pitjor valor per tir'
-            fc(ws9,row9,2,r9['zona'],bold=True,fg=BLAU_FOSC,bg=bg9,align='left')
-            fc(ws9,row9,3,int(r9['tirs']),bg=bg9)
-            fc(ws9,row9,4,int(r9['fets']),bg=bg9)
-            fc(ws9,row9,5,r9['ef'],bg=bg9)
-            fc(ws9,row9,6,f"{r9['valor']} punts",bg=bg9)
-            pps_bg9 = 'D5F5E3' if r9['pps']>=1.0 else 'FADBD8'
-            pps_fg9 = '0F6E56' if r9['pps']>=1.0 else '993C1D'
-            fc(ws9,row9,7,r9['pps'],bold=True,bg=pps_bg9,fg=pps_fg9)
-            # Tirs per equip (si hi ha equip_nom)
-            equips_zona = df_tirs_sq[df_tirs_sq["zona"]==r9['zona']]["equip_nom"].value_counts()
-            eq_a_txt = str(equips_zona.index[0])[:14] + f" ({equips_zona.iloc[0]})" if len(equips_zona)>=1 else "—"
-            eq_b_txt = str(equips_zona.index[1])[:14] + f" ({equips_zona.iloc[1]})" if len(equips_zona)>=2 else "—"
-            fc(ws9,row9,8,eq_a_txt,size=8,bg=bg9)
-            fc(ws9,row9,9,eq_b_txt,size=8,bg=bg9)
-            fc(ws9,row9,10,interp9,bg=bg9,align='left',size=9,fg='555555')
-            ws9.row_dimensions[row9].height=17; row9+=1
+        row9 = 4
+        for eq9 in equips_sq9:
+            if eq9 == "Tots els equips":
+                df_eq9 = df_tirs_sq.copy()
+                color_eq9 = BLAU_MIG
+            else:
+                df_eq9 = df_tirs_sq[df_tirs_sq["equip_nom"]==eq9].copy()
+                color_eq9 = BLAU_FOSC
 
-        row9 += 1
-        if millor_zona_sq:
-            ws9.merge_cells(f'B{row9}:J{row9}')
-            c=ws9[f'B{row9}']
-            c.value = (f"💡 Recomanació: la zona amb millor valor real per tir és '{millor_zona_sq}' "
-                       f"— buscar més tirs des d'aquesta zona maximitza els punts generats. "
-                       f"La zona '{pitjor_zona_sq}' té el pitjor valor real, tot i que pugui tenir bon % d'encert.")
-            c.font=Font(name='Arial',italic=True,color=BLAU_FOSC,size=10)
-            c.fill=fons(BLAU_CLAR); c.alignment=Alignment(horizontal='left',vertical='center',wrap_text=True)
-            ws9.row_dimensions[row9].height=40
+            if len(df_eq9) < 10: continue
+
+            # Capçalera equip
+            ws9.merge_cells(f'B{row9}:H{row9}')
+            c=ws9[f'B{row9}']; c.value=f'{"📊" if eq9=="Tots els equips" else "🏀"} {eq9}  ({len(df_eq9)} tirs)'
+            c.font=Font(name='Arial',bold=True,color=BLANC,size=11)
+            c.fill=fons(color_eq9); c.alignment=Alignment(horizontal='left',vertical='center')
+            ws9.row_dimensions[row9].height=22; row9+=1
+
+            for ci,cap in zip(range(2,9),['Zona','Tirs','Cistelles','Eficiència %','Valor tir','PPS','Interpretació']):
+                fc(ws9,row9,ci,cap,bold=True,bg=BLAU_CLAR,fg=BLAU_FOSC,size=9)
+            ws9.row_dimensions[row9].height=18; row9+=1
+
+            zones_eq9 = df_eq9.groupby("zona").agg(
+                tirs=("fet","count"), fets=("fet","sum")
+            ).reset_index()
+            zones_eq9["ef"] = (zones_eq9["fets"]/zones_eq9["tirs"]*100).round(1)
+            zones_eq9["valor"] = zones_eq9["zona"].apply(lambda z: 3 if "Triple" in z else 2)
+            zones_eq9["pps"] = (zones_eq9["ef"]/100*zones_eq9["valor"]).round(2)
+            zones_eq9["_ordre"] = zones_eq9["zona"].apply(lambda z: ordre_zones9.index(z) if z in ordre_zones9 else 99)
+            zones_eq9 = zones_eq9.sort_values("_ordre")
+
+            zones_pps_sorted = zones_eq9[zones_eq9["tirs"]>=5].sort_values("pps", ascending=False)
+            millor9 = zones_pps_sorted.iloc[0]["zona"] if len(zones_pps_sorted)>0 else None
+            pitjor9 = zones_pps_sorted.iloc[-1]["zona"] if len(zones_pps_sorted)>0 else None
+
+            for i9,r9 in zones_eq9.iterrows():
+                bg9 = BLANC if list(zones_eq9.index).index(i9)%2==0 else BLAU_CLAR
+                interp9 = ''
+                if r9['zona']==millor9: interp9 = '⭐ Millor valor per tir'
+                elif r9['zona']==pitjor9: interp9 = '⚠️ Pitjor valor per tir'
+                fc(ws9,row9,2,r9['zona'],bold=True,fg=BLAU_FOSC,bg=bg9,align='left',size=9)
+                fc(ws9,row9,3,int(r9['tirs']),bg=bg9,size=9)
+                fc(ws9,row9,4,int(r9['fets']),bg=bg9,size=9)
+                fc(ws9,row9,5,r9['ef'],bg=bg9,size=9)
+                fc(ws9,row9,6,f"{r9['valor']} pts",bg=bg9,size=9)
+                pps_bg9 = 'D5F5E3' if r9['pps']>=1.0 else 'FADBD8'
+                pps_fg9 = '0F6E56' if r9['pps']>=1.0 else '993C1D'
+                fc(ws9,row9,7,r9['pps'],bold=True,bg=pps_bg9,fg=pps_fg9,size=9)
+                fc(ws9,row9,8,interp9,bg=bg9,align='left',size=9,fg='555555')
+                ws9.row_dimensions[row9].height=16; row9+=1
+
+            if millor9:
+                ws9.merge_cells(f'B{row9}:H{row9}')
+                c=ws9[f'B{row9}']
+                c.value=f"💡 {eq9}: millor zona → {millor9} · pitjor zona → {pitjor9}"
+                c.font=Font(name='Arial',italic=True,color=BLAU_FOSC,size=9)
+                c.fill=fons(BLAU_CLAR); c.alignment=Alignment(horizontal='left',vertical='center')
+                ws9.row_dimensions[row9].height=18; row9+=1
+
+            row9 += 1
 
     # ── PESTANYA 10: CONTRIBUCIÓ PER COMPANYA ───────────────────────────────
     ws10 = wb.create_sheet("Contribució per companya")
@@ -5493,17 +5508,32 @@ console.log(`✅ Copiat! Total: ${punts.length} | Cistelles: ${punts.filter(p=>p
                 st.info(f"Tens {len(df_tots_tirs)} tirs acumulats. Calen almenys 30 tirs "
                         "per tenir una referència de zona mínimament fiable.")
             else:
-                df_tots_tirs = df_tots_tirs.copy()
-                df_tots_tirs["zona"] = df_tots_tirs.apply(
-                    lambda r: classifica_zona_tir(float(r["x"]), float(r["y"])), axis=1)
+                # Selector d'equip per filtrar
+                equips_sq = sorted(df_tots_tirs["equip_nom"].dropna().unique().tolist())
+                equips_sq_opts = ["Tots els equips"] + equips_sq
+                eq_sq_sel = st.radio("Filtra per equip", equips_sq_opts, horizontal=True, key="eq_sq_sel")
 
-                ref_zones = df_tots_tirs.groupby("zona").agg(
+                df_tots_tirs = df_tots_tirs.copy()
+                if eq_sq_sel != "Tots els equips":
+                    df_tots_tirs_ref = df_tots_tirs[df_tots_tirs["equip_nom"]==eq_sq_sel].copy()
+                    df_acum_sq_fil = df_acum[df_acum["equip_nom"]==eq_sq_sel].copy() if "equip_nom" in df_acum.columns else df_acum.copy()
+                else:
+                    df_tots_tirs_ref = df_tots_tirs.copy()
+                    df_acum_sq_fil = df_acum.copy()
+
+                if len(df_tots_tirs_ref) < 30:
+                    st.info(f"Tens {len(df_tots_tirs_ref)} tirs de '{eq_sq_sel}'. Calen almenys 30 per una referència fiable.")
+                else:
+                    df_tots_tirs_ref["zona"] = df_tots_tirs_ref.apply(
+                        lambda r: classifica_zona_tir(float(r["x"]), float(r["y"])), axis=1)
+
+                ref_zones = df_tots_tirs_ref.groupby("zona").agg(
                     tirs_ref=("fet","count"), fets_ref=("fet","sum")
                 ).reset_index()
                 ref_zones["ef_ref"] = (ref_zones["fets_ref"]/ref_zones["tirs_ref"]*100).round(1)
 
-                # Zona dels tirs seleccionats (filtre actual)
-                df_acum_z = df_acum.copy()
+                # Zona dels tirs seleccionats (filtre actual + filtre equip)
+                df_acum_z = df_acum_sq_fil.copy()
                 df_acum_z["zona"] = df_acum_z.apply(
                     lambda r: classifica_zona_tir(float(r["x"]), float(r["y"])), axis=1)
                 sel_zones = df_acum_z.groupby("zona").agg(
