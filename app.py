@@ -778,29 +778,79 @@ def extract_match_id(text):
     return None
 
 def fetch_and_parse(match_id):
-    url = API_BASE.format(match_id=match_id)
-    req = urllib.request.Request(url, headers={
-        "User-Agent":"Mozilla/5.0","Accept":"application/json",
-        "Referer":WEB_BASE.format(match_id=match_id)})
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        data = json.loads(resp.read())
+    # Prova amb currentSeason=true i sense (per compatibilitat entre temporades)
+    urls_a_provar = [
+        API_BASE.format(match_id=match_id),
+        API_BASE.format(match_id=match_id).replace("currentSeason=true","currentSeason=false"),
+        f"https://msstats.optimalwayconsulting.com/v1/fcbq/getJsonWithMatchMoves/{match_id}",
+    ]
+    # Referers possibles — prova tots dos formats de URL
+    referers = [
+        f"https://www.basquetcatala.cat/competicions-anteriors/resultat/estadistiques/2025/{match_id}",
+        f"https://www.basquetcatala.cat/estadistiques/2025/{match_id}",
+        f"https://www.basquetcatala.cat/estadistiques/2024/{match_id}",
+        f"https://www.basquetcatala.cat/",
+    ]
+    data = None
+    for url in urls_a_provar:
+        for referer in referers:
+            try:
+                req = urllib.request.Request(url, headers={
+                    "User-Agent":"Mozilla/5.0","Accept":"application/json",
+                    "Referer": referer})
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    data = json.loads(resp.read())
+                if data: break
+            except: continue
+        if data: break
+    if not data: raise Exception("No s'ha pogut obtenir dades de l'API")
+
     if isinstance(data, list): data = {"moves": data}
     raw = data.get("moves") or data.get("matchMoves") or data.get("playByPlay") or []
     if not raw:
         for v in data.values():
             if isinstance(v,list) and len(v)>3: raw=v; break
+
+    # Detecta els noms de camps reals del primer element
+    camp_equip = "idTeam"
+    camp_jugador = "actorName"
+    camp_accio = "move"
+    camp_dorsal = "actorShirtNumber"
+    camp_score = "score"
+    camp_period = "period"
+    if raw and isinstance(raw[0], dict):
+        primer = raw[0]
+        # Camp equip
+        for c in ["idTeam","teamId","id_team","idEquip","equipId","team_id","idequip"]:
+            if c in primer: camp_equip = c; break
+        # Camp jugador
+        for c in ["actorName","playerName","jugador","actor_name","name","player"]:
+            if c in primer: camp_jugador = c; break
+        # Camp acció
+        for c in ["move","action","accio","moveText","actionText","description"]:
+            if c in primer: camp_accio = c; break
+        # Camp dorsal
+        for c in ["actorShirtNumber","shirtNumber","dorsal","shirt_number","number"]:
+            if c in primer: camp_dorsal = c; break
+        # Camp marcador
+        for c in ["score","marcador","scoreText","currentScore"]:
+            if c in primer: camp_score = c; break
+        # Camp periode
+        for c in ["period","quart","quarter","cuarto"]:
+            if c in primer: camp_period = c; break
+
     rows = []
     for i,play in enumerate(raw):
         if not isinstance(play,dict): continue
         mn=play.get("min",""); sc=play.get("sec","")
         temps=f"{int(mn):02d}:{int(sc):02d}" if mn!="" and sc!="" else str(mn)
-        move=play.get("move","")
+        move=play.get(camp_accio,"")
         punts=3 if "Cistella de 3" in move else (2 if "Cistella de 2" in move else (1 if ("Cistella de 1" in move or "Tir lliure convertit" in move) else 0))
-        rows.append({"num":i+1,"quart":play.get("period",""),"temps":temps,
+        rows.append({"num":i+1,"quart":play.get(camp_period,""),"temps":temps,
             "min_num":float(mn)+float(sc)/60 if mn!="" else 0,
-            "idEquip":str(play.get("idTeam","")),"dorsal":play.get("actorShirtNumber",""),
-            "jugador":play.get("actorName",""),"accio":move,
-            "marcador":play.get("score",""),"punts":punts,
+            "idEquip":str(play.get(camp_equip,"")),"dorsal":play.get(camp_dorsal,""),
+            "jugador":play.get(camp_jugador,""),"accio":move,
+            "marcador":play.get(camp_score,""),"punts":punts,
             "teamAction":play.get("teamAction",False)})
     return pd.DataFrame(rows)
 
