@@ -17,46 +17,67 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
 
+/* ── Paleta central ── Tots els colors de l'app es defineixen aquí un sol cop.
+   Per canviar la identitat visual, només cal tocar aquestes variables. */
+:root{
+    --c-bg:#EBF4FC;          /* fons general de l'app */
+    --c-bg-soft:#D6E8F7;     /* fons sidebar, capçaleres de taula, hover */
+    --c-border:#B5D4F4;      /* vores i separadors suaus */
+    --c-text:#1a2744;        /* text principal sobre fons clar */
+    --c-white:#ffffff;
+    --c-accent:#185FA5;      /* blau principal (accions, accent) */
+    --c-accent-dark:#0C447C; /* blau fosc (hover/seleccionat) */
+    --c-accent-mid:#378ADD;  /* blau mitjà (hovers, placeholders, captions) */
+    --c-btn-bg:#85B7EB;      /* fons botons per defecte */
+    --c-btn-text:#042C53;    /* text botons per defecte */
+    --c-dark-bg:#232840;     /* fons inputs (tema fosc per defecte, fora del sidebar) */
+    --c-dark-text:#e8eaf0;   /* text sobre --c-dark-bg */
+    --c-dark-border:#2d3450;
+    --c-panel-dark:#13161e;  /* fons expander (base, abans de l'override clar) */
+    --c-border-dark:#1f2330; /* vores sobre panells foscos */
+    --c-input-text:#000000;  /* text forçat als inputs del sidebar */
+}
+
 /* ── Base ── */
-html,body,[class*="css"]{font-family:'Inter',sans-serif;color:#e8eaf0!important;}
-.stApp{background:#EBF4FC!important;color:#1a2744!important;}
+html,body,[class*="css"]{font-family:'Inter',sans-serif;color:var(--c-dark-text)!important;}
+.stApp{background:var(--c-bg)!important;color:var(--c-text)!important;}
 .main .block-container{padding-top:1.5rem!important;}
-p, span, div, label, h1, h2, h3, h4{color:#1a2744;}
+p, span, div, label, h1, h2, h3, h4{color:var(--c-text);}
 
 /* ── Sidebar ── */
-[data-testid="stSidebar"]{background:#D6E8F7!important;border-right:1px solid #B5D4F4!important;}
+[data-testid="stSidebar"]{background:var(--c-bg-soft)!important;border-right:1px solid var(--c-border)!important;}
 
 /* ── Pestanyes grans estil NBA ── */
 .stTabs [data-baseweb="tab-list"]{
-    background:#D6E8F7!important;
+    background:var(--c-bg-soft)!important;
     border-radius:12px!important;
     padding:6px!important;
     gap:4px!important;
-    border:1px solid #B5D4F4!important;
+    border:1px solid var(--c-border)!important;
 }
 .stTabs [data-baseweb="tab"]{
     border-radius:8px!important;
     font-size:14px!important;
     font-weight:600!important;
-    color:#185FA5!important;
+    color:var(--c-accent)!important;
     padding:10px 18px!important;
     letter-spacing:0.02em!important;
     transition:all 0.2s!important;
 }
 .stTabs [data-baseweb="tab"]:hover{
-    background:#B5D4F4!important;
-    color:#0C447C!important;
+    background:var(--c-border)!important;
+    color:var(--c-accent-dark)!important;
 }
 .stTabs [aria-selected="true"]{
-    background:#185FA5!important;
-    color:#ffffff!important;
+    background:var(--c-accent)!important;
+    color:var(--c-white)!important;
     box-shadow:0 2px 8px rgba(24,95,165,0.4)!important;
 }
 
 /* ── Botons ── */
 .stButton button{
-    background:#85B7EB!important;
-    color:#042C53!important;
+    background:var(--c-btn-bg)!important;
+    color:var(--c-btn-text)!important;
     border:none!important;
     border-radius:8px!important;
     font-weight:700!important;
@@ -65,37 +86,37 @@ p, span, div, label, h1, h2, h3, h4{color:#1a2744;}
     transition:all 0.2s!important;
 }
 .stButton button:hover{
-    background:#378ADD!important;
-    color:#ffffff!important;
+    background:var(--c-accent-mid)!important;
+    color:var(--c-white)!important;
 }
 /* Download button */
 a[data-testid="stDownloadButton"] button,
 div[data-testid="stDownloadButton"] button{
-    background:#85B7EB!important;
-    color:#042C53!important;
+    background:var(--c-btn-bg)!important;
+    color:var(--c-btn-text)!important;
     font-weight:700!important;
     border:none!important;
     border-radius:8px!important;
 }
 a[data-testid="stDownloadButton"] button:hover,
 div[data-testid="stDownloadButton"] button:hover{
-    background:#378ADD!important;
-    color:#ffffff!important;
+    background:var(--c-accent-mid)!important;
+    color:var(--c-white)!important;
 }
 
 /* ── DataFrames ── */
 div[data-testid="stDataFrame"]{
     border-radius:10px!important;
     overflow:hidden!important;
-    border:1px solid #1f2330!important;
+    border:1px solid var(--c-border-dark)!important;
 }
 div[data-testid="stDataFrame"] th{
-    background:#D6E8F7!important;
-    color:#185FA5!important;
+    background:var(--c-bg-soft)!important;
+    color:var(--c-accent)!important;
 }
 div[data-testid="stDataFrame"] td{
-    background:#EBF4FC!important;
-    color:#1a2744!important;
+    background:var(--c-bg)!important;
+    color:var(--c-text)!important;
 }
 
 /* ── Inputs i selects ── */
@@ -106,60 +127,60 @@ div[data-testid="stDataFrame"] td{
 .stSelectbox input,
 input, textarea, select{
     border-radius:8px!important;
-    background:#232840!important;
-    border-color:#2d3450!important;
-    color:#e8eaf0!important;
+    background:var(--c-dark-bg)!important;
+    border-color:var(--c-dark-border)!important;
+    color:var(--c-dark-text)!important;
 }
 /* Text dins dels camps de selecció */
 [data-baseweb="select"] [data-baseweb="tag"],
 [data-baseweb="select"] input,
 [data-baseweb="select"] div,
 [data-baseweb="input"] input{
-    color:#e8eaf0!important;
-    background:#D6E8F7!important;
+    color:var(--c-dark-text)!important;
+    background:var(--c-bg-soft)!important;
 }
 /* Placeholder text */
-input::placeholder, textarea::placeholder{color:#378ADD!important;}
+input::placeholder, textarea::placeholder{color:var(--c-accent-mid)!important;}
 /* Dropdown options */
 [data-baseweb="popover"] li,
 [data-baseweb="menu"] li{
-    background:#232840!important;
-    color:#e8eaf0!important;
+    background:var(--c-dark-bg)!important;
+    color:var(--c-dark-text)!important;
 }
 [data-baseweb="popover"] li:hover,
 [data-baseweb="menu"] li:hover{
-    background:#B5D4F4!important;
+    background:var(--c-border)!important;
 }
 
 /* ── Expanders ── */
 .stExpander{
-    border:1px solid #1f2330!important;
+    border:1px solid var(--c-border-dark)!important;
     border-radius:10px!important;
-    background:#13161e!important;
+    background:var(--c-panel-dark)!important;
 }
 
 /* ── Mètriques ── */
 div[data-testid="stMetric"]{
-    background:#ffffff!important;
+    background:var(--c-white)!important;
     border-radius:10px!important;
     padding:12px!important;
-    border:1px solid #1f2330!important;
+    border:1px solid var(--c-border-dark)!important;
 }
 
 /* ── Info/Warning boxes ── */
 div[data-testid="stAlert"]{
     border-radius:8px!important;
-    border:1px solid #1f2330!important;
+    border:1px solid var(--c-border-dark)!important;
 }
 
 /* ── Plotly charts fons transparent ── */
 .js-plotly-plot .plotly .modebar{background:transparent!important;}
 
 /* ── Captions i text secundari ── */
-.stCaption, small{color:#378ADD!important;}
+.stCaption, small{color:var(--c-accent-mid)!important;}
 
 /* ── Separadors ── */
-hr{border-color:#B5D4F4!important;}
+hr{border-color:var(--c-border)!important;}
 
 /* ── Fix sidebar i expanders ── */
 [data-testid="stSidebar"],
@@ -168,7 +189,7 @@ hr{border-color:#B5D4F4!important;}
 [data-testid="stSidebar"] p,
 [data-testid="stSidebar"] span,
 [data-testid="stSidebar"] div{
-    color:#1a2744!important;
+    color:var(--c-text)!important;
 }
 [data-testid="stSidebar"] input,
 [data-testid="stSidebar"] textarea,
@@ -179,9 +200,9 @@ hr{border-color:#B5D4F4!important;}
 [data-testid="stSidebar"] div[data-testid="stTextInput"] input,
 [data-testid="stSidebar"] div[class*="Input"],
 [data-testid="stSidebar"] div[class*="input"]{
-    background:#ffffff!important;
-    color:#000000!important;
-    border:1px solid #B5D4F4!important;
+    background:var(--c-white)!important;
+    color:var(--c-input-text)!important;
+    border:1px solid var(--c-border)!important;
 }
 /* Extra força per text visible dins inputs del sidebar (cobreix versions de Streamlit
    on data-baseweb="base-input" en lloc de "input", i evita que el text quedi del mateix
@@ -191,16 +212,16 @@ hr{border-color:#B5D4F4!important;}
 [data-testid="stSidebar"] div[data-testid="stTextInput"] input,
 [data-testid="stSidebar"] [data-baseweb="base-input"] input,
 [data-testid="stSidebar"] input:not([type="checkbox"]):not([type="radio"]){
-    background:#ffffff!important;
-    color:#000000!important;
-    -webkit-text-fill-color:#000000!important;
-    caret-color:#000000!important;
+    background:var(--c-white)!important;
+    color:var(--c-input-text)!important;
+    -webkit-text-fill-color:var(--c-input-text)!important;
+    caret-color:var(--c-input-text)!important;
 }
 
 /* Expanders — tot el contingut interior visible */
 div[data-testid="stExpander"]{
-    background:#ffffff!important;
-    border:1px solid #B5D4F4!important;
+    background:var(--c-white)!important;
+    border:1px solid var(--c-border)!important;
     border-radius:10px!important;
 }
 div[data-testid="stExpander"] *,
@@ -210,19 +231,19 @@ div[data-testid="stExpander"] div,
 div[data-testid="stExpander"] td,
 div[data-testid="stExpander"] th,
 div[data-testid="stExpander"] label{
-    color:#1a2744!important;
-    background:#ffffff!important;
+    color:var(--c-text)!important;
+    background:var(--c-white)!important;
 }
 div[data-testid="stExpander"] summary{
-    color:#1a2744!important;
-    background:#EBF4FC!important;
+    color:var(--c-text)!important;
+    background:var(--c-bg)!important;
 }
 /* Força fons blanc pur al contingut de l'expander */
 div[data-testid="stExpander"] > div:last-child{
-    background:#ffffff!important;
+    background:var(--c-white)!important;
 }
 div[data-testid="stExpander"] summary:hover{
-    background:#D6E8F7!important;
+    background:var(--c-bg-soft)!important;
 }
 /* DataFrames dins expanders i globals */
 div[data-testid="stExpander"] div[data-testid="stDataFrame"] *,
@@ -235,32 +256,32 @@ div[data-testid="stDataFrame"] div,
 .dvn-cell *,
 [role="gridcell"] *,
 [role="columnheader"] *{
-    color:#1a2744!important;
+    color:var(--c-text)!important;
 }
 /* Headers del dataframe */
 div[data-testid="stDataFrame"] th,
 div[data-testid="stDataFrame"] [role="columnheader"]{
-    background:#D6E8F7!important;
-    color:#0C447C!important;
+    background:var(--c-bg-soft)!important;
+    color:var(--c-accent-dark)!important;
 }
 /* Files alternatives */
 div[data-testid="stDataFrame"] [role="gridcell"]{
-    background:#ffffff!important;
-    color:#1a2744!important;
+    background:var(--c-white)!important;
+    color:var(--c-text)!important;
 }
 
 /* ── Fix desplegables BaseWeb (selectbox, multiselect) ── */
 /* Fons i text del camp tancat */
 div[data-baseweb="select"] > div:first-child{
-    background:#ffffff!important;
-    border-color:#B5D4F4!important;
+    background:var(--c-white)!important;
+    border-color:var(--c-border)!important;
 }
 /* Text valor seleccionat i placeholder */
 div[data-baseweb="select"] span,
 div[data-baseweb="select"] div,
 div[data-baseweb="select"] p,
 div[data-baseweb="select"] input{
-    color:#1a2744!important;
+    color:var(--c-text)!important;
     background:transparent!important;
 }
 /* Llista desplegada - fons de cada opció */
@@ -271,60 +292,79 @@ div[data-baseweb="popover"],
 div[data-baseweb="popover"] *,
 li[role="option"],
 li[role="option"] *{
-    background:#ffffff!important;
-    color:#1a2744!important;
+    background:var(--c-white)!important;
+    color:var(--c-text)!important;
 }
 /* Opció hover */
 li[role="option"]:hover,
 li[role="option"]:hover *{
-    background:#D6E8F7!important;
-    color:#0C447C!important;
+    background:var(--c-bg-soft)!important;
+    color:var(--c-accent-dark)!important;
 }
 /* Opció seleccionada */
 li[aria-selected="true"],
 li[aria-selected="true"] *{
-    background:#B5D4F4!important;
-    color:#0C447C!important;
+    background:var(--c-border)!important;
+    color:var(--c-accent-dark)!important;
     font-weight:600!important;
 }
 /* Tags del multiselect */
 span[data-baseweb="tag"],
 span[data-baseweb="tag"] *{
-    background:#185FA5!important;
-    color:#ffffff!important;
+    background:var(--c-accent)!important;
+    color:var(--c-white)!important;
 }
 </style>
 """, unsafe_allow_html=True)
 
-def card(label, value, sub="", color="#185FA5"):
-    return f"""<div style="background:#fff;border:0.5px solid #e2e4e8;border-radius:10px;padding:14px 16px;text-align:center;margin-bottom:8px">
-    <div style="font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#9ca3af;margin-bottom:4px">{label}</div>
+# Paleta Python (mateixos valors que les variables CSS de dalt, per als
+# helpers que generen HTML/gràfics des de Python)
+C_BG        = "#EBF4FC"
+C_BG_SOFT   = "#D6E8F7"
+C_BORDER    = "#B5D4F4"
+C_TEXT      = "#1a2744"
+C_TEXT_MUTED= "#6b7280"
+C_LABEL     = "#9ca3af"
+C_CARD_BORDER = "#e2e4e8"
+C_WHITE     = "#ffffff"
+C_ACCENT    = "#185FA5"
+C_ACCENT_DARK = "#0C447C"
+C_ACCENT_MID  = "#378ADD"
+C_CHART_TEXT  = "#374151"
+C_CHART_GRID  = "#f3f4f6"
+C_SUCCESS   = "#16a34a"
+C_WARNING   = "#d97706"
+C_ERROR     = "#dc2626"
+
+def card(label, value, sub="", color=C_ACCENT):
+    return f"""<div style="background:{C_WHITE};border:0.5px solid {C_CARD_BORDER};border-radius:10px;padding:14px 16px;text-align:center;margin-bottom:8px">
+    <div style="font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:{C_LABEL};margin-bottom:4px">{label}</div>
     <div style="font-size:28px;font-weight:600;color:{color};line-height:1.1">{value}</div>
-    <div style="font-size:11px;color:#9ca3af;margin-top:3px">{sub}</div></div>"""
+    <div style="font-size:11px;color:{C_LABEL};margin-top:3px">{sub}</div></div>"""
 
 def sec(s):
-    return f'<div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#6b7280;border-left:3px solid #185FA5;padding-left:8px;margin:24px 0 10px;border-radius:0">{s}</div>'
+    return f'<div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:{C_TEXT_MUTED};border-left:3px solid {C_ACCENT};padding-left:8px;margin:24px 0 10px;border-radius:0">{s}</div>'
 
 def badge(text, color, bg):
     return f'<span style="background:{bg};color:{color};font-size:10px;font-weight:600;padding:2px 7px;border-radius:20px;letter-spacing:.04em">{text}</span>'
 
 def chart_style(fig, h=280, title=""):
     if title:
-        fig.update_layout(title=dict(text=title, font=dict(color="#374151", size=13, family="Inter"), x=0))
+        fig.update_layout(title=dict(text=title, font=dict(color=C_CHART_TEXT, size=13, family="Inter"), x=0))
     fig.update_layout(
-        paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
-        font=dict(color="#374151", family="Inter", size=12),
-        legend=dict(bgcolor="#ffffff", bordercolor="#e2e4e8", borderwidth=1, title="",
+        paper_bgcolor=C_WHITE, plot_bgcolor=C_WHITE,
+        font=dict(color=C_CHART_TEXT, family="Inter", size=12),
+        legend=dict(bgcolor=C_WHITE, bordercolor=C_CARD_BORDER, borderwidth=1, title="",
                     orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        xaxis=dict(showgrid=False, color="#9ca3af", linecolor="#e2e4e8"),
-        yaxis=dict(showgrid=True, gridcolor="#f3f4f6", color="#9ca3af", linecolor="#e2e4e8"),
+        xaxis=dict(showgrid=False, color=C_LABEL, linecolor=C_CARD_BORDER),
+        yaxis=dict(showgrid=True, gridcolor=C_CHART_GRID, color=C_LABEL, linecolor=C_CARD_BORDER),
         margin=dict(l=0, r=0, t=40 if title else 10, b=0), height=h)
     return fig
 
 def eff_color(p):
-    if p >= 55: return "#16a34a"
-    if p >= 35: return "#d97706"
-    return "#dc2626"
+    if p >= 55: return C_SUCCESS
+    if p >= 35: return C_WARNING
+    return C_ERROR
 
 def shot_map_svg(zones, width=300, height=280):
     pts = [
