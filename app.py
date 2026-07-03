@@ -174,18 +174,27 @@ div[data-testid="stSidebar"] input,
 div[data-testid="stSidebar"] textarea,
 div[data-testid="stSidebar"] [data-baseweb="input"] div,
 div[data-testid="stSidebar"] [data-baseweb="input"] input,
+div[data-testid="stSidebar"] [data-baseweb="base-input"] div,
+div[data-testid="stSidebar"] [data-baseweb="base-input"] input,
+div[data-testid="stSidebar"] div[data-testid="stTextInput"] input,
 div[data-testid="stSidebar"] div[class*="Input"],
 div[data-testid="stSidebar"] div[class*="input"]{
     background:#ffffff!important;
     color:#000000!important;
     border:1px solid #B5D4F4!important;
 }
-/* Extra força per text visible dins inputs del sidebar */
+/* Extra força per text visible dins inputs del sidebar (cobreix versions de Streamlit
+   on data-baseweb="base-input" en lloc de "input", i evita que el text quedi del mateix
+   color que el fons) */
 div[data-testid="stSidebar"] input[type="text"],
 div[data-testid="stSidebar"] input[type="url"],
+div[data-testid="stSidebar"] div[data-testid="stTextInput"] input,
+div[data-testid="stSidebar"] [data-baseweb="base-input"] input,
 div[data-testid="stSidebar"] input:not([type="checkbox"]):not([type="radio"]){
+    background:#ffffff!important;
     color:#000000!important;
     -webkit-text-fill-color:#000000!important;
+    caret-color:#000000!important;
 }
 
 /* Expanders — tot el contingut interior visible */
