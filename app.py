@@ -24,7 +24,7 @@ html,body,[class*="css"]{font-family:'Inter',sans-serif;color:#e8eaf0!important;
 p, span, div, label, h1, h2, h3, h4{color:#1a2744;}
 
 /* ── Sidebar ── */
-div[data-testid="stSidebar"]{background:#D6E8F7!important;border-right:1px solid #B5D4F4!important;}
+[data-testid="stSidebar"]{background:#D6E8F7!important;border-right:1px solid #B5D4F4!important;}
 
 /* ── Pestanyes grans estil NBA ── */
 .stTabs [data-baseweb="tab-list"]{
@@ -162,23 +162,23 @@ div[data-testid="stAlert"]{
 hr{border-color:#B5D4F4!important;}
 
 /* ── Fix sidebar i expanders ── */
-div[data-testid="stSidebar"],
-div[data-testid="stSidebar"] *,
-div[data-testid="stSidebar"] label,
-div[data-testid="stSidebar"] p,
-div[data-testid="stSidebar"] span,
-div[data-testid="stSidebar"] div{
+[data-testid="stSidebar"],
+[data-testid="stSidebar"] *,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] span,
+[data-testid="stSidebar"] div{
     color:#1a2744!important;
 }
-div[data-testid="stSidebar"] input,
-div[data-testid="stSidebar"] textarea,
-div[data-testid="stSidebar"] [data-baseweb="input"] div,
-div[data-testid="stSidebar"] [data-baseweb="input"] input,
-div[data-testid="stSidebar"] [data-baseweb="base-input"] div,
-div[data-testid="stSidebar"] [data-baseweb="base-input"] input,
-div[data-testid="stSidebar"] div[data-testid="stTextInput"] input,
-div[data-testid="stSidebar"] div[class*="Input"],
-div[data-testid="stSidebar"] div[class*="input"]{
+[data-testid="stSidebar"] input,
+[data-testid="stSidebar"] textarea,
+[data-testid="stSidebar"] [data-baseweb="input"] div,
+[data-testid="stSidebar"] [data-baseweb="input"] input,
+[data-testid="stSidebar"] [data-baseweb="base-input"] div,
+[data-testid="stSidebar"] [data-baseweb="base-input"] input,
+[data-testid="stSidebar"] div[data-testid="stTextInput"] input,
+[data-testid="stSidebar"] div[class*="Input"],
+[data-testid="stSidebar"] div[class*="input"]{
     background:#ffffff!important;
     color:#000000!important;
     border:1px solid #B5D4F4!important;
@@ -186,11 +186,11 @@ div[data-testid="stSidebar"] div[class*="input"]{
 /* Extra força per text visible dins inputs del sidebar (cobreix versions de Streamlit
    on data-baseweb="base-input" en lloc de "input", i evita que el text quedi del mateix
    color que el fons) */
-div[data-testid="stSidebar"] input[type="text"],
-div[data-testid="stSidebar"] input[type="url"],
-div[data-testid="stSidebar"] div[data-testid="stTextInput"] input,
-div[data-testid="stSidebar"] [data-baseweb="base-input"] input,
-div[data-testid="stSidebar"] input:not([type="checkbox"]):not([type="radio"]){
+[data-testid="stSidebar"] input[type="text"],
+[data-testid="stSidebar"] input[type="url"],
+[data-testid="stSidebar"] div[data-testid="stTextInput"] input,
+[data-testid="stSidebar"] [data-baseweb="base-input"] input,
+[data-testid="stSidebar"] input:not([type="checkbox"]):not([type="radio"]){
     background:#ffffff!important;
     color:#000000!important;
     -webkit-text-fill-color:#000000!important;
