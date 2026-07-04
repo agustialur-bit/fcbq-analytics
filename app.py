@@ -2468,7 +2468,8 @@ def genera_excel_analisi():
         agg_arq8["p2_pct"] = (agg_arq8["pts2"]/agg_arq8["pts_tot"].replace(0,1)*100)
         agg_arq8["p3_pct"] = (agg_arq8["pts3"]/agg_arq8["pts_tot"].replace(0,1)*100)
         agg_arq8["ptl_pct"] = (agg_arq8["ptstl"]/agg_arq8["pts_tot"].replace(0,1)*100)
-        agg_arq8["usage_pct"] = (agg_arq8["usage"]*100) if "usage_rate" in df_sj_arq8.columns else 0
+        # calc_usage_rate() ja retorna un percentatge (p.ex. 24.4 = 24.4%), no cal tornar a multiplicar per 100
+        agg_arq8["usage_pct"] = agg_arq8["usage"] if "usage_rate" in df_sj_arq8.columns else 0
         agg_arq8["min_p"] = (agg_arq8["minuts"]/agg_arq8["partits"].replace(0,1))
         for _,r8 in agg_arq8.iterrows():
             arq_map8[r8[col_j_arq8]] = classifica_arquetip_global(
@@ -4995,7 +4996,8 @@ with t6:
         agg_arq["p2_pct"] = (agg_arq["pts2"]/agg_arq["pts_tot"].replace(0,1)*100).round(1)
         agg_arq["p3_pct"] = (agg_arq["pts3"]/agg_arq["pts_tot"].replace(0,1)*100).round(1)
         agg_arq["ptl_pct"] = (agg_arq["ptstl"]/agg_arq["pts_tot"].replace(0,1)*100).round(1)
-        agg_arq["usage_pct"] = (agg_arq["usage"]*100).round(1) if "usage_rate" in df_sj_arq.columns else 0
+        # calc_usage_rate() ja retorna un percentatge (p.ex. 24.4 = 24.4%), no cal tornar a multiplicar per 100
+        agg_arq["usage_pct"] = agg_arq["usage"].round(1) if "usage_rate" in df_sj_arq.columns else 0
         agg_arq["min_p"] = (agg_arq["minuts"]/agg_arq["partits"].replace(0,1)).round(1)
 
         agg_arq["Arquetip"] = agg_arq.apply(
