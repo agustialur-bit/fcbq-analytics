@@ -1545,6 +1545,116 @@ def classifica_zona_tir_global(x_raw, y_raw):
         elif x_raw > 62: return "📍 Mig dreta"
         else: return "📍 Mig centre"
 
+TC_INT_PAT = "Cistella de 2|Cistella de 3|Intent fallat de 2|Intent fallat de 3|fallat de 2|fallat de 3"
+TL_INT_PAT = "Cistella de 1|Intent fallat de 1|Tir lliure convertit|Tir lliure fallat"
+
+def calc_win_shares_temporada():
+    """Win Shares ofensius aproximats per jugadora, acumulats de tots els partits
+    de la BD (play-by-play complet, taula `jugades`). Versió simplificada: sense
+    assists ni rebots ofensius (no disponibles), i amb DWS estimat com a 30% de l'OWS
+    perquè no tenim Def Rating individual (calen possessions defensives per jugadora).
+    Retorna DataFrame: jugador, idEquip, equip, partits, minuts, punts, OWS, DWS, WS,
+    ws_per40, p2_pct, p3_pct, ptl_pct, min_p, Arquetip. Buit si no hi ha prou dades.
+    """
+    con = sqlite3.connect(DB_PATH)
+    try:
+        df_all = pd.read_sql("SELECT * FROM jugades", con).rename(
+            columns={"id_equip": "idEquip", "team_action": "teamAction"})
+        df_p = pd.read_sql("SELECT * FROM partits", con)
+    finally:
+        con.close()
+    if df_all.empty or df_p.empty:
+        return pd.DataFrame()
+
+    col_j = "jugador" if "jugador" in df_all.columns else "jugadora"
+    df_all[col_j] = df_all[col_j].fillna("")
+    df_all["idEquip"] = df_all["idEquip"].astype(str)
+    df_all["match_id"] = df_all["match_id"].astype(str)
+
+    team_name_per_match = {}
+    for _, p in df_p.iterrows():
+        team_name_per_match[str(p["match_id"])] = {
+            str(p["id_equip_a"]): p["nom_a"], str(p["id_equip_b"]): p["nom_b"]}
+
+    # ── Referència de lliga: possessions i punts per equip i partit ──
+    ep_rows = []
+    minuts_per_jugmatch = {}
+    for match_id, dfm in df_all.groupby("match_id"):
+        intervals_m = get_intervals_jugadores_global(dfm)
+        for jug, ivs in intervals_m.items():
+            minuts_per_jugmatch[(jug, match_id)] = sum(tf - ti for ti, tf, _ in ivs)
+        for eq_id, dfe in dfm.groupby("idEquip"):
+            tc = int(dfe["accio"].str.contains(TC_INT_PAT, case=False, na=False).sum())
+            tl = int(dfe["accio"].str.contains(TL_INT_PAT, case=False, na=False).sum())
+            ep_rows.append({"match_id": match_id, "idEquip": eq_id,
+                             "poss": tc + 0.44 * tl, "pts": int(dfe["punts"].sum())})
+
+    df_ep = pd.DataFrame(ep_rows)
+    if df_ep.empty or df_ep["poss"].sum() == 0:
+        return pd.DataFrame()
+
+    pts_per_poss_lliga = df_ep["pts"].sum() / df_ep["poss"].sum()
+    pts_per_partit_equip = df_ep.groupby("idEquip")["pts"].mean().to_dict()
+
+    rows = []
+    for jug, dj in df_all.groupby(col_j):
+        if not jug or str(jug) in ("", "nan"): continue
+        eq_id = str(dj["idEquip"].iloc[0])
+        match_ids_jug = dj["match_id"].unique().tolist()
+        punts_jug = int(dj["punts"].sum())
+        tc_jug = int(dj["accio"].str.contains(TC_INT_PAT, case=False, na=False).sum())
+        tl_jug = int(dj["accio"].str.contains(TL_INT_PAT, case=False, na=False).sum())
+        poss_jug = tc_jug + 0.44 * tl_jug
+
+        marginal_off = punts_jug - 0.92 * pts_per_poss_lliga * poss_jug
+        pts_partit_eq = pts_per_partit_equip.get(eq_id) or max(punts_jug, 1)
+        pts_per_win = 0.32 * pts_partit_eq
+        ows = max(0.0, marginal_off / pts_per_win) if pts_per_win > 0 else 0.0
+        dws = ows * 0.3  # proxy simple: no tenim Def Rating individual
+        ws = ows + dws
+
+        minuts_jug = sum(minuts_per_jugmatch.get((jug, mid), 0.0) for mid in match_ids_jug)
+        ws_per40 = (ws / minuts_jug * 40) if minuts_jug > 0 else 0.0
+
+        equip_nom = team_name_per_match.get(match_ids_jug[0], {}).get(eq_id, "?")
+
+        rows.append({
+            "jugador": jug, "idEquip": eq_id, "equip": equip_nom,
+            "partits": len(match_ids_jug), "minuts": round(minuts_jug, 1),
+            "punts": punts_jug, "OWS": round(ows, 2), "DWS": round(dws, 2),
+            "WS": round(ws, 2), "ws_per40": round(ws_per40, 2),
+        })
+
+    df_ws = pd.DataFrame(rows)
+    if df_ws.empty:
+        return df_ws
+
+    # Distribució de punts i Usage% (per l'Arquetip), reutilitzant exactament el
+    # mateix criteri i les mateixes dades que la resta de l'app (usage_rate ja es
+    # calcula "on-court" partit a partit a save_stats_jugador/calc_usage_rate).
+    df_sj = load_stats_jugador_db()
+    if not df_sj.empty:
+        col_j_sj = "jugador" if "jugador" in df_sj.columns else "jugadora"
+        agg_sj = df_sj.groupby(col_j_sj).agg(
+            c2=("cistelles_2", "sum"), c3=("cistelles_3", "sum"), tl=("tirs_lliures", "sum"),
+            usage=("usage_rate", "mean") if "usage_rate" in df_sj.columns else ("punts", "mean"),
+        ).reset_index().rename(columns={col_j_sj: "jugador"})
+        agg_sj["pts_tot"] = (agg_sj["c2"] * 2 + agg_sj["c3"] * 3 + agg_sj["tl"]).replace(0, 1)
+        agg_sj["p2_pct"] = (agg_sj["c2"] * 2 / agg_sj["pts_tot"] * 100).round(1)
+        agg_sj["p3_pct"] = (agg_sj["c3"] * 3 / agg_sj["pts_tot"] * 100).round(1)
+        agg_sj["ptl_pct"] = (agg_sj["tl"] / agg_sj["pts_tot"] * 100).round(1)
+        # calc_usage_rate() ja retorna un percentatge (p.ex. 24.4 = 24.4%), no cal tornar a multiplicar per 100
+        agg_sj["usage_pct"] = agg_sj["usage"].round(1) if "usage_rate" in df_sj.columns else 0
+        df_ws = df_ws.merge(agg_sj[["jugador", "p2_pct", "p3_pct", "ptl_pct", "usage_pct"]], on="jugador", how="left").fillna(0)
+    else:
+        df_ws["p2_pct"] = 0; df_ws["p3_pct"] = 0; df_ws["ptl_pct"] = 0; df_ws["usage_pct"] = 0
+
+    df_ws["min_p"] = (df_ws["minuts"] / df_ws["partits"].replace(0, 1)).round(1)
+    df_ws["Arquetip"] = df_ws.apply(
+        lambda r: classifica_arquetip_global(r["usage_pct"], r["p2_pct"], r["p3_pct"], r["ptl_pct"], r["min_p"]),
+        axis=1)
+    return df_ws
+
 def genera_excel_analisi():
     """Genera Excel amb mètriques avançades de tots els partits de la BD."""
     from openpyxl import Workbook
@@ -2674,15 +2784,15 @@ def genera_excel_temporada():
     # ── Pestanya 2: Jugadores ─────────────────────────────────────────────
     ws2=wb.create_sheet("👤 Jugadores")
     ws2.sheet_view.showGridLines=False; ws2.column_dimensions['A'].width=2
-    ws2.merge_cells('B1:N1')
+    ws2.merge_cells('B1:Q1')
     c=ws2['B1']; c.value='🏀  MICKI ANALÍTICA — RÀNQUING DE JUGADORES'
     c.font=Font(name='Arial',bold=True,color=BLANC,size=15)
     c.fill=fons(BLAU_FOSC); c.alignment=Alignment(horizontal='center',vertical='center')
     ws2.row_dimensions[1].height=38; ws2.row_dimensions[2].height=8
     row=3
-    for ci,cap,w in zip(range(2,15),
-        ['#','Jugadora','Equip','Part.','Pts','Pts/P','Min','Min/P','C2','C3','TL','Faltes','Impacte'],
-        [5,24,20,8,9,9,9,9,7,7,7,9,12]):
+    for ci,cap,w in zip(range(2,18),
+        ['#','Jugadora','Equip','Part.','Pts','Pts/P','Min','Min/P','C2','C3','TL','Faltes','Impacte','OWS','WS','WS/40min'],
+        [5,24,20,8,9,9,9,9,7,7,7,9,12,8,8,10]):
         fc(ws2,row,ci,cap,bold=True,bg=BLAU_MIG,fg=BLANC,align='center',size=10)
         ws2.column_dimensions[get_column_letter(ci)].width=w
     ws2.row_dimensions[row].height=22; row+=1
@@ -2694,12 +2804,15 @@ def genera_excel_temporada():
             c2=('cistelles_2','sum'),c3=('cistelles_3','sum'),
             tl=('tirs_lliures','sum'),f=('faltes','sum'),imp=('impacte','sum')
         ).reset_index().sort_values('pts',ascending=False)
+        df_ws_xl = calc_win_shares_temporada()
+        ws_map = {r['jugador']: r for _,r in df_ws_xl.iterrows()} if not df_ws_xl.empty else {}
         for rank,(_,r) in enumerate(agg.iterrows(),1):
             bg=BLAU_MOLT if rank%2==0 else BLANC
             ppp=round(r['pts']/r['p'],1) if r['p']>0 else 0
             mpp=round(r['mn']/r['p'],1) if r['p']>0 else 0
             iv=f"+{int(r['imp'])}" if r['imp']>=0 else str(int(r['imp']))
             ic=VERD if r['imp']>=0 else VERMELL
+            wsr=ws_map.get(r['jugador'],{})
             fc(ws2,row,2,rank,align='center',bg=bg,bold=True,fg=BLAU_FOSC)
             fc(ws2,row,3,r['jugador'],bold=True,bg=bg,fg=BLAU_FOSC)
             fc(ws2,row,4,r['equip_nom'],bg=bg)
@@ -2713,6 +2826,9 @@ def genera_excel_temporada():
             fc(ws2,row,12,int(r['tl']),align='center',bg=bg)
             fc(ws2,row,13,int(r['f']),align='center',bg=bg)
             fc(ws2,row,14,iv,align='center',bold=True,bg=bg,fg=ic)
+            fc(ws2,row,15,wsr.get('OWS',0),align='center',bg=bg)
+            fc(ws2,row,16,wsr.get('WS',0),align='center',bold=True,bg=bg,fg=BLAU_FOSC)
+            fc(ws2,row,17,wsr.get('ws_per40',0),align='center',bg=bg)
             ws2.row_dimensions[row].height=18; row+=1
 
     # ── Pestanya 3: Evolució ──────────────────────────────────────────────
@@ -3437,6 +3553,39 @@ with t9:
             st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
             if st.button("🗑 Eliminar",key="btn_del"):
                 delete_partit_db(del_id); st.success("Eliminat."); st.rerun()
+
+        # Win Shares de temporada
+        equips_ws = sorted(set(df_hist["nom_a"]) | set(df_hist["nom_b"]))
+        if len(df_hist) >= 3 and len(equips_ws) >= 2:
+            st.markdown(sec("🏆 Win Shares de temporada"), unsafe_allow_html=True)
+            if len(df_hist) < 5:
+                st.warning("⚠️ Referència de lliga provisional: com més partits carreguis (de qualsevol equip), més fiable serà la mètrica.")
+            equip_ws_sel = st.selectbox("Equip", equips_ws, key="equip_ws_sel")
+            df_ws_all = calc_win_shares_temporada()
+            if df_ws_all.empty:
+                st.info("No hi ha prou dades de play-by-play per calcular Win Shares.")
+            else:
+                df_ws_eq = df_ws_all[df_ws_all["equip"] == equip_ws_sel].sort_values("WS", ascending=False)
+                partits_eq = df_hist[(df_hist["nom_a"] == equip_ws_sel) | (df_hist["nom_b"] == equip_ws_sel)]
+                victories_eq = int(sum(
+                    1 for _, r in partits_eq.iterrows()
+                    if (r["nom_a"] == equip_ws_sel and r["score_a"] > r["score_b"])
+                    or (r["nom_b"] == equip_ws_sel and r["score_b"] > r["score_a"])))
+                col_ws1, col_ws2 = st.columns(2)
+                with col_ws1:
+                    st.markdown(card("WS total equip", round(df_ws_eq["WS"].sum(), 1),
+                                      "suma de totes les jugadores"), unsafe_allow_html=True)
+                with col_ws2:
+                    st.markdown(card("Victòries reals", victories_eq, f"de {len(partits_eq)} partits",
+                                      color=C_SUCCESS), unsafe_allow_html=True)
+
+                df_ws_show = df_ws_eq[["jugador", "partits", "minuts", "punts", "OWS", "WS", "ws_per40", "Arquetip"]].rename(
+                    columns={"jugador": "Jugadora", "partits": "Partits", "minuts": "Min totals",
+                             "punts": "Pts totals", "ws_per40": "WS/40min"})
+                st.dataframe(df_ws_show, use_container_width=True, hide_index=True)
+                st.caption("Win Shares ofensius aproximats. La component defensiva és una estimació "
+                           "(no disposem de Def Rating individual). La referència de lliga s'actualitza "
+                           "amb cada nou partit carregat.")
 
         # Botó per descarregar Excel de temporada
         st.markdown(sec("Exporta la temporada a Excel"), unsafe_allow_html=True)
