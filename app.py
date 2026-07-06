@@ -2995,8 +2995,9 @@ def genera_excel_temporada():
     buf=io.BytesIO(); wb.save(buf); buf.seek(0)
     return buf.getvalue()
 
-t1,t2,t3,t4,t5,t6,t7,t8,t9 = st.tabs([
-    "🏀 Partit","👤 Jugadores","⏱ Ritme","⚡ Eficiència","🔄 Rotacions","📈 Hist. Jugadores","🎯 Mapa de Tir","🎬 Vídeo","📚 Històric"
+t1,t2,t3,t4,t_onoff,t5,t6,t_arq,t7,t8,t9 = st.tabs([
+    "🏀 Partit","👤 Jugadores","⏱ Ritme","⚡ Eficiència","⚖️ On/Off","🔄 Rotacions",
+    "📈 Hist. Jugadores","🎭 Arquetips","🎯 Mapa de Tir","🎬 Vídeo","📚 Històric"
 ])
 
 # ══════════════════════════════════════════════════
@@ -3890,6 +3891,23 @@ with t4:
             fig_rot.update_yaxes(title="+/- per minut")
             st.plotly_chart(chart_style(fig_rot, 260, f"{eq_nom_rot} — ROT {rot_val}/10 (ρ={rho_rot:+.3f})"), use_container_width=True)
 
+    # ── Exporta Excel ───────────────────────────────────────────────────────
+    st.markdown(sec("Exporta a Excel"), unsafe_allow_html=True)
+    st.caption("Excel amb totes les mètriques avançades de tots els partits de la base de dades.")
+    if st.button("⬇ Descarregar Excel d'anàlisi complet", key="btn_excel_analisi"):
+        excel_data = genera_excel_analisi()
+        if excel_data:
+            st.download_button(
+                label="📥 Clic per descarregar",
+                data=excel_data,
+                file_name=f"miki_analisi_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_excel_analisi"
+            )
+        else:
+            st.info("No hi ha partits a la base de dades.")
+
+with t_onoff:
     st.markdown(sec("⚡ Eficiència i On/Off Rating per jugadora"), unsafe_allow_html=True)
     st.caption(
         "On/Off Net Rating = diferència de Net Rating (pts/100 poss) quan la jugadora és a pista vs quan no hi és. "
@@ -4180,22 +4198,6 @@ with t4:
                 st.plotly_chart(
                     chart_style(fig_to, 420, "TS% vs Δ Net Rtg — Talent vs Optimization ofensiu"),
                     use_container_width=True)
-
-    # ── Exporta Excel ───────────────────────────────────────────────────────
-    st.markdown(sec("Exporta a Excel"), unsafe_allow_html=True)
-    st.caption("Excel amb totes les mètriques avançades de tots els partits de la base de dades.")
-    if st.button("⬇ Descarregar Excel d'anàlisi complet", key="btn_excel_analisi"):
-        excel_data = genera_excel_analisi()
-        if excel_data:
-            st.download_button(
-                label="📥 Clic per descarregar",
-                data=excel_data,
-                file_name=f"miki_analisi_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="dl_excel_analisi"
-            )
-        else:
-            st.info("No hi ha partits a la base de dades.")
 
 with t5:
     # ══════════════════════════════════════════════════
@@ -5297,9 +5299,67 @@ with t6:
                 html_p40 += '</table></div>'
                 st.markdown(html_p40, unsafe_allow_html=True)
 
-    # ══════════════════════════════════════════════════════════════════
-    # ARQUETIPS DE JUGADORA I ANÀLISI D'ECOSISTEMA
-    # ══════════════════════════════════════════════════════════════════
+    # ── Històric temps morts ────────────────────────────────────────────────
+    st.markdown(sec("⏸ Efectivitat dels temps morts — temporada"), unsafe_allow_html=True)
+    df_to_hist = load_timeouts_db()
+    if df_to_hist.empty:
+        st.info("Consulta més partits per veure l'evolució dels temps morts.")
+    else:
+        df_pr_to = load_partits_db()
+        def lp_to(mid):
+            r = df_pr_to[df_pr_to["match_id"]==mid]
+            if r.empty: return mid[:8]+"..."
+            return f"{r.iloc[0]['nom_a']} vs {r.iloc[0]['nom_b']} ({r.iloc[0]['data_consulta'][:10]})"
+        df_to_hist["Partit"] = df_to_hist["match_id"].apply(lp_to)
+
+        equips_to = sorted(df_to_hist["equip_nom"].unique().tolist())
+        eq_to = st.selectbox("Equip", equips_to, key="eq_to_hist")
+
+        df_eq_to = df_to_hist[df_to_hist["equip_nom"]==eq_to]
+
+        # Evolució efectivitat per partit
+        evo = df_eq_to.groupby("Partit").agg(
+            Total=("va_anotar","count"),
+            Anotats=("va_anotar","sum"),
+            Seg_mit=("segons_resposta","mean")
+        ).reset_index()
+        evo["Efectivitat %"] = (evo["Anotats"]/evo["Total"]*100).round(0)
+
+        fig_to_evo = go.Figure()
+        fig_to_evo.add_trace(go.Scatter(
+            x=evo["Partit"], y=evo["Efectivitat %"],
+            mode="lines+markers", name="Efectivitat %",
+            line=dict(color=COLOR_A, width=2.5), marker=dict(size=8)))
+        fig_to_evo.add_hline(y=50, line_dash="dot", line_color="#e2e4e8",
+            annotation_text="50%", annotation_font_color="#9ca3af", annotation_font_size=10)
+        fig_to_evo.update_layout(yaxis=dict(range=[0,100], ticksuffix="%"))
+        fig_to_evo.update_xaxes(tickangle=-30)
+        st.plotly_chart(chart_style(fig_to_evo, 260, f"{eq_to} — efectivitat temps morts per partit"), use_container_width=True)
+
+        # Qui anota més després dels temps morts
+        df_anotades = df_eq_to[df_eq_to["va_anotar"]==1]
+        if not df_anotades.empty:
+            top_jug = df_anotades.groupby("jugadora").size().reset_index(name="Cistelles post-TM")
+            top_jug = top_jug.sort_values("Cistelles post-TM", ascending=False).head(8)
+            fig_jug_to = px.bar(top_jug, x="jugadora", y="Cistelles post-TM",
+                color_discrete_sequence=[COLOR_A], text="Cistelles post-TM",
+                labels={"jugadora":"Jugadora"})
+            fig_jug_to.update_traces(textposition="outside")
+            st.plotly_chart(chart_style(fig_jug_to, 240,
+                f"{eq_to} — qui anota després dels temps morts"), use_container_width=True)
+
+        # Temps mitjà de resposta per partit
+        fig_seg = go.Figure()
+        fig_seg.add_trace(go.Scatter(
+            x=evo["Partit"], y=evo["Seg_mit"],
+            mode="lines+markers", name="Seg. fins cistella",
+            line=dict(color="#d97706", width=2.5), marker=dict(size=8)))
+        fig_seg.update_xaxes(tickangle=-30)
+        fig_seg.update_yaxes(title="Segons")
+        st.plotly_chart(chart_style(fig_seg, 220,
+            f"{eq_to} — temps mitjà fins anotar després del temps mort"), use_container_width=True)
+
+with t_arq:
     st.markdown(sec("🎭 Arquetips de jugadora"), unsafe_allow_html=True)
     st.caption("Classificació simplificada de l'estil de cada jugadora a partir del seu Usage% i distribució de punts (2pts/3pts/TL), acumulat de tota la temporada.")
 
@@ -5637,66 +5697,6 @@ with t6:
                     st.info("No hi ha prou minuts compartits amb altres jugadores per fer l'anàlisi.")
             else:
                 st.info("No hi ha dades suficients de parelles per a aquesta jugadora.")
-
-    # ── Històric temps morts ────────────────────────────────────────────────
-    st.markdown(sec("⏸ Efectivitat dels temps morts — temporada"), unsafe_allow_html=True)
-    df_to_hist = load_timeouts_db()
-    if df_to_hist.empty:
-        st.info("Consulta més partits per veure l'evolució dels temps morts.")
-    else:
-        df_pr_to = load_partits_db()
-        def lp_to(mid):
-            r = df_pr_to[df_pr_to["match_id"]==mid]
-            if r.empty: return mid[:8]+"..."
-            return f"{r.iloc[0]['nom_a']} vs {r.iloc[0]['nom_b']} ({r.iloc[0]['data_consulta'][:10]})"
-        df_to_hist["Partit"] = df_to_hist["match_id"].apply(lp_to)
-
-        equips_to = sorted(df_to_hist["equip_nom"].unique().tolist())
-        eq_to = st.selectbox("Equip", equips_to, key="eq_to_hist")
-
-        df_eq_to = df_to_hist[df_to_hist["equip_nom"]==eq_to]
-
-        # Evolució efectivitat per partit
-        evo = df_eq_to.groupby("Partit").agg(
-            Total=("va_anotar","count"),
-            Anotats=("va_anotar","sum"),
-            Seg_mit=("segons_resposta","mean")
-        ).reset_index()
-        evo["Efectivitat %"] = (evo["Anotats"]/evo["Total"]*100).round(0)
-
-        fig_to_evo = go.Figure()
-        fig_to_evo.add_trace(go.Scatter(
-            x=evo["Partit"], y=evo["Efectivitat %"],
-            mode="lines+markers", name="Efectivitat %",
-            line=dict(color=COLOR_A, width=2.5), marker=dict(size=8)))
-        fig_to_evo.add_hline(y=50, line_dash="dot", line_color="#e2e4e8",
-            annotation_text="50%", annotation_font_color="#9ca3af", annotation_font_size=10)
-        fig_to_evo.update_layout(yaxis=dict(range=[0,100], ticksuffix="%"))
-        fig_to_evo.update_xaxes(tickangle=-30)
-        st.plotly_chart(chart_style(fig_to_evo, 260, f"{eq_to} — efectivitat temps morts per partit"), use_container_width=True)
-
-        # Qui anota més després dels temps morts
-        df_anotades = df_eq_to[df_eq_to["va_anotar"]==1]
-        if not df_anotades.empty:
-            top_jug = df_anotades.groupby("jugadora").size().reset_index(name="Cistelles post-TM")
-            top_jug = top_jug.sort_values("Cistelles post-TM", ascending=False).head(8)
-            fig_jug_to = px.bar(top_jug, x="jugadora", y="Cistelles post-TM",
-                color_discrete_sequence=[COLOR_A], text="Cistelles post-TM",
-                labels={"jugadora":"Jugadora"})
-            fig_jug_to.update_traces(textposition="outside")
-            st.plotly_chart(chart_style(fig_jug_to, 240,
-                f"{eq_to} — qui anota després dels temps morts"), use_container_width=True)
-
-        # Temps mitjà de resposta per partit
-        fig_seg = go.Figure()
-        fig_seg.add_trace(go.Scatter(
-            x=evo["Partit"], y=evo["Seg_mit"],
-            mode="lines+markers", name="Seg. fins cistella",
-            line=dict(color="#d97706", width=2.5), marker=dict(size=8)))
-        fig_seg.update_xaxes(tickangle=-30)
-        fig_seg.update_yaxes(title="Segons")
-        st.plotly_chart(chart_style(fig_seg, 220,
-            f"{eq_to} — temps mitjà fins anotar després del temps mort"), use_container_width=True)
 
 # ══════════════════════════════════════════════════
 # TAB 6: MAPA DE TIR
