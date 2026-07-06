@@ -1735,6 +1735,7 @@ def genera_excel_analisi():
 
     # Dades de tots els partits
     all_rows = []
+    quart_rows_all = []
     for _,p in df_p.iterrows():
         df_jug = load_jugades_db(p['match_id'])
         if df_jug.empty: continue
@@ -1742,6 +1743,30 @@ def genera_excel_analisi():
         tn_p = {}
         if len(teams_p)>=1: tn_p[teams_p[0]]=p['nom_a']
         if len(teams_p)>=2: tn_p[teams_p[1]]=p['nom_b']
+
+        # Rendiment per quart (per a la pestanya "🕐 Rendiment per Quart")
+        if len(teams_p) >= 2:
+            tid_a_q, tid_b_q = teams_p[0], teams_p[1]
+            for q_val in sorted(df_jug["quart"].unique()):
+                df_q_x = df_jug[df_jug["quart"] == q_val]
+                qd = {}
+                for side, tid_x in [("a", tid_a_q), ("b", tid_b_q)]:
+                    df_eq_q_x = df_q_x[df_q_x["idEquip"].astype(str) == str(tid_x)]
+                    tc_x = int(df_eq_q_x["accio"].str.contains(TC_INT_PAT, case=False, na=False).sum())
+                    tl_x = int(df_eq_q_x["accio"].str.contains(TL_INT_PAT, case=False, na=False).sum())
+                    poss_x = tc_x + 0.44 * tl_x
+                    pts_x = int(df_eq_q_x["punts"].sum())
+                    ts_denom_x = 2 * poss_x
+                    qd[f"poss_{side}"] = round(poss_x, 1)
+                    qd[f"pts_{side}"] = pts_x
+                    qd[f"ts_{side}"] = round(pts_x / ts_denom_x * 100, 1) if ts_denom_x > 0 else 0.0
+                    qd[f"off_rtg_{side}"] = round(pts_x / poss_x * 100, 1) if poss_x > 0 else 0.0
+                if qd["pts_a"] > qd["pts_b"]: guanya_q = p["nom_a"]
+                elif qd["pts_b"] > qd["pts_a"]: guanya_q = p["nom_b"]
+                else: guanya_q = "Empat"
+                quart_rows_all.append({
+                    "MatchID": p["match_id"], "Quart": f"Q{int(q_val)}", **qd, "Guanya": guanya_q,
+                })
 
         for i,tid in enumerate(teams_p[:2]):
             rival_id = teams_p[1-i] if len(teams_p)>1 else None
@@ -1791,6 +1816,45 @@ def genera_excel_analisi():
         c2.fill=fons(GROC); c2.alignment=Alignment(horizontal='center',vertical='center')
         c2.border=vora(); c2.number_format='0.0' if ci<=17 else '0.0'
     ws1.row_dimensions[row].height=22
+
+    # ── PESTANYA 1B: RENDIMENT PER QUART ──────────────────────────────
+    ws1b = wb.create_sheet("🕐 Rendiment per Quart")
+    ws1b.sheet_view.showGridLines = False
+    ws1b.column_dimensions['A'].width = 2
+    ws1b.merge_cells('B1:K1')
+    c = ws1b['B1']; c.value = '🏀  MICKI ANALÍTICA — RENDIMENT PER QUART'
+    c.font = Font(name='Arial', bold=True, color=BLANC, size=14)
+    c.fill = fons(BLAU_FOSC); c.alignment = Alignment(horizontal='center', vertical='center')
+    ws1b.row_dimensions[1].height = 36
+    ws1b.row_dimensions[2].height = 8
+    row1b = 3
+    for ci, cap, w in zip(range(2, 12),
+        ['Quart', 'Poss A', 'TS% A', 'Off Rtg A', 'Pts A', 'Pts B', 'Off Rtg B', 'TS% B', 'Poss B', 'Guanya'],
+        [8, 9, 8, 9, 8, 8, 9, 8, 9, 20]):
+        fc(ws1b, row1b, ci, cap, bold=True, bg=BLAU_MIG, fg=BLANC, size=9)
+        ws1b.column_dimensions[get_column_letter(ci)].width = w
+    ws1b.row_dimensions[row1b].height = 20; row1b += 1
+
+    for _, p in df_p.iterrows():
+        rows_this_match = [r for r in quart_rows_all if r["MatchID"] == p["match_id"]]
+        if not rows_this_match: continue
+        ws1b.merge_cells(f'B{row1b}:K{row1b}')
+        c = ws1b[f'B{row1b}']
+        c.value = f"  {p['nom_a']} vs {p['nom_b']}  ·  {str(p['data_consulta'])[:10]}"
+        c.font = Font(name='Arial', bold=True, color=BLANC, size=10)
+        c.fill = fons(BLAU_MIG); c.alignment = Alignment(horizontal='left', vertical='center')
+        ws1b.row_dimensions[row1b].height = 20; row1b += 1
+        for r in rows_this_match:
+            if r["Guanya"] == p["nom_a"]: bg_q = 'EBF4FC'
+            elif r["Guanya"] == p["nom_b"]: bg_q = 'FEF2F2'
+            else: bg_q = 'F9FAFB'
+            vals_xl = [r["Quart"], r["poss_a"], r["ts_a"], r["off_rtg_a"], r["pts_a"],
+                       r["pts_b"], r["off_rtg_b"], r["ts_b"], r["poss_b"], r["Guanya"]]
+            for ci, val in enumerate(vals_xl, 2):
+                fc(ws1b, row1b, ci, val, bg=bg_q,
+                   bold=(ci in (6, 7)), align='left' if ci == 11 else 'center', size=9)
+            ws1b.row_dimensions[row1b].height = 17; row1b += 1
+        row1b += 1
 
     # ── PESTANYA 2: JUGADORES ─────────────────────────────────────────
     ws2 = wb.create_sheet("👤 Jugadores")
@@ -3488,6 +3552,104 @@ with t3:
             fig_to.update_traces(texttemplate="%{text}%", textposition="outside")
             st.plotly_chart(chart_style(fig_to, 220, "Efectivitat dels temps morts per equip"), use_container_width=True)
 
+    # ── Rendiment per quart ──────────────────────────────────────────────
+    st.markdown(sec("📊 Rendiment per quart"), unsafe_allow_html=True)
+    st.caption(
+        "Off Rtg = pts/100 poss · TS% = pts/(2×(TC_int+0.44×TL_int))×100 · "
+        "Ritme = poss/min (quarts de 10 min)"
+    )
+    quarts_data = []
+    for q in sorted(df_orig["quart"].unique()):
+        df_q = df_orig[df_orig["quart"] == q]
+        for tid, nom_eq, color_eq in [(teams[0] if teams else None, nom_a, COLOR_A),
+                                       (teams[1] if len(teams) > 1 else None, nom_b, COLOR_B)]:
+            if tid is None: continue
+            df_eq_q = df_q[df_q["idEquip"].astype(str) == str(tid)]
+            tc_q = int(df_eq_q["accio"].str.contains(TC_INT_PAT, case=False, na=False).sum())
+            tl_q = int(df_eq_q["accio"].str.contains(TL_INT_PAT, case=False, na=False).sum())
+            poss_q = tc_q + 0.44 * tl_q
+            pts_q = int(df_eq_q["punts"].sum())
+            ts_denom = 2 * poss_q
+            ts_q = round(pts_q / ts_denom * 100, 1) if ts_denom > 0 else 0.0
+            off_rtg_q = round(pts_q / poss_q * 100, 1) if poss_q > 0 else 0.0
+            ritme_q = round(poss_q / 10, 2)
+            quarts_data.append({
+                "quart": int(q), "equip": nom_eq, "color": color_eq,
+                "poss": round(poss_q, 1), "pts": pts_q,
+                "ts": ts_q, "off_rtg": off_rtg_q, "ritme": ritme_q,
+            })
+
+    if not quarts_data:
+        st.info("No hi ha dades de quarts per aquest partit.")
+    else:
+        df_qd = pd.DataFrame(quarts_data)
+        quarts_uniq = sorted(df_qd["quart"].unique())
+
+        # Taula comparativa (HTML)
+        caps_q = ["Quart", f"Poss {nom_a}", f"Ritme {nom_a}", f"TS% {nom_a}", f"Off Rtg {nom_a}",
+                  f"Pts {nom_a}", f"Pts {nom_b}", f"Off Rtg {nom_b}", f"TS% {nom_b}",
+                  f"Ritme {nom_b}", f"Poss {nom_b}"]
+        html_q = ('<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;'
+                  f'font-size:12px;color:{C_TEXT}">')
+        html_q += '<tr>' + ''.join(
+            f'<th style="background:{C_BG_SOFT};color:{C_ACCENT_DARK};padding:6px 10px;'
+            f'text-align:center;border:1px solid {C_BORDER};font-weight:600">{c}</th>' for c in caps_q) + '</tr>'
+        for i_q, q_val in enumerate(quarts_uniq):
+            ra_df = df_qd[(df_qd["quart"] == q_val) & (df_qd["equip"] == nom_a)]
+            rb_df = df_qd[(df_qd["quart"] == q_val) & (df_qd["equip"] == nom_b)]
+            if ra_df.empty or rb_df.empty: continue
+            ra, rb = ra_df.iloc[0], rb_df.iloc[0]
+            bg_row = C_WHITE if i_q % 2 == 0 else C_BG
+            if ra["pts"] > rb["pts"]:
+                bg_a, bg_b = "#D5F5E3", bg_row
+            elif rb["pts"] > ra["pts"]:
+                bg_a, bg_b = bg_row, "#D5F5E3"
+            else:
+                bg_a = bg_b = "#FFF3CD"
+            vals_q = [f"Q{q_val}", ra["poss"], ra["ritme"], ra["ts"], ra["off_rtg"],
+                      ra["pts"], rb["pts"], rb["off_rtg"], rb["ts"], rb["ritme"], rb["poss"]]
+            bgs_q = [bg_row, bg_row, bg_row, bg_row, bg_row, bg_a, bg_b, bg_row, bg_row, bg_row, bg_row]
+            html_q += '<tr>'
+            for ci_q, (val_q, bgc_q) in enumerate(zip(vals_q, bgs_q)):
+                align_q = 'left' if ci_q == 0 else 'center'
+                bold_q = 'font-weight:600;' if ci_q in (5, 6) else ''
+                html_q += (f'<td style="padding:5px 10px;border:1px solid {C_BORDER};background:{bgc_q};'
+                           f'color:{C_TEXT};text-align:{align_q};{bold_q}">{val_q}</td>')
+            html_q += '</tr>'
+        html_q += '</table></div>'
+        st.markdown(html_q, unsafe_allow_html=True)
+
+        # Gràfic 1 — Possessions per quart
+        fig_qp = go.Figure()
+        for nom_eq, color_eq in [(nom_a, COLOR_A), (nom_b, COLOR_B)]:
+            d_eq = df_qd[df_qd["equip"] == nom_eq]
+            fig_qp.add_trace(go.Bar(x=[f"Q{q}" for q in d_eq["quart"]], y=d_eq["poss"],
+                name=nom_eq, marker_color=color_eq, text=d_eq["poss"], textposition="outside"))
+        fig_qp.update_layout(barmode="group")
+        st.plotly_chart(chart_style(fig_qp, 260, "Possessions per quart"), use_container_width=True)
+
+        # Gràfic 2 — Off Rating per quart
+        fig_qo = go.Figure()
+        for nom_eq, color_eq in [(nom_a, COLOR_A), (nom_b, COLOR_B)]:
+            d_eq = df_qd[df_qd["equip"] == nom_eq]
+            fig_qo.add_trace(go.Bar(x=[f"Q{q}" for q in d_eq["quart"]], y=d_eq["off_rtg"],
+                name=nom_eq, marker_color=color_eq, text=d_eq["off_rtg"], textposition="outside"))
+        fig_qo.add_hline(y=100, line_dash="dot", line_color=C_LABEL,
+            annotation_text="Ref. 100", annotation_font_size=9)
+        fig_qo.update_layout(barmode="group")
+        st.plotly_chart(chart_style(fig_qo, 260, "Off Rating per quart"), use_container_width=True)
+
+        # Gràfic 3 — TS% per quart
+        fig_qt = go.Figure()
+        for nom_eq, color_eq in [(nom_a, COLOR_A), (nom_b, COLOR_B)]:
+            d_eq = df_qd[df_qd["equip"] == nom_eq]
+            fig_qt.add_trace(go.Bar(x=[f"Q{q}" for q in d_eq["quart"]], y=d_eq["ts"],
+                name=nom_eq, marker_color=color_eq, text=d_eq["ts"], textposition="outside"))
+        fig_qt.add_hline(y=50, line_dash="dot", line_color=C_LABEL,
+            annotation_text="Ref. 50%", annotation_font_size=9)
+        fig_qt.update_layout(barmode="group")
+        st.plotly_chart(chart_style(fig_qt, 260, "True Shooting % per quart"), use_container_width=True)
+
     st.markdown(sec("Momentum shifts"), unsafe_allow_html=True)
     st.caption("Runs de 5+ punts consecutius sense resposta del rival.")
     THRESHOLD=5; shift_rows=[]
@@ -3932,6 +4094,92 @@ with t4:
                         st.markdown(html_ts, unsafe_allow_html=True)
                 else:
                     st.info("No hi ha prou dades per calcular el TS% On/Off.")
+
+            # ── TS% vs Δ Net Rtg (Talent vs Optimization) ────────────────────
+            st.markdown(sec("🧭 TS% vs Δ Net Rtg — Talent vs Optimization"), unsafe_allow_html=True)
+            st.caption(
+                "TS% (eix X) = eficiència de tir individual (\"Talent\") · "
+                "Δ Net Rtg ON−OFF (eix Y) = com millora el Net Rating de l'equip quan ella és a pista "
+                "(\"Optimization\") · Mida del punt = tirs de camp intentats."
+            )
+            rows_to = []
+            for jug_to in jugs_oo2:
+                df_jug_to = df_onoff2.copy()
+                df_jug_to["jugador"] = df_jug_to[col_jug2]
+                dj_to = df_jug_to[df_jug_to["jugador"] == jug_to]
+                tc_conv_to = int(dj_to["accio"].str.contains(
+                    "Cistella de 2|Cistella de 3", case=False, na=False).sum())
+                tc_int_to = tc_conv_to + int(dj_to["accio"].str.contains(
+                    "Intent fallat de 2|Intent fallat de 3|fallat de 2|fallat de 3", case=False, na=False).sum())
+                tl_conv_to = int(dj_to["accio"].str.contains("Cistella de 1", case=False, na=False).sum())
+                tl_int_to = tl_conv_to + int(dj_to["accio"].str.contains(
+                    "Intent fallat de 1", case=False, na=False).sum())
+                pts_to = int(dj_to["punts"].sum())
+                ts_denom_to = 2 * (tc_int_to + 0.44 * tl_int_to)
+                if ts_denom_to == 0:
+                    continue
+                oo_to = calc_onoff(df_jug_to, jug_to, tid_oo2, teams_oo2)
+                if not oo_to or oo_to.get("diff") is None or oo_to.get("off_poss", 0) < 4:
+                    continue
+                rows_to.append({
+                    "Jugadora": jug_to,
+                    "TS%": round(pts_to / ts_denom_to * 100, 1),
+                    "delta_net_rtg": oo_to["diff"],
+                    "_n_tirs": max(tc_int_to, 1),
+                })
+            df_talent_opt = pd.DataFrame(rows_to)
+
+            if df_talent_opt.empty:
+                st.info(
+                    "Cal que les jugadores hagin jugat amb i sense l'equip (mínim 4 possessions OFF) per "
+                    "calcular el Δ Net Rtg. Carrega partits amb rotacions per activar aquest gràfic."
+                )
+            else:
+                fig_to = go.Figure()
+                color_to = COLOR_A if tid_oo2 == teams_oo2[0] else COLOR_B
+                sizes_to = df_talent_opt["_n_tirs"].clip(lower=1)
+                sizes_norm_to = (sizes_to / sizes_to.max() * 18 + 8).round(0)
+                fig_to.add_trace(go.Scatter(
+                    x=df_talent_opt["TS%"], y=df_talent_opt["delta_net_rtg"],
+                    mode="markers+text", name=eq_oo2,
+                    marker=dict(size=sizes_norm_to, color=color_to,
+                                line=dict(width=1.5, color=C_WHITE), opacity=0.85),
+                    text=df_talent_opt["Jugadora"].apply(lambda n: n.split()[-1] if n.split() else n),
+                    textposition="top center", textfont=dict(size=9),
+                    hovertemplate="<b>%{text}</b><br>TS%: %{x:.1f}%<br>Δ Net Rtg: %{y:+.1f}<extra></extra>",
+                ))
+
+                mitj_ts_to = df_talent_opt["TS%"].mean()
+                mitj_net_to = df_talent_opt["delta_net_rtg"].mean()
+                fig_to.add_vline(x=mitj_ts_to, line_dash="dot", line_color=C_CARD_BORDER,
+                    annotation_text=f"Mitjana TS% {mitj_ts_to:.0f}%",
+                    annotation_font_size=9, annotation_font_color=C_LABEL)
+                fig_to.add_hline(y=mitj_net_to, line_dash="dot", line_color=C_CARD_BORDER,
+                    annotation_text=f"Mitjana Δ Net Rtg {mitj_net_to:+.0f}",
+                    annotation_font_size=9, annotation_font_color=C_LABEL)
+                fig_to.add_vline(x=50, line_dash="dash", line_color=C_CARD_BORDER,
+                    annotation_text="TS% 50%", annotation_font_size=8, annotation_font_color=C_CARD_BORDER)
+                fig_to.add_hline(y=0, line_dash="solid", line_color=C_CARD_BORDER)
+
+                x_max_to = df_talent_opt["TS%"].max()
+                x_min_to = df_talent_opt["TS%"].min()
+                y_max_to = df_talent_opt["delta_net_rtg"].max()
+                y_min_to = df_talent_opt["delta_net_rtg"].min()
+                for txt, xq, yq, cq in [
+                    ("⭐ Gran talent i impacte", x_max_to * 0.97, y_max_to * 0.90, C_SUCCESS),
+                    ("🛡️ Impacte sense anotació", x_min_to * 1.05, y_max_to * 0.90, C_ACCENT),
+                    ("🎯 Anota però no eleva", x_max_to * 0.97, y_min_to * 0.90, C_WARNING),
+                    ("🔄 Poc impacte global", x_min_to * 1.05, y_min_to * 0.90, C_LABEL),
+                ]:
+                    fig_to.add_annotation(x=xq, y=yq, text=txt, showarrow=False,
+                        font=dict(size=9, color=cq), xanchor="center", yanchor="middle", opacity=0.5)
+
+                fig_to.update_xaxes(title="TS% — Eficiència de tir (Talent)")
+                fig_to.update_yaxes(title="Δ Net Rtg ON−OFF (Optimization)")
+
+                st.plotly_chart(
+                    chart_style(fig_to, 420, "TS% vs Δ Net Rtg — Talent vs Optimization ofensiu"),
+                    use_container_width=True)
 
     # ── Exporta Excel ───────────────────────────────────────────────────────
     st.markdown(sec("Exporta a Excel"), unsafe_allow_html=True)
@@ -4948,6 +5196,106 @@ with t6:
             st.plotly_chart(fig_rad,use_container_width=True)
         elif len(jugs_comp)==1:
             st.info("Selecciona almenys 2 jugadores.")
+
+    # ══════════════════════════════════════════════════════════════════
+    # USAGE% VS PTS/40MIN — VOLUM I PRODUCTIVITAT OFENSIVA
+    # ══════════════════════════════════════════════════════════════════
+    st.markdown(sec("📊 Usage% vs Pts/40min"), unsafe_allow_html=True)
+    st.caption("Volum ofensiu (Usage%) vs productivitat anotadora normalitzada a 40 minuts, acumulat de tota la "
+               "temporada. Usage% alt + Pts/40min alt identifica les jugadores d'elit ofensiu.")
+
+    df_sj_p40 = load_stats_jugador_db()
+    if df_sj_p40.empty:
+        st.info("Carrega almenys un partit per activar aquest gràfic.")
+    else:
+        col_j_p40 = "jugador" if "jugador" in df_sj_p40.columns else "jugadora"
+        equips_p40 = sorted(df_sj_p40["equip_nom"].unique().tolist())
+        eq_p40_sel = st.selectbox("Equip", equips_p40, key="eq_p40_sel")
+
+        rows_p40 = []
+        for jug, grp in df_sj_p40[df_sj_p40["equip_nom"] == eq_p40_sel].groupby(col_j_p40):
+            min_tot = grp["minuts"].sum() if "minuts" in grp.columns else 0
+            if min_tot < 5:
+                continue
+            pts_tot = grp["punts"].sum()
+            usage = grp["usage_rate"].mean() if "usage_rate" in grp.columns else 0
+            rows_p40.append({
+                "Jugadora": jug, "Partits": grp["match_id"].nunique(),
+                "Min tot": round(min_tot, 1), "Pts tot": int(pts_tot),
+                "Usage%": round(usage, 1),
+                "Pts/40min": round(pts_tot / min_tot * 40, 1),
+            })
+        df_p40 = pd.DataFrame(rows_p40)
+
+        if df_p40.empty:
+            st.info("Cap jugadora amb almenys 5 minuts totals per a aquest equip.")
+        else:
+            fig_p40 = go.Figure()
+            sizes_p40 = df_p40["Min tot"].clip(lower=1)
+            sizes_norm = (sizes_p40 / sizes_p40.max() * 22 + 10).round(0)
+            fig_p40.add_trace(go.Scatter(
+                x=df_p40["Usage%"], y=df_p40["Pts/40min"],
+                mode="markers+text", name=eq_p40_sel,
+                marker=dict(size=sizes_norm, color=COLOR_A,
+                            line=dict(width=1.5, color=C_WHITE), opacity=0.88),
+                text=df_p40["Jugadora"].apply(lambda n: n.split()[-1] if n.split() else n),
+                textposition="top center", textfont=dict(size=9, color=C_TEXT),
+                hovertemplate=(
+                    "<b>%{text}</b><br>Usage%: %{x:.1f}%<br>Pts/40min: %{y:.1f}<br>"
+                    "Min totals: %{customdata[0]:.0f} | Partits: %{customdata[1]}<extra></extra>"),
+                customdata=df_p40[["Min tot", "Partits"]].values,
+            ))
+
+            mitj_usage_p40 = df_p40["Usage%"].mean()
+            mitj_pts40 = df_p40["Pts/40min"].mean()
+            fig_p40.add_vline(x=mitj_usage_p40, line_dash="dot", line_color=C_CARD_BORDER,
+                annotation_text=f"Mitjana Usage {mitj_usage_p40:.0f}%",
+                annotation_font_size=9, annotation_font_color=C_LABEL, annotation_position="top right")
+            fig_p40.add_hline(y=mitj_pts40, line_dash="dot", line_color=C_CARD_BORDER,
+                annotation_text=f"Mitjana {mitj_pts40:.1f} pts/40",
+                annotation_font_size=9, annotation_font_color=C_LABEL)
+
+            x_max_p40 = df_p40["Usage%"].max() * 1.05
+            x_min_p40 = df_p40["Usage%"].min() * 0.95
+            y_max_p40 = df_p40["Pts/40min"].max() * 1.05
+            y_min_p40 = df_p40["Pts/40min"].min() * 0.95
+            for txt, xq, yq, cq in [
+                ("⭐ Molt volum · molt productiva", x_max_p40*0.92, y_max_p40*0.94, C_SUCCESS),
+                ("⚠️ Molt volum · poc productiva",  x_max_p40*0.92, y_min_p40*1.08, C_ERROR),
+                ("💡 Poc volum · molt productiva",  x_min_p40*1.08, y_max_p40*0.94, C_ACCENT),
+                ("🔄 Rol secundari",                x_min_p40*1.08, y_min_p40*1.08, C_LABEL),
+            ]:
+                fig_p40.add_annotation(x=xq, y=yq, text=txt, showarrow=False,
+                    font=dict(size=9, color=cq), xanchor="center", yanchor="middle", opacity=0.45)
+
+            fig_p40.update_xaxes(title="Usage% (% de possessions usades per la jugadora)")
+            fig_p40.update_yaxes(title="Pts/40min (punts normalitzats a 40 minuts)")
+
+            st.caption("Pts/40min = punts totals / minuts totals × 40 · Mida del punt = minuts totals jugats · "
+                       "Quadrant ideal: dalt a la dreta (molt volum + màxima producció)")
+            st.plotly_chart(
+                chart_style(fig_p40, 430, "Usage% vs Pts/40min — Volum i productivitat ofensiva"),
+                use_container_width=True)
+
+            with st.expander("📋 Veure dades de temporada"):
+                df_p40_show = df_p40[["Jugadora","Partits","Min tot","Pts tot","Usage%","Pts/40min"]].sort_values(
+                    "Pts/40min", ascending=False)
+                html_p40 = ('<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;'
+                            f'font-size:12px;color:{C_TEXT}">')
+                html_p40 += '<tr>' + ''.join(
+                    f'<th style="background:{C_BG_SOFT};color:{C_ACCENT_DARK};padding:6px 10px;'
+                    f'text-align:center;border:1px solid {C_BORDER};font-weight:600">{c}</th>'
+                    for c in df_p40_show.columns) + '</tr>'
+                for i_p40, (_, row_p40) in enumerate(df_p40_show.iterrows()):
+                    bg_p40 = C_WHITE if i_p40 % 2 == 0 else C_BG
+                    html_p40 += '<tr>'
+                    for ci_p40, col_p40 in enumerate(df_p40_show.columns):
+                        align_p40 = 'left' if ci_p40 == 0 else 'center'
+                        html_p40 += (f'<td style="padding:5px 10px;border:1px solid {C_BORDER};background:{bg_p40};'
+                                     f'color:{C_TEXT};text-align:{align_p40}">{row_p40[col_p40]}</td>')
+                    html_p40 += '</tr>'
+                html_p40 += '</table></div>'
+                st.markdown(html_p40, unsafe_allow_html=True)
 
     # ══════════════════════════════════════════════════════════════════
     # ARQUETIPS DE JUGADORA I ANÀLISI D'ECOSISTEMA
