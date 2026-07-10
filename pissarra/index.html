@@ -375,7 +375,7 @@
     ctx.fillStyle = getWoodGradient(w,h);
     ctx.fillRect(0,0,w,h);
     drawWoodGrain(w,h);
-    ctx.strokeStyle = '#f4ede1'; ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(35,26,16,0.55)'; ctx.lineWidth = 2.5;
     ctx.strokeRect(6,6,w-12,h-12);
     const cx = w/2, baseline = 6, hoopY = baseline + 40;
     const keyW = 160, keyH = 190;
@@ -390,7 +390,7 @@
     ctx.beginPath();
     ctx.moveTo(cx-r3, baseline);
     ctx.lineTo(cx-r3, baseline+140);
-    ctx.arc(cx, hoopY, r3-2, Math.PI, 0, false);
+    ctx.arc(cx, hoopY, r3-2, Math.PI, 0, true);
     ctx.lineTo(cx+r3, baseline);
     ctx.stroke();
     ctx.beginPath(); ctx.moveTo(6,h-6); ctx.lineTo(w-6,h-6); ctx.stroke();
@@ -402,7 +402,7 @@
     ctx.fillStyle = getWoodGradient(w,h);
     ctx.fillRect(0,0,w,h);
     drawWoodGrain(w,h);
-    ctx.strokeStyle = '#f4ede1'; ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(35,26,16,0.55)'; ctx.lineWidth = 2.5;
     ctx.strokeRect(6,6,w-12,h-12);
     const cy = h/2;
     ctx.beginPath(); ctx.moveTo(w/2,6); ctx.lineTo(w/2,h-6); ctx.stroke();
@@ -418,7 +418,7 @@
       ctx.beginPath();
       ctx.moveTo(x0, cy-r3);
       ctx.lineTo(x0+side*140, cy-r3);
-      ctx.arc(hoopX, cy, r3-2, side>0?-Math.PI/2:Math.PI/2, side>0?Math.PI/2:Math.PI*1.5, side<0);
+      ctx.arc(hoopX, cy, r3-2, -Math.PI/2, Math.PI/2, side<0);
       ctx.lineTo(x0, cy+r3);
       ctx.stroke();
     });
@@ -426,12 +426,12 @@
 
   function getWoodGradient(w,h){
     const g = ctx.createLinearGradient(0,0,w,h);
-    g.addColorStop(0,'#c9954f'); g.addColorStop(1,'#b87c3d');
+    g.addColorStop(0,'#ecd4a3'); g.addColorStop(1,'#e0c184');
     return g;
   }
   function drawWoodGrain(w,h){
     ctx.save();
-    ctx.strokeStyle='rgba(58,36,20,0.10)'; ctx.lineWidth=1;
+    ctx.strokeStyle='rgba(120,84,40,0.12)'; ctx.lineWidth=1;
     for(let i=0;i<h;i+=9){
       ctx.beginPath(); ctx.moveTo(0,i+((i/9)%2)*3); ctx.lineTo(w,i);
       ctx.stroke();
@@ -446,7 +446,7 @@
       ctx.fillStyle = p.team==='O' ? '#e6197a' : '#3a4a63';
       ctx.fill();
       ctx.lineWidth = (p.id===selectedPlayerId) ? 3 : 1.5;
-      ctx.strokeStyle = (p.id===selectedPlayerId) ? '#e8a33d' : '#f4ede1';
+      ctx.strokeStyle = (p.id===selectedPlayerId) ? '#e8a33d' : '#1c2430';
       ctx.stroke();
       ctx.fillStyle = '#fff';
       ctx.font = '700 14px Inter, sans-serif';
