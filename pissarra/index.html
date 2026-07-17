@@ -997,17 +997,26 @@
     commitCurrentFrame();
     return { courtType, frames: clone(frames) };
   }
+  // Firestore no permet arrays niats (array dins d'array), i 'frames' en conté
+  // (punts [x,y] dins de fletxes/recorreguts). Es guarda com a JSON serialitzat.
+  function getFramesFromDoc(d){
+    if(d && d.framesJson){
+      try{ return JSON.parse(d.framesJson); }catch(e){ return []; }
+    }
+    return (d && d.frames) || [];
+  }
   function applyPlay(s){
     courtType = s.courtType || 'half';
     const [w,h] = sizes[courtType]; canvas.width=w; canvas.height=h;
     document.getElementById('btnHalf').classList.toggle('active', courtType==='half');
     document.getElementById('btnFull').classList.toggle('active', courtType==='full');
-    frames = clone(s.frames && s.frames.length ? s.frames : [emptyFrame()]);
+    const parsedFrames = getFramesFromDoc(s);
+    frames = clone(parsedFrames.length ? parsedFrames : [emptyFrame()]);
     loadFrame(0);
   }
   function nameKeyedPlays(){
     const out = {};
-    Object.values(playsCache).forEach(d=>{ out[d.name] = { courtType:d.courtType, frames:d.frames }; });
+    Object.values(playsCache).forEach(d=>{ out[d.name] = { courtType:d.courtType, frames:getFramesFromDoc(d) }; });
     return out;
   }
 
@@ -1031,7 +1040,7 @@
     list.innerHTML = '';
     document.getElementById('emptyNote').style.display = entries.length ? 'none' : 'block';
     entries.forEach(([id, data])=>{
-      const nFrames = (data.frames||[]).length;
+      const nFrames = getFramesFromDoc(data).length;
       const div = document.createElement('div');
       div.className = 'play-item' + (id===currentPlayId ? ' current' : '');
       div.innerHTML = '<span class="name">'+data.name+'</span><span class="meta">'+nFrames+' acc.</span>'
@@ -1059,7 +1068,11 @@
   document.getElementById('btnSave').onclick = async ()=>{
     const name = document.getElementById('playName').value.trim();
     if(!name){ alert('Posa un nom a la jugada abans de desar-la.'); return; }
-    const data = Object.assign({name}, snapshotPlay(), {updatedAt: firebase.firestore.FieldValue.serverTimestamp()});
+    const snap = snapshotPlay();
+    const data = {
+      name, courtType: snap.courtType, framesJson: JSON.stringify(snap.frames),
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    };
     try{
       const existing = Object.entries(playsCache).find(([id,d])=> d.name===name);
       if(existing){
@@ -1097,7 +1110,10 @@
         const incoming = JSON.parse(reader.result);
         const entries = Object.entries(incoming);
         for(const [name, playData] of entries){
-          const data = Object.assign({name}, {courtType:playData.courtType, frames:playData.frames}, {updatedAt: firebase.firestore.FieldValue.serverTimestamp()});
+          const data = {
+            name, courtType: playData.courtType, framesJson: JSON.stringify(playData.frames || []),
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+          };
           const existing = Object.entries(playsCache).find(([id,d])=> d.name===name);
           if(existing) await playsCol.doc(existing[0]).set(data);
           else await playsCol.add(data);
