@@ -2454,18 +2454,18 @@ def genera_excel_analisi():
     # ── PESTANYA 5c: NET RATING ON/OFF PER 40 MIN ───────────────────────────
     ws5c = wb.create_sheet("Net On-Off 40min")
     ws5c.sheet_view.showGridLines=False; ws5c.column_dimensions['A'].width=2
-    ws5c.merge_cells('B1:O1')
+    ws5c.merge_cells('B1:P1')
     c=ws5c['B1']; c.value='🏀  MICKI ANALÍTICA — NET RATING ON/OFF PER 40 MIN'
     c.font=Font(name='Arial',bold=True,color=BLANC,size=14)
     c.fill=fons(BLAU_FOSC); c.alignment=Alignment(horizontal='center',vertical='center')
     ws5c.row_dimensions[1].height=36
-    ws5c.merge_cells('B2:O2')
+    ws5c.merge_cells('B2:P2')
     c=ws5c['B2']; c.value=f"Generat: {datetime.now().strftime('%d/%m/%Y %H:%M')}  ·  {len(df_p)} partits  ·  Normalitzat per 40 min (sense dades de rebots) · Min 2 min On i Off"
     c.font=Font(name='Arial',color=BLANC,size=10); c.fill=fons(BLAU_MIG)
     c.alignment=Alignment(horizontal='center',vertical='center')
     ws5c.row_dimensions[2].height=18; ws5c.row_dimensions[3].height=6
 
-    for ci,w in zip(range(2,16),[24,18,9,9,9,9,9,9,9,9,9,9,10,10]):
+    for ci,w in zip(range(2,17),[24,18,9,9,9,9,9,9,9,9,9,9,10,10,11]):
         ws5c.column_dimensions[get_column_letter(ci)].width=w
 
     row5c=4
@@ -2477,11 +2477,11 @@ def genera_excel_analisi():
     c=ws5c[f'I{row5c}']; c.value='OFF (jugadora fora)'
     c.font=Font(name='Arial',bold=True,color=BLANC,size=9)
     c.fill=fons('993C1D'); c.alignment=Alignment(horizontal='center',vertical='center'); c.border=vora()
-    for ci,cap in zip(range(2,16),[
+    for ci,cap in zip(range(2,17),[
         'Jugadora','Equip','Partits','Min On','Min Off',
         'ORtg On','DRtg On','Net On',
         'ORtg Off','DRtg Off','Net Off',
-        'Δ Net Diff','Fiabilitat','Interpretació'
+        'Δ Net Diff','Fiabilitat','Interpretació','Impacte Def.'
     ]):
         fc(ws5c,row5c+1,ci,cap,bold=True,bg=BLAU_MIG,fg=BLANC,size=9)
         ws5c.row_dimensions[row5c+1].height=18
@@ -2523,6 +2523,7 @@ def genera_excel_analisi():
         diff_m40   = mitj_val_n40('diff')
         n_part_n40 = len(n40_list)
         fiable_n40 = (min_on_m or 0)>=2 and (min_off_m or 0)>=2
+        def_impact_m = round(drtg_off_m - drtg_on_m, 1) if (drtg_off_m is not None and drtg_on_m is not None) else None
 
         if diff_m40 is None: continue
         n40_rows.append({
@@ -2530,7 +2531,7 @@ def genera_excel_analisi():
             'min_on': min_on_m, 'min_off': min_off_m,
             'ortg_on': ortg_on_m, 'drtg_on': drtg_on_m, 'net_on': net_on_m,
             'ortg_off': ortg_off_m, 'drtg_off': drtg_off_m, 'net_off': net_off_m,
-            'diff': diff_m40, 'fiable': fiable_n40
+            'diff': diff_m40, 'fiable': fiable_n40, 'def_impact': def_impact_m
         })
 
     n40_rows.sort(key=lambda x: x['diff'] if x['diff'] else 0, reverse=True)
@@ -2564,6 +2565,10 @@ def genera_excel_analisi():
         fc(ws5c,row5c,13,f"{'+'if diff_v>=0 else ''}{diff_v}",bold=True,bg=diff_bg,fg=diff_fg)
         fc(ws5c,row5c,14,fiab_txt,bg=fiab_bg,size=9)
         fc(ws5c,row5c,15,interp,bg=bg,align='left',size=9,fg='555555')
+        def_v = r['def_impact']
+        def_bg = 'D5F5E3' if (def_v or 0)>0 else ('FADBD8' if (def_v or 0)<0 else GROC)
+        def_fg = '0F6E56' if (def_v or 0)>0 else ('993C1D' if (def_v or 0)<0 else '854F0B')
+        fc(ws5c,row5c,16,f"{'+'if (def_v or 0)>=0 else ''}{def_v}" if def_v is not None else '—',bold=True,bg=def_bg,fg=def_fg)
         ws5c.row_dimensions[row5c].height=17; row5c+=1
 
     # ── Noms equips per match_id (per pestanyes 6 i 7) ─────────────────────
@@ -4362,6 +4367,7 @@ with t_onoff:
             )
             if tid_oo2:
                 net40_rows2 = []
+                def_rows2 = []
                 for jug2 in jugs_oo2:
                     df_jug_n40_2 = df_onoff2.copy()
                     df_jug_n40_2["jugador"] = df_jug_n40_2[col_jug2]
@@ -4385,6 +4391,14 @@ with t_onoff:
                             "Net Diff": label_diff_n40,
                             "_diff": n40_2["diff"],
                             "_fiable": fiable_n40_2
+                        })
+                        # Impacte defensiu = quants punts/40min MENYS encaixem quan ella juga
+                        def_impact = round(n40_2["drtg_off"] - n40_2["drtg_on"], 1)
+                        def_rows2.append({
+                            "Jugadora": jug2,
+                            "Min ON": n40_2["minuts_on"], "DRtg ON": n40_2["drtg_on"],
+                            "Min OFF": min_off_2, "DRtg OFF": n40_2["drtg_off"],
+                            "Impacte Defensiu": def_impact, "_fiable": fiable_n40_2
                         })
                 if net40_rows2:
                     df_n40_2 = pd.DataFrame(net40_rows2).sort_values("_diff", ascending=False)
@@ -4427,6 +4441,55 @@ with t_onoff:
                         st.markdown(html_n40, unsafe_allow_html=True)
                 else:
                     st.info("No hi ha prou dades per calcular el Net Rating On/Off per 40 min.")
+
+                # ── Impacte defensiu (punts rivals encaixats per 40 min) ──────────
+                st.markdown(sec("🛡️ Impacte defensiu per jugadora"), unsafe_allow_html=True)
+                st.caption(
+                    "Punts del rival per 40 min quan la jugadora és a pista (DRtg ON) vs quan no hi és "
+                    "(DRtg OFF). Impacte Defensiu = DRtg OFF − DRtg ON: positiu vol dir que el rival "
+                    "anota MENYS quan ella juga (bona defensa d'equip amb ella a pista). "
+                    "⚠️ = pocs minuts OFF, valor poc fiable."
+                )
+                if def_rows2:
+                    df_def2 = pd.DataFrame(def_rows2).sort_values("Impacte Defensiu", ascending=False)
+                    colors_def2 = []
+                    for _, row_def in df_def2.iterrows():
+                        if not row_def.get("_fiable", True):
+                            colors_def2.append("#d97706")
+                        elif row_def["Impacte Defensiu"] >= 0:
+                            colors_def2.append("#16a34a")
+                        else:
+                            colors_def2.append("#dc2626")
+                    fig_def2 = go.Figure()
+                    fig_def2.add_trace(go.Bar(
+                        x=df_def2["Jugadora"], y=df_def2["Impacte Defensiu"],
+                        marker_color=colors_def2,
+                        text=[f"{'+'if d>=0 else ''}{d}" for d in df_def2["Impacte Defensiu"]],
+                        textposition="outside"))
+                    fig_def2.add_hline(y=0, line_dash="solid", line_color="#e2e4e8")
+                    fig_def2.update_layout(
+                        yaxis_title="Impacte Defensiu (pts/40min rival, OFF − ON)",
+                        paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+                        font=dict(color="#374151", family="Inter"),
+                        margin=dict(l=0,r=0,t=30,b=0), height=280)
+                    st.plotly_chart(fig_def2, use_container_width=True)
+                    with st.expander("Veure detall complet Impacte Defensiu"):
+                        df_show_def = df_def2.drop(columns=["_fiable"], errors="ignore")
+                        cols_def = list(df_show_def.columns)
+                        html_def = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;color:#1a2744">'
+                        html_def += '<tr>' + ''.join(f'<th style="background:#D6E8F7;color:#0C447C;padding:6px 10px;text-align:center;border:1px solid #B5D4F4;font-weight:600">{c}</th>' for c in cols_def) + '</tr>'
+                        for _, row_def in df_show_def.iterrows():
+                            html_def += '<tr>'
+                            for ci_def, col_def in enumerate(cols_def):
+                                val_def = row_def[col_def]
+                                bg_def = '#ffffff' if ci_def > 0 else '#EBF4FC'
+                                align_def = 'left' if ci_def == 0 else 'center'
+                                html_def += f'<td style="padding:5px 10px;border:1px solid #B5D4F4;background:{bg_def};color:#1a2744;text-align:{align_def}">{val_def}</td>'
+                            html_def += '</tr>'
+                        html_def += '</table></div>'
+                        st.markdown(html_def, unsafe_allow_html=True)
+                else:
+                    st.info("No hi ha prou dades per calcular l'impacte defensiu.")
 
             # ── TS% vs Δ Net Rtg (Talent vs Optimization) ────────────────────
             st.markdown(sec("🧭 TS% vs Δ Net Rtg — Talent vs Optimization"), unsafe_allow_html=True)
