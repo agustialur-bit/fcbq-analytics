@@ -45,26 +45,6 @@
     gap:0;min-height:0;
   }
   .mobile-toggle-bar{display:none;}
-  @media (max-width:980px){
-    html, body{height:auto;}
-    .layout{grid-template-columns:1fr;flex:none;overflow:visible;}
-    .side{order:1;overflow:visible;}
-    .stage{order:2;overflow:visible;height:auto;}
-    .plays{order:3;overflow:visible;}
-    .mobile-toggle-bar{
-      display:flex; gap:8px; padding:10px 14px;
-      background:var(--panel); border-bottom:1px solid var(--line);
-    }
-    .mobile-toggle-bar button{
-      flex:1; background:var(--panel-2); border:1px solid var(--line); color:var(--text);
-      border-radius:8px; padding:10px; font-weight:700; font-size:13px; cursor:pointer;
-    }
-    .mobile-toggle-bar button.active{background:var(--amber); color:#241704; border-color:var(--amber);}
-    .side, .plays{ display:none; }
-    .side.open, .plays.open{ display:flex; }
-    .stage{ padding:10px; }
-    .court-frame{ padding:8px; }
-  }
 
   .side{
     background:var(--panel);
@@ -161,6 +141,28 @@
   .modal-overlay.open{display:flex;}
   .modal-box{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;width:280px;max-width:88vw;}
   .modal-box input{width:100%;margin:10px 0 14px;}
+
+  @media (max-width:980px){
+    html, body{height:auto;}
+    .layout{grid-template-columns:1fr;flex:none;overflow:visible;}
+    .side{order:1;overflow:visible;}
+    .stage{order:2;overflow:visible;height:auto;}
+    .plays{order:3;overflow:visible;}
+    .mobile-toggle-bar{
+      display:flex; gap:8px; padding:10px 14px;
+      background:var(--panel); border-bottom:1px solid var(--line);
+    }
+    .mobile-toggle-bar button{
+      flex:1; background:var(--panel-2); border:1px solid var(--line); color:var(--text);
+      border-radius:8px; padding:10px; font-weight:700; font-size:13px; cursor:pointer;
+    }
+    .mobile-toggle-bar button.active{background:var(--amber); color:#241704; border-color:var(--amber);}
+    .side, .plays{ display:none; }
+    .side.open, .plays.open{ display:flex; }
+    .stage{ padding:10px; }
+    .court-frame{ padding:8px; }
+    canvas{ max-height:30vh; width:auto; }
+  }
 </style>
 </head>
 <body>
