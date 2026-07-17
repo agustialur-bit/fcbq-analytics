@@ -1455,6 +1455,84 @@ def calc_onoff_ts(df_orig, jugadora, equip_id, teams):
         "pts_on": pts_on, "pts_off": pts_off,
     }
 
+def calc_onoff_net40(df_orig, jugadora, equip_id, teams):
+    """Calcula el Net Rating On/Off d'una jugadora normalitzat per 40 minuts
+    (en comptes de per 100 possessions: no tenim rebots ofensius per aplicar
+    la fórmula clàssica de possessions per jugadora)."""
+    rival_id = next((t for t in teams if t != equip_id), None)
+    if rival_id is None: return None
+
+    MINS_Q = 10
+    MIN_MIN = 2.0  # mínim de minuts On/Off per considerar el valor fiable
+
+    col_j = "jugador" if "jugador" in df_orig.columns else "jugadora"
+
+    intervals_on = []; en_pista = {}
+    df_jug_rows = df_orig[df_orig[col_j]==jugadora]
+    if df_jug_rows.empty: return None
+
+    primer = df_jug_rows.sort_values("num").iloc[0]
+    if "Surt" in str(primer.get("accio","")) and "camp" in str(primer.get("accio","")):
+        en_pista[jugadora] = (int(primer.get("quart",1))-1)*MINS_Q
+
+    for _,row in df_orig.sort_values("num").iterrows():
+        if str(row.get(col_j,"")) != str(jugadora): continue
+        acc = str(row.get("accio","")); q = int(row.get("quart",1))
+        m = float(row.get("min_num",0))
+        t = (q-1)*MINS_Q + (MINS_Q-m if m<=MINS_Q else m)
+        t = max(0, min(t, q*MINS_Q))
+        if "Entra" in acc and "camp" in acc:
+            en_pista[jugadora] = t
+        elif "Surt" in acc and "camp" in acc:
+            ti = en_pista.pop(jugadora, (q-1)*MINS_Q)
+            if t > ti: intervals_on.append((float(ti), float(t)))
+        elif "Final de període" in acc:
+            if jugadora in en_pista:
+                ti = en_pista.pop(jugadora)
+                fi = float(q*MINS_Q)
+                if fi > ti: intervals_on.append((float(ti), fi))
+    for ti_o in en_pista.values():
+        fi_o = float(df_orig["quart"].max()*MINS_Q)
+        if fi_o > ti_o: intervals_on.append((float(ti_o), fi_o))
+
+    if not intervals_on: return None
+
+    df_t = df_orig.copy()
+    df_t["t_abs"] = df_t.apply(
+        lambda r: (int(r["quart"])-1)*10+(10-float(r["min_num"]))
+        if float(r.get("min_num",0))<=10 else float(r.get("min_num",0)), axis=1)
+
+    mask_on = df_t["t_abs"].apply(lambda t: any(ti<=t<=tf for ti,tf in intervals_on))
+
+    df_on_eq  = df_t[mask_on  & (df_t["idEquip"]==equip_id)]
+    df_on_riv = df_t[mask_on  & (df_t["idEquip"]==rival_id)]
+    df_off_eq = df_t[~mask_on & (df_t["idEquip"]==equip_id)]
+    df_off_riv= df_t[~mask_on & (df_t["idEquip"]==rival_id)]
+
+    minuts_on  = round(sum(tf-ti for ti,tf in intervals_on), 1)
+    total_min  = float(df_orig["quart"].max()*MINS_Q)
+    minuts_off = round(max(0.0, total_min - minuts_on), 1)
+
+    def rtg40(df_e, df_r, minuts):
+        if minuts < MIN_MIN: return None, None, None
+        pts   = int(df_e["punts"].sum())
+        pts_r = int(df_r["punts"].sum())
+        off  = round(pts/minuts*40, 1)
+        deff = round(pts_r/minuts*40, 1)
+        return off, deff, round(off-deff, 1)
+
+    on_ortg, on_drtg, on_net = rtg40(df_on_eq, df_on_riv, minuts_on)
+    off_ortg, off_drtg, off_net = rtg40(df_off_eq, df_off_riv, minuts_off)
+
+    diff = round(on_net - off_net, 1) if (on_net is not None and off_net is not None) else None
+
+    return {
+        "minuts_on": minuts_on, "minuts_off": minuts_off,
+        "ortg_on": on_ortg, "drtg_on": on_drtg, "net_on": on_net,
+        "ortg_off": off_ortg, "drtg_off": off_drtg, "net_off": off_net,
+        "diff": diff,
+    }
+
 def calc_metriques_partit(df_jug, match_id, nom_equip, nom_rival):
     """Calcula totes les mètriques avançades d'un equip en un partit."""
     pts_tot = int(df_jug["punts"].sum())
@@ -2326,6 +2404,121 @@ def genera_excel_analisi():
         fc(ws5b,row5b,10,r['ts_off'] if r['ts_off'] is not None else '—',bg='FDE8E8',fg='993C1D',bold=True)
         fc(ws5b,row5b,11,f"{'+'if diff_v>=0 else ''}{diff_v}",bold=True,bg=diff_bg,fg=diff_fg)
         ws5b.row_dimensions[row5b].height=17; row5b+=1
+
+    # ── PESTANYA 5c: NET RATING ON/OFF PER 40 MIN ───────────────────────────
+    ws5c = wb.create_sheet("Net On-Off 40min")
+    ws5c.sheet_view.showGridLines=False; ws5c.column_dimensions['A'].width=2
+    ws5c.merge_cells('B1:O1')
+    c=ws5c['B1']; c.value='🏀  MICKI ANALÍTICA — NET RATING ON/OFF PER 40 MIN'
+    c.font=Font(name='Arial',bold=True,color=BLANC,size=14)
+    c.fill=fons(BLAU_FOSC); c.alignment=Alignment(horizontal='center',vertical='center')
+    ws5c.row_dimensions[1].height=36
+    ws5c.merge_cells('B2:O2')
+    c=ws5c['B2']; c.value=f"Generat: {datetime.now().strftime('%d/%m/%Y %H:%M')}  ·  {len(df_p)} partits  ·  Normalitzat per 40 min (sense dades de rebots) · Min 2 min On i Off"
+    c.font=Font(name='Arial',color=BLANC,size=10); c.fill=fons(BLAU_MIG)
+    c.alignment=Alignment(horizontal='center',vertical='center')
+    ws5c.row_dimensions[2].height=18; ws5c.row_dimensions[3].height=6
+
+    for ci,w in zip(range(2,16),[24,18,9,9,9,9,9,9,9,9,9,9,10,10]):
+        ws5c.column_dimensions[get_column_letter(ci)].width=w
+
+    row5c=4
+    ws5c.merge_cells(f'F{row5c}:H{row5c}')
+    c=ws5c[f'F{row5c}']; c.value='ON (jugadora a pista)'
+    c.font=Font(name='Arial',bold=True,color=BLANC,size=9)
+    c.fill=fons('0F6E56'); c.alignment=Alignment(horizontal='center',vertical='center'); c.border=vora()
+    ws5c.merge_cells(f'I{row5c}:K{row5c}')
+    c=ws5c[f'I{row5c}']; c.value='OFF (jugadora fora)'
+    c.font=Font(name='Arial',bold=True,color=BLANC,size=9)
+    c.fill=fons('993C1D'); c.alignment=Alignment(horizontal='center',vertical='center'); c.border=vora()
+    for ci,cap in zip(range(2,16),[
+        'Jugadora','Equip','Partits','Min On','Min Off',
+        'ORtg On','DRtg On','Net On',
+        'ORtg Off','DRtg Off','Net Off',
+        'Δ Net Diff','Fiabilitat','Interpretació'
+    ]):
+        fc(ws5c,row5c+1,ci,cap,bold=True,bg=BLAU_MIG,fg=BLANC,size=9)
+        ws5c.row_dimensions[row5c+1].height=18
+    row5c+=2
+
+    # Calcula Net Rating On/Off per 40 min per cada jugadora acumulat de tots els partits
+    all_jugs_net40 = {}
+    for _,p_n40 in df_p.iterrows():
+        mid_n40 = p_n40['match_id']
+        df_n40 = load_jugades_db(mid_n40)
+        if df_n40.empty: continue
+        teams_n40 = get_teams_ordered(df_n40)
+        col_j_n40 = "jugador" if "jugador" in df_n40.columns else "jugadora"
+        df_n40["jugador"] = df_n40[col_j_n40].fillna("")
+        for jug_n40 in df_n40["jugador"].unique():
+            if not jug_n40 or str(jug_n40) in ("","nan"): continue
+            eq_n40 = df_n40[df_n40["jugador"]==jug_n40]["idEquip"].iloc[0]
+            n40_res = calc_onoff_net40(df_n40, jug_n40, eq_n40, teams_n40)
+            if n40_res is None: continue
+            key_n40 = (str(eq_n40), jug_n40)
+            if key_n40 not in all_jugs_net40:
+                all_jugs_net40[key_n40] = []
+            all_jugs_net40[key_n40].append(n40_res)
+
+    n40_rows = []
+    for (eq_k_n40, jug_k_n40), n40_list in all_jugs_net40.items():
+        def mitj_val_n40(key):
+            vals = [o[key] for o in n40_list if o.get(key) is not None]
+            return round(sum(vals)/len(vals),1) if vals else None
+
+        min_on_m   = mitj_val_n40('minuts_on')
+        min_off_m  = mitj_val_n40('minuts_off')
+        ortg_on_m  = mitj_val_n40('ortg_on')
+        drtg_on_m  = mitj_val_n40('drtg_on')
+        net_on_m   = mitj_val_n40('net_on')
+        ortg_off_m = mitj_val_n40('ortg_off')
+        drtg_off_m = mitj_val_n40('drtg_off')
+        net_off_m  = mitj_val_n40('net_off')
+        diff_m40   = mitj_val_n40('diff')
+        n_part_n40 = len(n40_list)
+        fiable_n40 = (min_on_m or 0)>=2 and (min_off_m or 0)>=2
+
+        if diff_m40 is None: continue
+        n40_rows.append({
+            'jug': jug_k_n40, 'eq': eq_k_n40, 'n': n_part_n40,
+            'min_on': min_on_m, 'min_off': min_off_m,
+            'ortg_on': ortg_on_m, 'drtg_on': drtg_on_m, 'net_on': net_on_m,
+            'ortg_off': ortg_off_m, 'drtg_off': drtg_off_m, 'net_off': net_off_m,
+            'diff': diff_m40, 'fiable': fiable_n40
+        })
+
+    n40_rows.sort(key=lambda x: x['diff'] if x['diff'] else 0, reverse=True)
+
+    for i,r in enumerate(n40_rows):
+        bg = BLAU_CLAR if i%2==0 else BLANC
+        diff_v = r['diff'] or 0
+        diff_bg = 'D5F5E3' if diff_v>2 else ('FADBD8' if diff_v<-2 else GROC)
+        diff_fg = '0F6E56' if diff_v>2 else ('993C1D' if diff_v<-2 else '854F0B')
+        fiab_txt = '✅ Fiable' if r['fiable'] else '⚠️ Pocs minuts'
+        fiab_bg = BLANC if r['fiable'] else 'FFF3CD'
+
+        if diff_v > 5: interp = 'Jugadora molt impactant'
+        elif diff_v > 2: interp = 'Impacte positiu'
+        elif diff_v > -2: interp = 'Impacte neutre'
+        elif diff_v > -5: interp = 'Impacte negatiu'
+        else: interp = 'Rendiment baix en pista'
+
+        eq_nom_n40 = eq_noms_oo.get(r['eq'], r['eq'][:8])
+        fc(ws5c,row5c,2,r['jug'],bold=True,fg=BLAU_FOSC,bg=bg,align='left')
+        fc(ws5c,row5c,3,eq_nom_n40,bg=bg,align='left',size=9)
+        fc(ws5c,row5c,4,r['n'],bg=bg)
+        fc(ws5c,row5c,5,r['min_on'] if r['min_on'] is not None else '—',bg=bg)
+        fc(ws5c,row5c,6,r['min_off'] if r['min_off'] is not None else '—',bg=bg)
+        fc(ws5c,row5c,7,r['ortg_on'] if r['ortg_on'] is not None else '—',bg='E8F5E9',fg='0F6E56',bold=True)
+        fc(ws5c,row5c,8,r['drtg_on'] if r['drtg_on'] is not None else '—',bg='E8F5E9')
+        fc(ws5c,row5c,9,r['net_on'] if r['net_on'] is not None else '—',bg='E8F5E9',bold=True)
+        fc(ws5c,row5c,10,r['ortg_off'] if r['ortg_off'] is not None else '—',bg='FDE8E8',fg='993C1D',bold=True)
+        fc(ws5c,row5c,11,r['drtg_off'] if r['drtg_off'] is not None else '—',bg='FDE8E8')
+        fc(ws5c,row5c,12,r['net_off'] if r['net_off'] is not None else '—',bg='FDE8E8',bold=True)
+        fc(ws5c,row5c,13,f"{'+'if diff_v>=0 else ''}{diff_v}",bold=True,bg=diff_bg,fg=diff_fg)
+        fc(ws5c,row5c,14,fiab_txt,bg=fiab_bg,size=9)
+        fc(ws5c,row5c,15,interp,bg=bg,align='left',size=9,fg='555555')
+        ws5c.row_dimensions[row5c].height=17; row5c+=1
 
     # ── Noms equips per match_id (per pestanyes 6 i 7) ─────────────────────
     eq_noms_per_match = {}
@@ -4112,6 +4305,82 @@ with t_onoff:
                         st.markdown(html_ts, unsafe_allow_html=True)
                 else:
                     st.info("No hi ha prou dades per calcular el TS% On/Off.")
+
+            # ── Net Rating On/Off per 40 min ──────────────────────────────────
+            st.markdown(sec("📐 Net Rating On/Off per 40 min per jugadora"), unsafe_allow_html=True)
+            st.caption(
+                "Net Rating On/Off normalitzat per 40 minuts (en comptes de per 100 possessions, ja que no "
+                "tenim rebots ofensius per estimar possessions individuals). Net Diff = com canvia el marge "
+                "del partit (punts/40min) quan la jugadora és a pista, respecte a quan no hi és. "
+                "⚠️ = pocs minuts Off, valor poc fiable."
+            )
+            if tid_oo2:
+                net40_rows2 = []
+                for jug2 in jugs_oo2:
+                    df_jug_n40_2 = df_onoff2.copy()
+                    df_jug_n40_2["jugador"] = df_jug_n40_2[col_jug2]
+                    n40_2 = calc_onoff_net40(df_jug_n40_2, jug2, tid_oo2, teams_oo2)
+                    if n40_2 and n40_2.get("diff") is not None:
+                        min_off_2 = n40_2.get("minuts_off", 0) or 0
+                        fiable_n40_2 = min_off_2 >= 2
+                        label_diff_n40 = f"{'+'if n40_2['diff']>=0 else ''}{n40_2['diff']}"
+                        if not fiable_n40_2:
+                            label_diff_n40 += " ⚠️"
+                        net40_rows2.append({
+                            "Jugadora": jug2,
+                            "Min ON": n40_2.get("minuts_on","—"),
+                            "ORtg ON": n40_2["ortg_on"] if n40_2["ortg_on"] is not None else "N/D",
+                            "DRtg ON": n40_2["drtg_on"] if n40_2["drtg_on"] is not None else "N/D",
+                            "Net ON": n40_2["net_on"] if n40_2["net_on"] is not None else "N/D",
+                            "Min OFF": min_off_2,
+                            "ORtg OFF": n40_2["ortg_off"] if n40_2["ortg_off"] is not None else "N/D",
+                            "DRtg OFF": n40_2["drtg_off"] if n40_2["drtg_off"] is not None else "N/D",
+                            "Net OFF": n40_2["net_off"] if n40_2["net_off"] is not None else "N/D",
+                            "Net Diff": label_diff_n40,
+                            "_diff": n40_2["diff"],
+                            "_fiable": fiable_n40_2
+                        })
+                if net40_rows2:
+                    df_n40_2 = pd.DataFrame(net40_rows2).sort_values("_diff", ascending=False)
+                    colors_n40_2 = []
+                    for _, row_n40 in df_n40_2.iterrows():
+                        if not row_n40.get("_fiable", True):
+                            colors_n40_2.append("#d97706")
+                        elif row_n40["_diff"] >= 0:
+                            colors_n40_2.append("#16a34a")
+                        else:
+                            colors_n40_2.append("#dc2626")
+                    fig_n40_2 = go.Figure()
+                    fig_n40_2.add_trace(go.Bar(
+                        x=df_n40_2["Jugadora"], y=df_n40_2["_diff"],
+                        marker_color=colors_n40_2,
+                        text=[f"{'+'if d>=0 else ''}{d}" for d in df_n40_2["_diff"]],
+                        textposition="outside"))
+                    fig_n40_2.add_hline(y=0, line_dash="solid", line_color="#e2e4e8")
+                    fig_n40_2.update_layout(
+                        yaxis_title="Net Diff (pts/40min) On - Off",
+                        paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+                        font=dict(color="#374151", family="Inter"),
+                        margin=dict(l=0,r=0,t=30,b=0), height=280)
+                    st.plotly_chart(fig_n40_2, use_container_width=True)
+                    with st.expander("Veure detall complet Net Rating 40min"):
+                        st.caption("ON = quan la jugadora és a pista · OFF = quan no hi és · ⚠️ = pocs minuts OFF, valor poc fiable")
+                        df_show_n40 = df_n40_2.drop(columns=["_diff","_fiable"], errors="ignore")
+                        cols_n40 = list(df_show_n40.columns)
+                        html_n40 = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;color:#1a2744">'
+                        html_n40 += '<tr>' + ''.join(f'<th style="background:#D6E8F7;color:#0C447C;padding:6px 10px;text-align:center;border:1px solid #B5D4F4;font-weight:600">{c}</th>' for c in cols_n40) + '</tr>'
+                        for _, row_n40 in df_show_n40.iterrows():
+                            html_n40 += '<tr>'
+                            for ci_n40, col_n40 in enumerate(cols_n40):
+                                val_n40 = row_n40[col_n40]
+                                bg_n40 = '#ffffff' if ci_n40 > 0 else '#EBF4FC'
+                                align_n40 = 'left' if ci_n40 == 0 else 'center'
+                                html_n40 += f'<td style="padding:5px 10px;border:1px solid #B5D4F4;background:{bg_n40};color:#1a2744;text-align:{align_n40}">{val_n40}</td>'
+                            html_n40 += '</tr>'
+                        html_n40 += '</table></div>'
+                        st.markdown(html_n40, unsafe_allow_html=True)
+                else:
+                    st.info("No hi ha prou dades per calcular el Net Rating On/Off per 40 min.")
 
             # ── TS% vs Δ Net Rtg (Talent vs Optimization) ────────────────────
             st.markdown(sec("🧭 TS% vs Δ Net Rtg — Talent vs Optimization"), unsafe_allow_html=True)
