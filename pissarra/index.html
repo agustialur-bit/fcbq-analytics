@@ -1059,6 +1059,19 @@
     }
   };
 
+  let gifWorkerBlobUrl = null;
+  async function getGifWorkerUrl(){
+    // Els navegadors no permeten crear un Worker apuntant directament a un
+    // altre domini (CDN): cal baixar-lo i servir-lo com a blob del mateix origen.
+    if(gifWorkerBlobUrl) return gifWorkerBlobUrl;
+    const resp = await fetch('https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js');
+    if(!resp.ok) throw new Error('No s\'ha pogut descarregar el worker del GIF (' + resp.status + ')');
+    const text = await resp.text();
+    const blob = new Blob([text], {type:'application/javascript'});
+    gifWorkerBlobUrl = URL.createObjectURL(blob);
+    return gifWorkerBlobUrl;
+  }
+
   document.getElementById('btnExportGIF').onclick = async ()=>{
     try{
       if(!window.GIF){ alert('No s\'ha pogut carregar la llibreria de GIF. Comprova la connexió a internet i torna-ho a provar.'); return; }
@@ -1066,10 +1079,11 @@
       const hasAnyPath = frames.some(f=>Object.keys(f.paths).length);
       if(!hasAnyPath){ alert("Traça almenys un recorregut en alguna acció abans d'exportar el GIF."); return; }
       const FPS = 12;
+      const workerUrl = await getGifWorkerUrl();
       const gif = new GIF({
         workers: 2, quality: 10,
         width: canvas.width, height: canvas.height,
-        workerScript: 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js'
+        workerScript: workerUrl
       });
       const captureInterval = setInterval(()=>{
         gif.addFrame(canvas, {copy:true, delay: Math.round(1000/FPS)});
