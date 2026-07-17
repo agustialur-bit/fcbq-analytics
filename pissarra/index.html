@@ -342,6 +342,8 @@
   let ballSelected = false;
   let currentPlayName = null;
   let currentPlayId = null;
+  let dribbleDragPlayer = null;
+  let lastTapTime = 0, lastTapPos = null;
   function nextAvailableNum(team){
     const used = new Set(players.filter(p=>p.team===team).map(p=>p.num));
     for(let n=1;n<=5;n++){ if(!used.has(n)) return n; }
@@ -473,9 +475,10 @@
       ctx.strokeStyle = (p.id===selectedPlayerId) ? '#e8a33d' : '#1c2430';
       ctx.stroke();
       ctx.fillStyle = '#fff';
-      ctx.font = '700 14px Inter, sans-serif';
+      const label = String(p.num);
+      ctx.font = (label.length>2 ? '700 10px' : '700 14px') + ' Inter, sans-serif';
       ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.fillText(p.num, p.x, p.y+1);
+      ctx.fillText(label, p.x, p.y+1);
     });
     if(ball){
       ctx.beginPath();
@@ -697,6 +700,13 @@
         else { texts = texts.filter(t=> Math.hypot(t.x-x,t.y-y) > 16); }
       }
       render();
+    } else if(mode==='dribble' && selectedPlayerId){
+      const p = players.find(pl=>pl.id===selectedPlayerId);
+      if(p){
+        pushHistory();
+        dribbleDragPlayer = p;
+        drawingArrow = {type:'dribble', pts:[[p.x,p.y]]};
+      }
     } else if(['move','pass','screen','dribble','shot','handoff'].includes(mode)){
       drawingArrow = {type:mode, pts:[[x,y]]};
     } else if(mode==='path'){
@@ -714,23 +724,60 @@
   canvas.addEventListener('mousemove', e=>{
     const [x,y] = pos(e);
     if(dragTarget){ dragTarget.x=x; dragTarget.y=y; render(); }
-    else if(drawingArrow){ drawingArrow.pts.push([x,y]); render(); }
+    else if(drawingArrow){
+      drawingArrow.pts.push([x,y]);
+      if(dribbleDragPlayer){
+        dribbleDragPlayer.x=x; dribbleDragPlayer.y=y;
+        if(ball){ ball.x=x; ball.y=y; }
+      }
+      render();
+    }
     else if(tracingPathFor){ paths[tracingPathFor].push([x,y]); render(); }
   });
   function endStroke(){
     if(drawingArrow){
-      if(drawingArrow.pts.length>1){ pushHistory(); arrows.push(drawingArrow); }
+      if(drawingArrow.pts.length>1){
+        if(!dribbleDragPlayer) pushHistory();
+        arrows.push(drawingArrow);
+      }
       drawingArrow=null;
     }
-    dragTarget=null; tracingPathFor=null;
+    dragTarget=null; tracingPathFor=null; dribbleDragPlayer=null;
     render();
   }
   canvas.addEventListener('mouseup', endStroke);
   canvas.addEventListener('mouseleave', endStroke);
-  canvas.addEventListener('touchstart', e=>{e.preventDefault(); canvas.dispatchEvent(new MouseEvent('mousedown', toMouseInit(e)));}, {passive:false});
+  canvas.addEventListener('touchstart', e=>{
+    e.preventDefault();
+    const [tx,ty] = pos(e);
+    if(maybeHandleDoubleTap(tx,ty)) return;
+    canvas.dispatchEvent(new MouseEvent('mousedown', toMouseInit(e)));
+  }, {passive:false});
   canvas.addEventListener('touchmove', e=>{e.preventDefault(); canvas.dispatchEvent(new MouseEvent('mousemove', toMouseInit(e)));}, {passive:false});
   canvas.addEventListener('touchend', e=>{e.preventDefault(); endStroke();}, {passive:false});
   function toMouseInit(e){ const t = e.touches[0] || e.changedTouches[0]; return {clientX:t.clientX, clientY:t.clientY}; }
+
+  function renamePlayerAt(x,y){
+    const hp = hitPlayer(x,y);
+    if(!hp) return;
+    const nou = prompt('Nom o dorsal de la jugadora:', String(hp.num));
+    if(nou !== null && nou.trim() !== ''){
+      pushHistory();
+      hp.num = nou.trim();
+      render();
+    }
+  }
+  function maybeHandleDoubleTap(x,y){
+    const now = Date.now();
+    if(lastTapPos && (now-lastTapTime) < 350 && Math.hypot(x-lastTapPos[0], y-lastTapPos[1]) < 20){
+      renamePlayerAt(x,y);
+      lastTapTime = 0; lastTapPos = null;
+      return true;
+    }
+    lastTapTime = now; lastTapPos = [x,y];
+    return false;
+  }
+  canvas.addEventListener('dblclick', e=>{ const [x,y] = pos(e); renamePlayerAt(x,y); });
 
   let pendingTextPos = null;
   function openTextModal(x,y){
