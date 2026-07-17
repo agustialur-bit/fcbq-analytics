@@ -1078,15 +1078,22 @@
       commitCurrentFrame();
       const hasAnyPath = frames.some(f=>Object.keys(f.paths).length);
       if(!hasAnyPath){ alert("Traça almenys un recorregut en alguna acció abans d'exportar el GIF."); return; }
-      const FPS = 12;
+      const FPS = 8;
+      const SCALE = 0.6; // mida reduïda: és un dibuix senzill, no cal tanta resolució
+      const gifW = Math.round(canvas.width*SCALE), gifH = Math.round(canvas.height*SCALE);
+      const gifCanvas = document.createElement('canvas');
+      gifCanvas.width = gifW; gifCanvas.height = gifH;
+      const gifCtx = gifCanvas.getContext('2d');
       const workerUrl = await getGifWorkerUrl();
       const gif = new GIF({
-        workers: 2, quality: 10,
-        width: canvas.width, height: canvas.height,
+        workers: 2, quality: 15,
+        width: gifW, height: gifH,
         workerScript: workerUrl
       });
       const captureInterval = setInterval(()=>{
-        gif.addFrame(canvas, {copy:true, delay: Math.round(1000/FPS)});
+        gifCtx.clearRect(0,0,gifW,gifH);
+        gifCtx.drawImage(canvas, 0,0, gifW,gifH);
+        gif.addFrame(gifCanvas, {copy:true, delay: Math.round(1000/FPS)});
       }, Math.round(1000/FPS));
       await playAllFrames();
       clearInterval(captureInterval);
