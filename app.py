@@ -1623,6 +1623,52 @@ def classifica_zona_tir_global(x_raw, y_raw):
         elif x_raw > 62: return "📍 Mig dreta"
         else: return "📍 Mig centre"
 
+ZONA_A_CATEGORIA = {
+    "🎯 Zona pintada": "Rim",
+    "📍 Mig esquerra": "Midrange", "📍 Mig centre": "Midrange", "📍 Mig dreta": "Midrange",
+    "🏹 Triple esquerra": "Corner 3", "🏹 Triple dreta": "Corner 3",
+    "🏹 Triple centre": "Non-corner 3",
+}
+CATEGORIA_VALOR = {"Rim": 2, "Midrange": 2, "Corner 3": 3, "Non-corner 3": 3}
+
+def calc_shot_portfolio(df_tirs):
+    """Agrupa els tirs (x,y,fet,match_id) en 4 categories (Rim, Midrange, Corner 3,
+    Non-corner 3 — aproximació a partir de les 7 zones existents) i calcula per
+    categoria: volum (% de tirs), valor (punts per tir) i risc (desviació estàndard
+    del PPS entre partits). No inclou continuació per rebot ofensiu (no disponible)."""
+    MIN_GAMES = 5  # partits amb tirs a la categoria per considerar el risc fiable
+
+    if df_tirs.empty: return None
+    df = df_tirs.copy()
+    df["zona"] = df.apply(lambda r: classifica_zona_tir_global(float(r["x"]), float(r["y"])), axis=1)
+    df["categoria"] = df["zona"].map(ZONA_A_CATEGORIA)
+    df = df[df["categoria"].notna()]
+    if df.empty: return None
+
+    total_tirs = len(df)
+    rows = []
+    for cat, valor in CATEGORIA_VALOR.items():
+        df_cat = df[df["categoria"]==cat]
+        n_tirs = len(df_cat)
+        if n_tirs == 0:
+            rows.append({"categoria":cat,"tirs":0,"volum_pct":0.0,"ef":None,"valor_tir":valor,
+                         "pps":None,"risc":None,"n_partits":0,"fiable":False})
+            continue
+        fets = int(df_cat["fet"].sum())
+        ef = round(fets/n_tirs*100, 1)
+        pps = round(fets/n_tirs*valor, 2)
+        volum_pct = round(n_tirs/total_tirs*100, 1)
+
+        per_partit = df_cat.groupby("match_id").agg(t=("fet","count"), f=("fet","sum"))
+        per_partit["pps_p"] = per_partit["f"]/per_partit["t"]*valor
+        n_partits = len(per_partit)
+        risc = round(per_partit["pps_p"].std(), 2) if n_partits >= 2 else None
+        fiable = n_partits >= MIN_GAMES
+
+        rows.append({"categoria":cat,"tirs":n_tirs,"volum_pct":volum_pct,"ef":ef,
+                     "valor_tir":valor,"pps":pps,"risc":risc,"n_partits":n_partits,"fiable":fiable})
+    return pd.DataFrame(rows)
+
 TC_INT_PAT = "Cistella de 2|Cistella de 3|Intent fallat de 2|Intent fallat de 3|fallat de 2|fallat de 3"
 TL_INT_PAT = "Cistella de 1|Intent fallat de 1|Tir lliure convertit|Tir lliure fallat"
 
@@ -6519,6 +6565,69 @@ console.log(`✅ Copiat! Total: ${punts.length} | Cistelles: ${punts.filter(p=>p
                             f"({pitjor_z['diff_sq']:+.1f}pp vs mitjana).")
                 else:
                     st.info("No hi ha prou tirs a la selecció actual per a aquesta anàlisi.")
+
+            # ── Portfolio de tirs — valor, volum i risc per zona ──────────────
+            st.markdown(sec("🧺 Portfolio de tirs — valor, volum i risc per zona"), unsafe_allow_html=True)
+            st.caption(
+                "Inspirat en tractar la selecció de tir com una cartera d'inversió: cada zona "
+                "s'avalua per volum (% de tirs), valor (punts per tir) i risc (variabilitat del "
+                "PPS entre partits). Categories aproximades: Rim = zona pintada, Midrange = mig camp "
+                "(esquerra/centre/dreta), Corner 3 = triples de cantonada, Non-corner 3 = triple de "
+                "centre. No inclou continuació per rebot ofensiu (no en tenim dades)."
+            )
+            equips_port = sorted(df_acum["equip_nom"].dropna().unique().tolist()) if "equip_nom" in df_acum.columns else []
+            eq_port_sel = st.radio("Filtra per equip", ["Tots els equips"] + equips_port,
+                horizontal=True, key="eq_port_sel")
+            df_acum_port = df_acum if eq_port_sel=="Tots els equips" else df_acum[df_acum["equip_nom"]==eq_port_sel]
+            df_port = calc_shot_portfolio(df_acum_port)
+            if df_port is None or df_port["tirs"].sum() == 0:
+                st.info("No hi ha prou tirs classificables en aquesta selecció per calcular el portfolio.")
+            else:
+                df_port_show = df_port[df_port["tirs"] > 0].copy()
+                fig_port = go.Figure()
+                for _, rp in df_port_show.iterrows():
+                    color_p = "#16a34a" if rp["fiable"] else "#d97706"
+                    fig_port.add_trace(go.Scatter(
+                        x=[rp["risc"] if rp["risc"] is not None else 0],
+                        y=[rp["pps"]],
+                        mode="markers+text",
+                        marker=dict(size=max(14, rp["volum_pct"]*1.8), color=color_p, opacity=0.75,
+                                    line=dict(width=1.5,color="white")),
+                        text=[rp["categoria"]], textposition="top center",
+                        hovertemplate=f"<b>{rp['categoria']}</b><br>PPS: {rp['pps']}<br>"
+                                      f"Volum: {rp['volum_pct']}%<br>Tirs: {int(rp['tirs'])}<br>"
+                                      f"Risc (desv. PPS/partit): {rp['risc'] if rp['risc'] is not None else 'N/D'}<br>"
+                                      f"Partits amb dades: {int(rp['n_partits'])}<extra></extra>",
+                        showlegend=False
+                    ))
+                fig_port.update_layout(
+                    xaxis_title="Risc (desviació del PPS entre partits)",
+                    yaxis_title="Valor (punts per tir)",
+                    margin=dict(l=0,r=0,t=30,b=0))
+                st.plotly_chart(chart_style(fig_port, 340, "Valor vs risc per zona (mida = volum de tirs · verd = risc fiable, ⚠️ taronja = poca mostra)"),
+                    use_container_width=True)
+
+                with st.expander("Veure detall del portfolio de tirs"):
+                    df_show_port = df_port_show[["categoria","tirs","volum_pct","ef","valor_tir","pps","risc","n_partits"]].copy()
+                    df_show_port["risc"] = df_show_port["risc"].apply(lambda v: v if pd.notna(v) else "N/D")
+                    df_show_port.columns = ["Categoria","Tirs","% Volum","Encert %","Valor tir","PPS","Risc (desv. PPS)","Partits"]
+                    html_port = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;color:#1a2744">'
+                    html_port += '<tr>' + ''.join(f'<th style="background:#D6E8F7;color:#0C447C;padding:6px 10px;text-align:center;border:1px solid #B5D4F4;font-weight:600">{c}</th>' for c in df_show_port.columns) + '</tr>'
+                    for i_p,(_,row_p) in enumerate(df_show_port.iterrows()):
+                        bg_p = '#ffffff' if i_p%2==0 else '#EBF4FC'
+                        html_port += '<tr>'
+                        for ci_p,col_p in enumerate(df_show_port.columns):
+                            align_p = 'left' if ci_p==0 else 'center'
+                            html_port += f'<td style="padding:5px 10px;border:1px solid #B5D4F4;background:{bg_p};color:#1a2744;text-align:{align_p}">{row_p[col_p]}</td>'
+                        html_port += '</tr>'
+                    html_port += '</table></div>'
+                    st.markdown(html_port, unsafe_allow_html=True)
+
+                best_val = df_port_show.sort_values("pps", ascending=False).iloc[0]
+                worst_val = df_port_show.sort_values("pps", ascending=False).iloc[-1]
+                st.info(f"📊 La zona amb més valor és **{best_val['categoria']}** ({best_val['pps']} PPS) i representa el "
+                        f"{best_val['volum_pct']}% dels tirs. La de menys valor és **{worst_val['categoria']}** "
+                        f"({worst_val['pps']} PPS) amb el {worst_val['volum_pct']}% del volum.")
 
     col_ma,col_mb=st.columns(2)
     for col_m,tid,tnom,tcol in [
