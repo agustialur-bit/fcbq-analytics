@@ -749,6 +749,11 @@
       if(drawingArrow.pts.length>1){
         if(!dribbleDragPlayer) pushHistory();
         arrows.push(drawingArrow);
+        if(dribbleDragPlayer){
+          // També ho guarda com a recorregut, perquè s'animi en previsualitzar la jugada.
+          paths[dribbleDragPlayer.id] = clone(drawingArrow.pts);
+          if(ball) paths['BALL'] = clone(drawingArrow.pts);
+        }
       }
       drawingArrow=null;
     }
