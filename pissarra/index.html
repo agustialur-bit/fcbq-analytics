@@ -927,10 +927,10 @@
       const fd = clone(frames[i]);
       ctx.clearRect(0,0,canvas.width,canvas.height);
       courtType==='half' ? drawHalfCourt() : drawFullCourt();
-      const sp=players, sb=ball, st=texts, sa=arrows;
-      players=fd.players; ball=fd.ball; texts=fd.texts; arrows=fd.arrows;
+      const sp=players, sb=ball, st=texts, sa=arrows, spaths=paths;
+      players=fd.players; ball=fd.ball; texts=fd.texts; arrows=fd.arrows; paths=fd.paths;
       render();
-      players=sp; ball=sb; texts=st; arrows=sa;
+      players=sp; ball=sb; texts=st; arrows=sa; paths=spaths;
       await new Promise(r=>setTimeout(r,450));
       if(Object.keys(fd.paths).length) await animateFrame(1900, fd);
       await new Promise(r=>setTimeout(r,250));
