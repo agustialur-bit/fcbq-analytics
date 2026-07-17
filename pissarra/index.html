@@ -533,18 +533,28 @@
     else ctx.setLineDash([]);
 
     if(type==='dribble'){
+      // Ona contínua basada en la distància recorreguda sobre tot el traçat
+      // (no reiniciada a cada punt capturat del ratolí), perquè es vegi sempre
+      // clara sense dependre de la velocitat/mostreig de l'arrossegament.
+      const AMPLITUDE = 5.5, WAVELEN = 16, STEP = 4;
       ctx.beginPath();
+      let dist = 0, first = true;
       for(let i=0;i<pts.length-1;i++){
         const [x1,y1]=pts[i], [x2,y2]=pts[i+1];
-        const segLen = Math.hypot(x2-x1,y2-y1) || 1;
-        const steps = Math.max(2, Math.floor(segLen/14));
+        const segLen = Math.hypot(x2-x1,y2-y1);
+        if(segLen < 0.001) continue;
+        const ux = (x2-x1)/segLen, uy = (y2-y1)/segLen;
+        const nx = -uy, ny = ux;
+        const steps = Math.max(1, Math.ceil(segLen/STEP));
         for(let s=0;s<=steps;s++){
-          const t=s/steps;
-          const x=x1+(x2-x1)*t, y=y1+(y2-y1)*t;
-          const off = Math.sin(t*Math.PI*4)*5;
-          const nx = -(y2-y1)/segLen*off, ny=(x2-x1)/segLen*off;
-          if(s===0 && i===0) ctx.moveTo(x+nx,y+ny); else ctx.lineTo(x+nx,y+ny);
+          if(s===0 && i>0) continue;
+          const t = s/steps;
+          const x = x1+(x2-x1)*t, y = y1+(y2-y1)*t;
+          const off = Math.sin((dist+segLen*t)/WAVELEN*Math.PI*2)*AMPLITUDE;
+          const wx = x+nx*off, wy = y+ny*off;
+          if(first){ ctx.moveTo(wx,wy); first=false; } else { ctx.lineTo(wx,wy); }
         }
+        dist += segLen;
       }
       ctx.stroke();
     } else {
