@@ -342,7 +342,11 @@
   let ballSelected = false;
   let currentPlayName = null;
   let currentPlayId = null;
-  let nextNum = {O:1, D:1};
+  function nextAvailableNum(team){
+    const used = new Set(players.filter(p=>p.team===team).map(p=>p.num));
+    for(let n=1;n<=5;n++){ if(!used.has(n)) return n; }
+    return null;
+  }
 
   function emptyFrame(){ return {players:[], ball:null, texts:[], arrows:[], paths:{}}; }
   function clone(o){ return JSON.parse(JSON.stringify(o)); }
@@ -668,9 +672,14 @@
       else { selectedPlayerId=null; ballSelected=false; }
       render();
     } else if(mode==='offense' || mode==='defense'){
-      pushHistory();
       const team = mode==='offense'?'O':'D';
-      players.push({id:'p'+Date.now()+Math.random(), team, num:nextNum[team]++, x, y});
+      const num = nextAvailableNum(team);
+      if(num === null){
+        alert('Ja hi ha 5 jugadores de '+(team==='O'?'atac':'defensa')+' a la pista (màxim per equip).');
+        return;
+      }
+      pushHistory();
+      players.push({id:'p'+Date.now()+Math.random(), team, num, x, y});
       render();
     } else if(mode==='ball'){
       pushHistory(); ball = {x,y}; render();
