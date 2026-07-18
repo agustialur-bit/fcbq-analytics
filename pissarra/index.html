@@ -973,11 +973,11 @@
       const pdf = new jsPDF({orientation: canvas.width>canvas.height?'l':'p', unit:'pt', format:'a4'});
       const savedIndex = frameIndex;
       frames.forEach((f,i)=>{
-        const sp=players, sb=ball, st=texts, sa=arrows;
-        players=f.players; ball=f.ball; texts=f.texts; arrows=f.arrows;
+        const sp=players, sb=ball, st=texts, sa=arrows, spaths=paths;
+        players=f.players; ball=f.ball; texts=f.texts; arrows=f.arrows; paths=f.paths;
         render();
         addCanvasToPDF(pdf, name + ' — Acció '+(i+1)+'/'+frames.length, i===0);
-        players=sp; ball=sb; texts=st; arrows=sa;
+        players=sp; ball=sb; texts=st; arrows=sa; paths=spaths;
       });
       loadFrame(savedIndex); render();
       pdf.save(name.replace(/\s+/g,'_') + '.pdf');
@@ -1003,12 +1003,12 @@
         const [w,h] = sizes[pCourtType]; canvas.width=w; canvas.height=h;
         const pFrames = playData.frames || [playData];
         pFrames.forEach((f,i)=>{
-          const sp=players, sb=ball, st=texts, sa=arrows, sct=courtType;
-          players=f.players; ball=f.ball; texts=f.texts; arrows=f.arrows; courtType=pCourtType;
+          const sp=players, sb=ball, st=texts, sa=arrows, sct=courtType, spaths=paths;
+          players=f.players; ball=f.ball; texts=f.texts; arrows=f.arrows; courtType=pCourtType; paths=f.paths;
           render();
           addCanvasToPDF(pdf, name + ' — Acció '+(i+1)+'/'+pFrames.length, firstPage);
           firstPage = false;
-          players=sp; ball=sb; texts=st; arrows=sa; courtType=sct;
+          players=sp; ball=sb; texts=st; arrows=sa; courtType=sct; paths=spaths;
         });
       });
       courtType = savedState.courtType;
