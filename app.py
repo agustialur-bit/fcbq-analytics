@@ -6256,6 +6256,49 @@ console.log(`✅ Copiat! Total: ${punts.length} | Cistelles: ${punts.filter(p=>p
                             f"({millor_z['diff_sq']:+.1f}pp vs mitjana). "
                             f"Zona amb pitjor rendiment: **{pitjor_z['zona']}** "
                             f"({pitjor_z['diff_sq']:+.1f}pp vs mitjana).")
+
+                    # ── Des d'on tira més l'equip — i on esperar el rebot ────
+                    st.markdown("**🏀 Des d'on tira més — i on posicionar-se pel rebot**")
+                    st.caption(
+                        "Volum de tirs per zona (no eficiència): útil per a l'scouting — si un equip "
+                        "concentra molts tirs en una zona, val la pena preparar-hi el rebot. "
+                        "El play-by-play de la FCBQ no registra on cau cada rebot, així que això no és "
+                        "una predicció calculada amb les teves dades, sinó una pauta general de bàsquet: "
+                        "els tirs llargs (triples) generen rebots més llargs i dispersos — sovint cap al "
+                        "costat contrari d'on s'ha tirat —, mentre que els tirs des de la zona pintada "
+                        "generen rebots curts i molt disputats sota cistella."
+                    )
+                    df_vol = df_sq.copy()
+                    df_vol["pct_tirs"] = (df_vol["tirs_sel"] / df_vol["tirs_sel"].sum() * 100).round(1)
+                    df_vol = df_vol.sort_values("_ordre")
+                    colors_vol = ["#0F6E56" if "Triple" not in z else "#185FA5" for z in df_vol["zona"]]
+                    fig_vol = go.Figure()
+                    fig_vol.add_trace(go.Bar(
+                        x=df_vol["zona"], y=df_vol["pct_tirs"],
+                        marker_color=colors_vol,
+                        text=[f"{v}%" for v in df_vol["pct_tirs"]],
+                        textposition="outside",
+                        customdata=df_vol[["tirs_sel"]].values,
+                        hovertemplate="<b>%{x}</b><br>%{y}%% dels tirs<br>%{customdata[0]} tirs<extra></extra>"
+                    ))
+                    fig_vol.update_layout(yaxis_title="% dels tirs totals")
+                    st.plotly_chart(chart_style(fig_vol, 280, "Distribució de tirs per zona"),
+                        use_container_width=True)
+
+                    zones_amb_vol = df_vol[df_vol["tirs_sel"] >= 5].sort_values("pct_tirs", ascending=False)
+                    if not zones_amb_vol.empty:
+                        top_vol = zones_amb_vol.iloc[0]
+                        if "Triple" in top_vol["zona"]:
+                            tip_rebot = "esperar rebots llargs i sovint cap al costat contrari d'aquesta zona"
+                        elif "Zona pintada" in top_vol["zona"]:
+                            tip_rebot = "esperar rebots curts i molt disputats sota cistella"
+                        else:
+                            tip_rebot = "esperar rebots de distància mitjana"
+                        st.success(
+                            f"🎯 **Pauta d'scouting**: el {top_vol['pct_tirs']}% dels tirs (amb mostra "
+                            f"suficient) vénen de **{top_vol['zona']}** ({int(top_vol['tirs_sel'])} tirs). "
+                            f"Convé {tip_rebot}."
+                        )
                 else:
                     st.info("No hi ha prou tirs a la selecció actual per a aquesta anàlisi.")
 
