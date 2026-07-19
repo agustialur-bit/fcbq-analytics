@@ -235,7 +235,7 @@
       ⌐ bloqueig (traç curt)<br>
       ~ bot (ondulat)<br>
       ★ tir<br>
-      ●┄HO┄› mà a mà
+      ●┄#┄› mà a mà
     </div>
   </div>
 
@@ -536,7 +536,13 @@
     else if(type==='handoff') ctx.setLineDash([10,4,2,4]);
     else ctx.setLineDash([]);
 
-    if(type==='dribble'){
+    if(type==='pass'){
+      const p0 = pts[0], p1 = pts[pts.length-1];
+      ctx.beginPath();
+      ctx.moveTo(p0[0], p0[1]);
+      ctx.lineTo(p1[0], p1[1]);
+      ctx.stroke();
+    } else if(type==='dribble'){
       // Ona contínua basada en la distància recorreguda sobre tot el traçat
       // (no reiniciada a cada punt capturat del ratolí), perquè es vegi sempre
       // clara sense dependre de la velocitat/mostreig de l'arrossegament.
@@ -569,14 +575,15 @@
     }
     ctx.setLineDash([]);
 
-    const last = pts[pts.length-1], prev = pts[pts.length-2];
+    const last = pts[pts.length-1];
+    const prev = type==='pass' ? pts[0] : pts[pts.length-2];
     if(type==='screen'){
       const angle = Math.atan2(last[1]-prev[1], last[0]-prev[0]) + Math.PI/2;
-      const L=9;
+      const L=15;
       ctx.beginPath();
       ctx.moveTo(last[0]-L*Math.cos(angle), last[1]-L*Math.sin(angle));
       ctx.lineTo(last[0]+L*Math.cos(angle), last[1]+L*Math.sin(angle));
-      ctx.lineWidth=4;
+      ctx.lineWidth=6;
       ctx.stroke();
     } else if(type==='shot'){
       drawStar(last[0], last[1], 8);
@@ -587,9 +594,12 @@
         ctx.fillStyle = '#141a24'; ctx.fill();
         const midIdx = Math.floor((pts.length-1)/2);
         const mid = pts[midIdx];
-        ctx.font='700 11px Inter, sans-serif'; ctx.fillStyle='#141a24';
+        ctx.font='800 16px Inter, sans-serif';
         ctx.textAlign='center'; ctx.textBaseline='bottom';
-        ctx.fillText('HO', mid[0], mid[1]-6);
+        ctx.lineWidth=4; ctx.strokeStyle='#fff';
+        ctx.strokeText('#', mid[0], mid[1]-6);
+        ctx.fillStyle='#141a24';
+        ctx.fillText('#', mid[0], mid[1]-6);
       }
     }
   }
