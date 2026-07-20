@@ -6133,174 +6133,174 @@ console.log(`✅ Copiat! Total: ${punts.length} | Cistelles: ${punts.filter(p=>p
                     df_tots_tirs_ref["zona"] = df_tots_tirs_ref.apply(
                         lambda r: classifica_zona_tir(float(r["x"]), float(r["y"])), axis=1)
 
-                ref_zones = df_tots_tirs_ref.groupby("zona").agg(
-                    tirs_ref=("fet","count"), fets_ref=("fet","sum")
-                ).reset_index()
-                ref_zones["ef_ref"] = (ref_zones["fets_ref"]/ref_zones["tirs_ref"]*100).round(1)
+                    ref_zones = df_tots_tirs_ref.groupby("zona").agg(
+                        tirs_ref=("fet","count"), fets_ref=("fet","sum")
+                    ).reset_index()
+                    ref_zones["ef_ref"] = (ref_zones["fets_ref"]/ref_zones["tirs_ref"]*100).round(1)
 
-                # Zona dels tirs seleccionats (filtre actual + filtre equip)
-                df_acum_z = df_acum_sq_fil.copy()
-                df_acum_z["zona"] = df_acum_z.apply(
-                    lambda r: classifica_zona_tir(float(r["x"]), float(r["y"])), axis=1)
-                sel_zones = df_acum_z.groupby("zona").agg(
-                    tirs_sel=("fet","count"), fets_sel=("fet","sum")
-                ).reset_index()
-                sel_zones["ef_sel"] = (sel_zones["fets_sel"]/sel_zones["tirs_sel"]*100).round(1)
+                    # Zona dels tirs seleccionats (filtre actual + filtre equip)
+                    df_acum_z = df_acum_sq_fil.copy()
+                    df_acum_z["zona"] = df_acum_z.apply(
+                        lambda r: classifica_zona_tir(float(r["x"]), float(r["y"])), axis=1)
+                    sel_zones = df_acum_z.groupby("zona").agg(
+                        tirs_sel=("fet","count"), fets_sel=("fet","sum")
+                    ).reset_index()
+                    sel_zones["ef_sel"] = (sel_zones["fets_sel"]/sel_zones["tirs_sel"]*100).round(1)
 
-                # Valor del tir: 3 punts si és zona de triple, 2 punts altrament
-                def valor_zona(z):
-                    return 3 if "Triple" in z else 2
-                sel_zones["valor_tir"] = sel_zones["zona"].apply(valor_zona)
-                sel_zones["pps_sel"] = (sel_zones["ef_sel"]/100 * sel_zones["valor_tir"]).round(2)
+                    # Valor del tir: 3 punts si és zona de triple, 2 punts altrament
+                    def valor_zona(z):
+                        return 3 if "Triple" in z else 2
+                    sel_zones["valor_tir"] = sel_zones["zona"].apply(valor_zona)
+                    sel_zones["pps_sel"] = (sel_zones["ef_sel"]/100 * sel_zones["valor_tir"]).round(2)
 
-                ref_zones["valor_tir"] = ref_zones["zona"].apply(valor_zona)
-                ref_zones["pps_ref"] = (ref_zones["ef_ref"]/100 * ref_zones["valor_tir"]).round(2)
+                    ref_zones["valor_tir"] = ref_zones["zona"].apply(valor_zona)
+                    ref_zones["pps_ref"] = (ref_zones["ef_ref"]/100 * ref_zones["valor_tir"]).round(2)
 
-                df_sq = sel_zones.merge(ref_zones[["zona","tirs_ref","ef_ref","pps_ref"]], on="zona", how="left")
-                df_sq["diff_sq"] = (df_sq["ef_sel"] - df_sq["ef_ref"]).round(1)
-                df_sq["diff_pps"] = (df_sq["pps_sel"] - df_sq["pps_ref"]).round(2)
-                ordre_zones = ["🎯 Zona pintada","📍 Mig esquerra","📍 Mig centre","📍 Mig dreta",
-                               "🏹 Triple esquerra","🏹 Triple centre","🏹 Triple dreta"]
-                df_sq["_ordre"] = df_sq["zona"].apply(lambda z: ordre_zones.index(z) if z in ordre_zones else 99)
-                df_sq = df_sq.sort_values("_ordre")
+                    df_sq = sel_zones.merge(ref_zones[["zona","tirs_ref","ef_ref","pps_ref"]], on="zona", how="left")
+                    df_sq["diff_sq"] = (df_sq["ef_sel"] - df_sq["ef_ref"]).round(1)
+                    df_sq["diff_pps"] = (df_sq["pps_sel"] - df_sq["pps_ref"]).round(2)
+                    ordre_zones = ["🎯 Zona pintada","📍 Mig esquerra","📍 Mig centre","📍 Mig dreta",
+                                   "🏹 Triple esquerra","🏹 Triple centre","🏹 Triple dreta"]
+                    df_sq["_ordre"] = df_sq["zona"].apply(lambda z: ordre_zones.index(z) if z in ordre_zones else 99)
+                    df_sq = df_sq.sort_values("_ordre")
 
-                if not df_sq.empty:
-                    colors_sq = ["#16a34a" if v>=0 else "#dc2626" for v in df_sq["diff_sq"]]
-                    fig_sq = go.Figure()
-                    fig_sq.add_trace(go.Bar(
-                        x=df_sq["zona"], y=df_sq["diff_sq"],
-                        marker_color=colors_sq,
-                        text=[f"{'+'if v>=0 else ''}{v}pp" for v in df_sq["diff_sq"]],
-                        textposition="outside",
-                        customdata=df_sq[["tirs_sel","ef_sel","ef_ref"]].values,
-                        hovertemplate="<b>%{x}</b><br>Tirs: %{customdata[0]}<br>"
-                                      "Eficiència real: %{customdata[1]}%<br>"
-                                      "Mitjana temporada: %{customdata[2]}%<extra></extra>"
-                    ))
-                    fig_sq.add_hline(y=0, line_dash="solid", line_color="#e2e4e8")
-                    fig_sq.update_layout(yaxis_title="Diferència vs mitjana de zona (punts %)")
-                    st.plotly_chart(chart_style(fig_sq, 280, "Eficiència real vs mitjana esperada per zona"),
-                        use_container_width=True)
+                    if not df_sq.empty:
+                        colors_sq = ["#16a34a" if v>=0 else "#dc2626" for v in df_sq["diff_sq"]]
+                        fig_sq = go.Figure()
+                        fig_sq.add_trace(go.Bar(
+                            x=df_sq["zona"], y=df_sq["diff_sq"],
+                            marker_color=colors_sq,
+                            text=[f"{'+'if v>=0 else ''}{v}pp" for v in df_sq["diff_sq"]],
+                            textposition="outside",
+                            customdata=df_sq[["tirs_sel","ef_sel","ef_ref"]].values,
+                            hovertemplate="<b>%{x}</b><br>Tirs: %{customdata[0]}<br>"
+                                          "Eficiència real: %{customdata[1]}%<br>"
+                                          "Mitjana temporada: %{customdata[2]}%<extra></extra>"
+                        ))
+                        fig_sq.add_hline(y=0, line_dash="solid", line_color="#e2e4e8")
+                        fig_sq.update_layout(yaxis_title="Diferència vs mitjana de zona (punts %)")
+                        st.plotly_chart(chart_style(fig_sq, 280, "Eficiència real vs mitjana esperada per zona"),
+                            use_container_width=True)
 
-                    # ── Valor en punts per tir (PPS) — quina zona val més atacar ──
-                    st.markdown("**💰 Valor real per tir — quina zona genera més punts**")
-                    st.caption(
-                        "PPS (Punts Per Tir) = % d'encert × valor del tir (2 o 3 punts). "
-                        "Un alt % en una zona de 2 pot valer menys que un % moderat en una zona de 3. "
-                        "Aquest és el càlcul que de veritat indica des d'on convé atacar."
-                    )
-
-                    df_pps = df_sq[["zona","valor_tir","tirs_sel","ef_sel","pps_sel","pps_ref"]].copy()
-                    df_pps = df_pps.sort_values("pps_sel", ascending=False)
-
-                    fig_pps = go.Figure()
-                    colors_pps = ["#185FA5" if "Triple" in z else "#0F6E56" for z in df_pps["zona"]]
-                    fig_pps.add_trace(go.Bar(
-                        x=df_pps["zona"], y=df_pps["pps_sel"],
-                        name="PPS actual",
-                        marker_color=colors_pps,
-                        text=[f"{v:.2f}" for v in df_pps["pps_sel"]],
-                        textposition="outside",
-                        customdata=df_pps[["tirs_sel","ef_sel","valor_tir"]].values,
-                        hovertemplate="<b>%{x}</b><br>PPS: %{y:.2f}<br>Tirs: %{customdata[0]}<br>"
-                                      "Eficiència: %{customdata[1]}%<br>Valor tir: %{customdata[2]} punts<extra></extra>"
-                    ))
-                    fig_pps.add_trace(go.Scatter(
-                        x=df_pps["zona"], y=df_pps["pps_ref"],
-                        mode="markers", name="PPS mitjana temporada",
-                        marker=dict(symbol="diamond", size=11, color="#d97706",
-                                   line=dict(width=1.5, color="white"))
-                    ))
-                    fig_pps.add_hline(y=1.0, line_dash="dot", line_color="#9ca3af",
-                        annotation_text="PPS=1.0 (referència)", annotation_font_size=9)
-                    fig_pps.update_layout(
-                        yaxis_title="Punts per tir (PPS)",
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-                    st.plotly_chart(chart_style(fig_pps, 300, "Punts per tir — quina zona val més"),
-                        use_container_width=True)
-
-                    # Recomanació tàctica automàtica
-                    millor_pps = df_pps.iloc[0]
-                    zones_amb_mostra = df_pps[df_pps["tirs_sel"] >= 5].sort_values("pps_sel", ascending=False)
-                    if not zones_amb_mostra.empty:
-                        rec_zona = zones_amb_mostra.iloc[0]
-                        st.success(
-                            f"💡 **Recomanació tàctica**: la zona amb millor valor real per tir "
-                            f"(amb mostra suficient, ≥5 tirs) és **{rec_zona['zona']}** amb "
-                            f"**{rec_zona['pps_sel']:.2f} punts/tir** ({rec_zona['ef_sel']}% d'encert, "
-                            f"{int(rec_zona['tirs_sel'])} tirs). Buscar més tirs des d'aquesta zona "
-                            f"maximitzaria els punts generats."
+                        # ── Valor en punts per tir (PPS) — quina zona val més atacar ──
+                        st.markdown("**💰 Valor real per tir — quina zona genera més punts**")
+                        st.caption(
+                            "PPS (Punts Per Tir) = % d'encert × valor del tir (2 o 3 punts). "
+                            "Un alt % en una zona de 2 pot valer menys que un % moderat en una zona de 3. "
+                            "Aquest és el càlcul que de veritat indica des d'on convé atacar."
                         )
-                    else:
-                        st.info("Cap zona amb mostra suficient (≥5 tirs) per fer una recomanació fiable.")
 
-                    # Taula detall
-                    with st.expander("Veure detall per zona"):
-                        df_show_sq = df_sq[["zona","tirs_sel","fets_sel","ef_sel","pps_sel","tirs_ref","ef_ref","pps_ref","diff_sq"]].copy()
-                        df_show_sq.columns = ["Zona","Tirs (selecció)","Cistelles","Ef. real %","PPS real","Tirs (ref. temporada)","Ef. mitjana %","PPS mitjana","Diferència pp"]
-                        html_sq = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;color:#1a2744">'
-                        html_sq += '<tr>' + ''.join(f'<th style="background:#D6E8F7;color:#0C447C;padding:6px 10px;text-align:center;border:1px solid #B5D4F4;font-weight:600">{c}</th>' for c in df_show_sq.columns) + '</tr>'
-                        for i_sq,(_,row_sq) in enumerate(df_show_sq.iterrows()):
-                            bg_sq = '#ffffff' if i_sq%2==0 else '#EBF4FC'
-                            html_sq += '<tr>'
-                            for ci_sq,col_sq in enumerate(df_show_sq.columns):
-                                align_sq = 'left' if ci_sq==0 else 'center'
-                                html_sq += f'<td style="padding:5px 10px;border:1px solid #B5D4F4;background:{bg_sq};color:#1a2744;text-align:{align_sq}">{row_sq[col_sq]}</td>'
-                            html_sq += '</tr>'
-                        html_sq += '</table></div>'
-                        st.markdown(html_sq, unsafe_allow_html=True)
+                        df_pps = df_sq[["zona","valor_tir","tirs_sel","ef_sel","pps_sel","pps_ref"]].copy()
+                        df_pps = df_pps.sort_values("pps_sel", ascending=False)
 
-                    millor_z = df_sq.loc[df_sq["diff_sq"].idxmax()]
-                    pitjor_z = df_sq.loc[df_sq["diff_sq"].idxmin()]
-                    st.info(f"📊 Zona amb millor rendiment relatiu: **{millor_z['zona']}** "
-                            f"({millor_z['diff_sq']:+.1f}pp vs mitjana). "
-                            f"Zona amb pitjor rendiment: **{pitjor_z['zona']}** "
-                            f"({pitjor_z['diff_sq']:+.1f}pp vs mitjana).")
+                        fig_pps = go.Figure()
+                        colors_pps = ["#185FA5" if "Triple" in z else "#0F6E56" for z in df_pps["zona"]]
+                        fig_pps.add_trace(go.Bar(
+                            x=df_pps["zona"], y=df_pps["pps_sel"],
+                            name="PPS actual",
+                            marker_color=colors_pps,
+                            text=[f"{v:.2f}" for v in df_pps["pps_sel"]],
+                            textposition="outside",
+                            customdata=df_pps[["tirs_sel","ef_sel","valor_tir"]].values,
+                            hovertemplate="<b>%{x}</b><br>PPS: %{y:.2f}<br>Tirs: %{customdata[0]}<br>"
+                                          "Eficiència: %{customdata[1]}%<br>Valor tir: %{customdata[2]} punts<extra></extra>"
+                        ))
+                        fig_pps.add_trace(go.Scatter(
+                            x=df_pps["zona"], y=df_pps["pps_ref"],
+                            mode="markers", name="PPS mitjana temporada",
+                            marker=dict(symbol="diamond", size=11, color="#d97706",
+                                       line=dict(width=1.5, color="white"))
+                        ))
+                        fig_pps.add_hline(y=1.0, line_dash="dot", line_color="#9ca3af",
+                            annotation_text="PPS=1.0 (referència)", annotation_font_size=9)
+                        fig_pps.update_layout(
+                            yaxis_title="Punts per tir (PPS)",
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                        st.plotly_chart(chart_style(fig_pps, 300, "Punts per tir — quina zona val més"),
+                            use_container_width=True)
 
-                    # ── Des d'on tira més l'equip — i on esperar el rebot ────
-                    st.markdown("**🏀 Des d'on tira més — i on posicionar-se pel rebot**")
-                    st.caption(
-                        "Volum de tirs per zona (no eficiència): útil per a l'scouting — si un equip "
-                        "concentra molts tirs en una zona, val la pena preparar-hi el rebot. "
-                        "El play-by-play de la FCBQ no registra on cau cada rebot, així que això no és "
-                        "una predicció calculada amb les teves dades, sinó una pauta general de bàsquet: "
-                        "els tirs llargs (triples) generen rebots més llargs i dispersos — sovint cap al "
-                        "costat contrari d'on s'ha tirat —, mentre que els tirs des de la zona pintada "
-                        "generen rebots curts i molt disputats sota cistella."
-                    )
-                    df_vol = df_sq.copy()
-                    df_vol["pct_tirs"] = (df_vol["tirs_sel"] / df_vol["tirs_sel"].sum() * 100).round(1)
-                    df_vol = df_vol.sort_values("_ordre")
-                    colors_vol = ["#0F6E56" if "Triple" not in z else "#185FA5" for z in df_vol["zona"]]
-                    fig_vol = go.Figure()
-                    fig_vol.add_trace(go.Bar(
-                        x=df_vol["zona"], y=df_vol["pct_tirs"],
-                        marker_color=colors_vol,
-                        text=[f"{v}%" for v in df_vol["pct_tirs"]],
-                        textposition="outside",
-                        customdata=df_vol[["tirs_sel"]].values,
-                        hovertemplate="<b>%{x}</b><br>%{y}%% dels tirs<br>%{customdata[0]} tirs<extra></extra>"
-                    ))
-                    fig_vol.update_layout(yaxis_title="% dels tirs totals")
-                    st.plotly_chart(chart_style(fig_vol, 280, "Distribució de tirs per zona"),
-                        use_container_width=True)
-
-                    zones_amb_vol = df_vol[df_vol["tirs_sel"] >= 5].sort_values("pct_tirs", ascending=False)
-                    if not zones_amb_vol.empty:
-                        top_vol = zones_amb_vol.iloc[0]
-                        if "Triple" in top_vol["zona"]:
-                            tip_rebot = "esperar rebots llargs i sovint cap al costat contrari d'aquesta zona"
-                        elif "Zona pintada" in top_vol["zona"]:
-                            tip_rebot = "esperar rebots curts i molt disputats sota cistella"
+                        # Recomanació tàctica automàtica
+                        millor_pps = df_pps.iloc[0]
+                        zones_amb_mostra = df_pps[df_pps["tirs_sel"] >= 5].sort_values("pps_sel", ascending=False)
+                        if not zones_amb_mostra.empty:
+                            rec_zona = zones_amb_mostra.iloc[0]
+                            st.success(
+                                f"💡 **Recomanació tàctica**: la zona amb millor valor real per tir "
+                                f"(amb mostra suficient, ≥5 tirs) és **{rec_zona['zona']}** amb "
+                                f"**{rec_zona['pps_sel']:.2f} punts/tir** ({rec_zona['ef_sel']}% d'encert, "
+                                f"{int(rec_zona['tirs_sel'])} tirs). Buscar més tirs des d'aquesta zona "
+                                f"maximitzaria els punts generats."
+                            )
                         else:
-                            tip_rebot = "esperar rebots de distància mitjana"
-                        st.success(
-                            f"🎯 **Pauta d'scouting**: el {top_vol['pct_tirs']}% dels tirs (amb mostra "
-                            f"suficient) vénen de **{top_vol['zona']}** ({int(top_vol['tirs_sel'])} tirs). "
-                            f"Convé {tip_rebot}."
+                            st.info("Cap zona amb mostra suficient (≥5 tirs) per fer una recomanació fiable.")
+
+                        # Taula detall
+                        with st.expander("Veure detall per zona"):
+                            df_show_sq = df_sq[["zona","tirs_sel","fets_sel","ef_sel","pps_sel","tirs_ref","ef_ref","pps_ref","diff_sq"]].copy()
+                            df_show_sq.columns = ["Zona","Tirs (selecció)","Cistelles","Ef. real %","PPS real","Tirs (ref. temporada)","Ef. mitjana %","PPS mitjana","Diferència pp"]
+                            html_sq = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;color:#1a2744">'
+                            html_sq += '<tr>' + ''.join(f'<th style="background:#D6E8F7;color:#0C447C;padding:6px 10px;text-align:center;border:1px solid #B5D4F4;font-weight:600">{c}</th>' for c in df_show_sq.columns) + '</tr>'
+                            for i_sq,(_,row_sq) in enumerate(df_show_sq.iterrows()):
+                                bg_sq = '#ffffff' if i_sq%2==0 else '#EBF4FC'
+                                html_sq += '<tr>'
+                                for ci_sq,col_sq in enumerate(df_show_sq.columns):
+                                    align_sq = 'left' if ci_sq==0 else 'center'
+                                    html_sq += f'<td style="padding:5px 10px;border:1px solid #B5D4F4;background:{bg_sq};color:#1a2744;text-align:{align_sq}">{row_sq[col_sq]}</td>'
+                                html_sq += '</tr>'
+                            html_sq += '</table></div>'
+                            st.markdown(html_sq, unsafe_allow_html=True)
+
+                        millor_z = df_sq.loc[df_sq["diff_sq"].idxmax()]
+                        pitjor_z = df_sq.loc[df_sq["diff_sq"].idxmin()]
+                        st.info(f"📊 Zona amb millor rendiment relatiu: **{millor_z['zona']}** "
+                                f"({millor_z['diff_sq']:+.1f}pp vs mitjana). "
+                                f"Zona amb pitjor rendiment: **{pitjor_z['zona']}** "
+                                f"({pitjor_z['diff_sq']:+.1f}pp vs mitjana).")
+
+                        # ── Des d'on tira més l'equip — i on esperar el rebot ────
+                        st.markdown("**🏀 Des d'on tira més — i on posicionar-se pel rebot**")
+                        st.caption(
+                            "Volum de tirs per zona (no eficiència): útil per a l'scouting — si un equip "
+                            "concentra molts tirs en una zona, val la pena preparar-hi el rebot. "
+                            "El play-by-play de la FCBQ no registra on cau cada rebot, així que això no és "
+                            "una predicció calculada amb les teves dades, sinó una pauta general de bàsquet: "
+                            "els tirs llargs (triples) generen rebots més llargs i dispersos — sovint cap al "
+                            "costat contrari d'on s'ha tirat —, mentre que els tirs des de la zona pintada "
+                            "generen rebots curts i molt disputats sota cistella."
                         )
-                else:
-                    st.info("No hi ha prou tirs a la selecció actual per a aquesta anàlisi.")
+                        df_vol = df_sq.copy()
+                        df_vol["pct_tirs"] = (df_vol["tirs_sel"] / df_vol["tirs_sel"].sum() * 100).round(1)
+                        df_vol = df_vol.sort_values("_ordre")
+                        colors_vol = ["#0F6E56" if "Triple" not in z else "#185FA5" for z in df_vol["zona"]]
+                        fig_vol = go.Figure()
+                        fig_vol.add_trace(go.Bar(
+                            x=df_vol["zona"], y=df_vol["pct_tirs"],
+                            marker_color=colors_vol,
+                            text=[f"{v}%" for v in df_vol["pct_tirs"]],
+                            textposition="outside",
+                            customdata=df_vol[["tirs_sel"]].values,
+                            hovertemplate="<b>%{x}</b><br>%{y}%% dels tirs<br>%{customdata[0]} tirs<extra></extra>"
+                        ))
+                        fig_vol.update_layout(yaxis_title="% dels tirs totals")
+                        st.plotly_chart(chart_style(fig_vol, 280, "Distribució de tirs per zona"),
+                            use_container_width=True)
+
+                        zones_amb_vol = df_vol[df_vol["tirs_sel"] >= 5].sort_values("pct_tirs", ascending=False)
+                        if not zones_amb_vol.empty:
+                            top_vol = zones_amb_vol.iloc[0]
+                            if "Triple" in top_vol["zona"]:
+                                tip_rebot = "esperar rebots llargs i sovint cap al costat contrari d'aquesta zona"
+                            elif "Zona pintada" in top_vol["zona"]:
+                                tip_rebot = "esperar rebots curts i molt disputats sota cistella"
+                            else:
+                                tip_rebot = "esperar rebots de distància mitjana"
+                            st.success(
+                                f"🎯 **Pauta d'scouting**: el {top_vol['pct_tirs']}% dels tirs (amb mostra "
+                                f"suficient) vénen de **{top_vol['zona']}** ({int(top_vol['tirs_sel'])} tirs). "
+                                f"Convé {tip_rebot}."
+                            )
+                    else:
+                        st.info("No hi ha prou tirs a la selecció actual per a aquesta anàlisi.")
 
     col_ma,col_mb=st.columns(2)
     for col_m,tid,tnom,tcol in [
