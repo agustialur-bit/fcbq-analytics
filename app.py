@@ -5950,6 +5950,108 @@ with t7:
         svg.append('</svg>')
         return ''.join(svg)
 
+    def dibuixa_zones_camp(df_zones, value_col="pct_tirs", titol="Distribució de tirs per zona",
+                            colorscale="sequential", fmt="{:.0f}%", W=340, H=400):
+        """Pinta les 7 zones de classifica_zona_tir directament sobre el camp SVG, acolorides
+        segons df_zones[value_col], amb etiqueta de valor i n de tirs al centroide de cada zona.
+
+        df_zones: DataFrame amb columnes ["zona", value_col] (+ "tirs_sel" opcional per l'etiqueta n=).
+        colorscale: "sequential" (un sol color, C_BG_SOFT -> C_ACCENT_DARK) o
+                    "diverging" (C_ERROR <-> C_SUCCESS, centrat a 0, per a diferencials com diff_sq).
+        """
+        import math
+        if df_zones.empty:
+            return (f'<svg viewBox="0 0 {W} {H+38}" xmlns="http://www.w3.org/2000/svg">'
+                    f'<text x="{W//2}" y="{H//2}" text-anchor="middle" font-family="Arial" '
+                    f'font-size="14" fill="#888">Sense dades</text></svg>')
+
+        def hex_rgb(h):
+            h = h.lstrip('#')
+            return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+        Y_MIN, Y_MAX = 8, 100
+        COLS, ROWS = 60, 70  # graella fina -> vores de zona netes, sense calcular polígons a mà
+
+        vals = df_zones.set_index("zona")[value_col].to_dict()
+        tirs_n = df_zones.set_index("zona")["tirs_sel"].to_dict() if "tirs_sel" in df_zones.columns else {}
+
+        vmin, vmax = min(vals.values()), max(vals.values())
+        if colorscale == "diverging":
+            amp = max(abs(vmin), abs(vmax), 0.01)
+            vmin, vmax = -amp, amp
+
+        def color_for(v):
+            if colorscale == "diverging":
+                t = (v - vmin) / (vmax - vmin)
+                if t < 0.5:
+                    (r0, g0, b0), (r1, g1, b1) = hex_rgb(C_ERROR), hex_rgb(C_CHART_GRID)
+                    tt = t / 0.5
+                else:
+                    (r0, g0, b0), (r1, g1, b1) = hex_rgb(C_CHART_GRID), hex_rgb(C_SUCCESS)
+                    tt = (t - 0.5) / 0.5
+            else:
+                tt = 0 if vmax == vmin else (v - vmin) / (vmax - vmin)
+                (r0, g0, b0), (r1, g1, b1) = hex_rgb(C_BG_SOFT), hex_rgb(C_ACCENT_DARK)
+            r = int(r0 + (r1 - r0) * tt); g = int(g0 + (g1 - g0) * tt); b = int(b0 + (b1 - b0) * tt)
+            return f"rgb({r},{g},{b})"
+
+        svg = [f'<svg viewBox="0 0 {W} {H+38}" xmlns="http://www.w3.org/2000/svg" '
+               f'style="width:100%;max-width:420px;border-radius:10px">']
+        svg.append(f'<rect width="{W}" height="{H}" fill="#e8e0d0" rx="6"/>')
+
+        # Graella de cel·les acolorides per zona (sense stroke -> es fonen en un bloc continu)
+        cell_w = W / COLS; cell_h = H / ROWS
+        centroides = {}  # zona -> [suma_px, suma_py, n_cel·les]
+        for row in range(ROWS):
+            for col in range(COLS):
+                px = col * cell_w; py = row * cell_h
+                x_raw = ((px + cell_w / 2) / W) * 100
+                y_raw = Y_MIN + ((py + cell_h / 2) / H) * (Y_MAX - Y_MIN)
+                zona = classifica_zona_tir(x_raw, y_raw)
+                if zona not in vals:
+                    continue  # zona sense dades (mostra insuficient) -> es deixa sense pintar
+                svg.append(f'<rect x="{px:.1f}" y="{py:.1f}" width="{cell_w+0.5:.1f}" height="{cell_h+0.5:.1f}" '
+                           f'fill="{color_for(vals[zona])}" opacity="0.72"/>')
+                c = centroides.setdefault(zona, [0, 0, 0])
+                c[0] += px + cell_w / 2; c[1] += py + cell_h / 2; c[2] += 1
+
+        # Línies del camp per sobre (mateix bloc que dibuixa_mapa_tir_fcbq, sense fill per no tapar les zones)
+        s = 'stroke="#2d5a2d" stroke-width="1.5" fill="none"'
+        cx_c = W // 2; cy_c = 22
+        svg.append(f'<rect x="4" y="4" width="{W-8}" height="{H-8}" {s} rx="3"/>')
+        svg.append(f'<circle cx="{cx_c}" cy="{cy_c}" r="9" {s}/>')
+        svg.append(f'<circle cx="{cx_c}" cy="{cy_c}" r="3" fill="#2d5a2d"/>')
+        z_w = int(W * 0.40); z_h = int(H * 0.34); z_x = (W - z_w) // 2
+        svg.append(f'<rect x="{z_x}" y="4" width="{z_w}" height="{z_h}" {s}/>')
+        r_zona = z_w // 2
+        svg.append(f'<path d="M {z_x} {4+z_h} A {r_zona} {r_zona} 0 0 0 {z_x+z_w} {4+z_h}" {s}/>')
+        dx_paret = cx_c - 4
+        r_triple = int(dx_paret * 1.25)
+        dy_paret = int(math.sqrt(max(r_triple**2 - dx_paret**2, 0)))
+        y_paret = cy_c + dy_paret
+        svg.append(f'<line x1="4" y1="4" x2="4" y2="{y_paret}" {s}/>')
+        svg.append(f'<line x1="{W-4}" y1="4" x2="{W-4}" y2="{y_paret}" {s}/>')
+        svg.append(f'<path d="M 4 {y_paret} A {r_triple} {r_triple} 0 0 0 {W-4} {y_paret}" {s}/>')
+        svg.append(f'<line x1="4" y1="{H-4}" x2="{W-4}" y2="{H-4}" {s}/>')
+
+        # Etiquetes per zona al seu centroide (valor + n de tirs)
+        for zona, (sx, sy, n) in centroides.items():
+            cx_z, cy_z = sx / n, sy / n
+            txt_val = fmt.format(vals[zona])
+            svg.append(f'<text x="{cx_z:.1f}" y="{cy_z-4:.1f}" font-family="Arial" font-size="13" '
+                       f'font-weight="bold" fill="#1a2744" text-anchor="middle" '
+                       f'style="paint-order:stroke" stroke="white" stroke-width="3">{txt_val}</text>')
+            n_tirs = tirs_n.get(zona)
+            if n_tirs is not None:
+                svg.append(f'<text x="{cx_z:.1f}" y="{cy_z+9:.1f}" font-family="Arial" font-size="9" '
+                           f'fill="#374151" text-anchor="middle" '
+                           f'style="paint-order:stroke" stroke="white" stroke-width="2.5">n={int(n_tirs)}</text>')
+
+        svg.append(f'<text x="{W//2}" y="{H+18}" font-family="Arial" font-size="11" '
+                   f'fill="#374151" text-anchor="middle" font-weight="bold">{titol}</text>')
+        svg.append('</svg>')
+        return ''.join(svg)
+
     # ── Secció mapa FCBQ ────────────────────────────────────────────────────
     st.markdown(sec("Mapa de tir — dades de la FCBQ"), unsafe_allow_html=True)
     st.caption("Extreu les coordenades del web de la FCBQ i guarda-les aquí per veure el mapa i l'acumulat.")
@@ -6271,19 +6373,10 @@ console.log(`✅ Copiat! Total: ${punts.length} | Cistelles: ${punts.filter(p=>p
                         df_vol = df_sq.copy()
                         df_vol["pct_tirs"] = (df_vol["tirs_sel"] / df_vol["tirs_sel"].sum() * 100).round(1)
                         df_vol = df_vol.sort_values("_ordre")
-                        colors_vol = ["#0F6E56" if "Triple" not in z else "#185FA5" for z in df_vol["zona"]]
-                        fig_vol = go.Figure()
-                        fig_vol.add_trace(go.Bar(
-                            x=df_vol["zona"], y=df_vol["pct_tirs"],
-                            marker_color=colors_vol,
-                            text=[f"{v}%" for v in df_vol["pct_tirs"]],
-                            textposition="outside",
-                            customdata=df_vol[["tirs_sel"]].values,
-                            hovertemplate="<b>%{x}</b><br>%{y}%% dels tirs<br>%{customdata[0]} tirs<extra></extra>"
-                        ))
-                        fig_vol.update_layout(yaxis_title="% dels tirs totals")
-                        st.plotly_chart(chart_style(fig_vol, 280, "Distribució de tirs per zona"),
-                            use_container_width=True)
+                        st.markdown(dibuixa_zones_camp(
+                            df_vol[["zona", "pct_tirs", "tirs_sel"]], value_col="pct_tirs",
+                            titol="% de tirs per zona", colorscale="sequential", fmt="{:.0f}%"
+                        ), unsafe_allow_html=True)
 
                         zones_amb_vol = df_vol[df_vol["tirs_sel"] >= 5].sort_values("pct_tirs", ascending=False)
                         if not zones_amb_vol.empty:
