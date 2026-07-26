@@ -1455,6 +1455,67 @@ def calc_onoff_ts(df_orig, jugadora, equip_id, teams):
         "pts_on": pts_on, "pts_off": pts_off,
     }
 
+def calc_lineup_impact(df_orig, jugadores_on, jugadores_off, equip_id, teams, quart_ini=None, quart_fi=None):
+    """Generalitza calc_onoff() a un lineup de diverses jugadores.
+    jugadores_on = han d'estar TOTES a pista; jugadores_off = cap d'elles pot ser-hi.
+    Reutilitza el patró de microintervals de calc_pm_combinacions()/get_intervals_jugadores_global()."""
+    rival_id = next((t for t in teams if t != equip_id), None)
+    if rival_id is None: return None
+
+    MINS_Q = 10
+    MIN_POSS = 4
+    intervals_jug = get_intervals_jugadores_global(df_orig)
+    jugs_eq = [j for j, ivs in intervals_jug.items() if ivs and str(ivs[0][2]) == str(equip_id)]
+    if not jugs_eq: return None
+
+    df_t = df_orig.copy()
+    df_t["t_abs"] = df_t.apply(
+        lambda r: (int(r["quart"])-1)*10+(10-float(r["min_num"]))
+        if float(r.get("min_num",0))<=10 else float(r.get("min_num",0)), axis=1)
+
+    t_min_range = float((quart_ini-1)*MINS_Q) if quart_ini else 0.0
+    t_max_range = float(quart_fi*MINS_Q) if quart_fi else float(df_orig["quart"].max()*MINS_Q)
+
+    canvis = {round(t_min_range,2), round(t_max_range,2)}
+    for j in jugs_eq:
+        for ti, tf, _ in intervals_jug[j]:
+            if tf > t_min_range and ti < t_max_range:
+                canvis.add(round(max(ti, t_min_range),2))
+                canvis.add(round(min(tf, t_max_range),2))
+    canvis = sorted(canvis)
+
+    lineup_intervals, resta_intervals = [], []
+    for i in range(len(canvis)-1):
+        t0, t1 = canvis[i], canvis[i+1]
+        if t1 - t0 < 0.01: continue
+        tm = (t0+t1)/2
+        en_pista_ara = [j for j in jugs_eq
+                        if any(ti <= tm < tf for ti,tf,_ in intervals_jug[j])]
+        if len(en_pista_ara) != 5: continue
+        compleix = all(j in en_pista_ara for j in jugadores_on) and \
+                   not any(j in en_pista_ara for j in jugadores_off)
+        (lineup_intervals if compleix else resta_intervals).append((t0, t1))
+
+    def bucket_rtg(intervals):
+        if not intervals:
+            return {"minuts": 0.0, "off_rtg": None, "def_rtg": None, "net_rtg": None,
+                     "pts_of": 0, "pts_def": 0, "poss_of": 0.0, "poss_def": 0.0}
+        mask = df_t["t_abs"].apply(lambda t: any(ti <= t < tf for ti,tf in intervals))
+        df_eq  = df_t[mask & (df_t["idEquip"]==equip_id)]
+        df_riv = df_t[mask & (df_t["idEquip"]==rival_id)]
+        mins_tot = round(sum(tf-ti for ti,tf in intervals), 1)
+        pts_of  = int(df_eq["punts"].sum())
+        pts_def = int(df_riv["punts"].sum())
+        poss_of  = calc_possessions(df_eq)
+        poss_def = calc_possessions(df_riv)
+        off_rtg = round(pts_of/poss_of*100, 1) if poss_of >= MIN_POSS else None
+        def_rtg = round(pts_def/poss_def*100, 1) if poss_def >= MIN_POSS else None
+        net_rtg = round(off_rtg - def_rtg, 1) if (off_rtg is not None and def_rtg is not None) else None
+        return {"minuts": mins_tot, "off_rtg": off_rtg, "def_rtg": def_rtg, "net_rtg": net_rtg,
+                "pts_of": pts_of, "pts_def": pts_def, "poss_of": round(poss_of,1), "poss_def": round(poss_def,1)}
+
+    return {"lineup": bucket_rtg(lineup_intervals), "resta": bucket_rtg(resta_intervals)}
+
 def calc_metriques_partit(df_jug, match_id, nom_equip, nom_rival):
     """Calcula totes les mètriques avançades d'un equip en un partit."""
     pts_tot = int(df_jug["punts"].sum())
@@ -2996,8 +3057,8 @@ def genera_excel_temporada():
     buf=io.BytesIO(); wb.save(buf); buf.seek(0)
     return buf.getvalue()
 
-t1,t2,t3,t4,t_onoff,t5,t6,t_arq,t7,t8,t9 = st.tabs([
-    "🏀 Partit","👤 Jugadores","⏱ Ritme","⚡ Eficiència","⚖️ On/Off","🔄 Rotacions",
+t1,t_kp,t2,t3,t4,t_onoff,t5,t6,t_arq,t7,t8,t9 = st.tabs([
+    "🏀 Partit","🌟 Key Performers","👤 Jugadores","⏱ Ritme","⚡ Eficiència","⚖️ On/Off","🔄 Rotacions",
     "📈 Hist. Jugadores","🎭 Arquetips","🎯 Mapa de Tir","🎬 Vídeo","📚 Històric"
 ])
 
@@ -3181,6 +3242,155 @@ with t1:
     st.markdown(table_html, unsafe_allow_html=True)
     csv_data=df_f[["num","quart","temps","idEquip","equip_nom","dorsal","jugador","accio","marcador","punts"]].to_csv(index=False).encode("utf-8")
     st.download_button("⬇ Descarregar CSV",csv_data,f"pbp_{match_id}.csv","text/csv")
+
+# ══════════════════════════════════════════════════
+# TAB KEY PERFORMERS
+# ══════════════════════════════════════════════════
+with t_kp:
+    st.markdown(sec("🌟 Destacats del partit"), unsafe_allow_html=True)
+    st.caption("Resum dels destacats del partit carregat — reutilitza les mateixes mètriques que la resta de pestanyes, no en calcula de noves.")
+
+    col_j_kp = "jugador" if "jugador" in df_orig.columns else "jugadora"
+    intervals_kp = get_intervals_jugadores_global(df_orig)
+
+    df_t_kp = df_orig.copy()
+    df_t_kp["t_abs"] = df_t_kp.apply(
+        lambda r: (int(r["quart"])-1)*10+(10-float(r["min_num"]))
+        if float(r.get("min_num",0))<=10 else float(r.get("min_num",0)), axis=1)
+    df_t_kp["idEquip"] = df_t_kp["idEquip"].astype(str)
+
+    noms_equip_kp = [n.upper() for n in [nom_a, nom_b] if n]
+    kp_rows = []
+    for jug_kp in df_orig[col_j_kp].unique():
+        if not jug_kp or str(jug_kp) in ("", "nan"): continue
+        if str(jug_kp).upper() in noms_equip_kp: continue  # descarta files d'equip (no jugadores)
+        if len(str(jug_kp).split()) > 4: continue  # noms d'equip solen ser llargs
+        dj_kp = df_orig[df_orig[col_j_kp] == jug_kp]
+        eq_id_kp = str(dj_kp["idEquip"].iloc[0])
+        eq_nom_kp = team_names.get(eq_id_kp, dj_kp["equip_nom"].iloc[0] if "equip_nom" in dj_kp.columns else "?")
+        rival_kp = [t for t in teams if str(t) != eq_id_kp]
+        rival_id_kp = str(rival_kp[0]) if rival_kp else None
+
+        punts_kp = int(dj_kp["punts"].sum())
+        tc_conv_kp = int(dj_kp["accio"].str.contains("Cistella de 2|Cistella de 3", case=False, na=False).sum())
+        tc_int_kp = tc_conv_kp + int(dj_kp["accio"].str.contains(
+            "Intent fallat de 2|Intent fallat de 3|fallat de 2|fallat de 3", case=False, na=False).sum())
+        tl_conv_kp = int(dj_kp["accio"].str.contains("Cistella de 1", case=False, na=False).sum())
+        tl_int_kp = tl_conv_kp + int(dj_kp["accio"].str.contains("Intent fallat de 1", case=False, na=False).sum())
+        ts_denom_kp = 2 * (tc_int_kp + 0.44 * tl_int_kp)
+        ts_kp = round(punts_kp / ts_denom_kp * 100, 1) if ts_denom_kp > 0 else None
+
+        ivs_kp = intervals_kp.get(jug_kp, [])
+        min_jugats_kp = sum(tf - ti for ti, tf, _ in ivs_kp)
+        pf_kp = pc_kp = 0
+        usage_kp = None
+        if ivs_kp:
+            for ti_kp, tf_kp, _ in ivs_kp:
+                df_i_kp = df_t_kp[(df_t_kp["t_abs"] >= ti_kp) & (df_t_kp["t_abs"] < tf_kp)]
+                pf_kp += int(df_i_kp[df_i_kp["idEquip"] == eq_id_kp]["punts"].sum())
+                if rival_id_kp:
+                    pc_kp += int(df_i_kp[df_i_kp["idEquip"] == rival_id_kp]["punts"].sum())
+            mask_on_kp = df_t_kp["t_abs"].apply(lambda t: any(ti <= t < tf for ti, tf, _ in ivs_kp))
+            df_eq_on_kp = df_t_kp[mask_on_kp & (df_t_kp["idEquip"] == eq_id_kp)]
+            usage_kp = calc_usage_rate(dj_kp, df_eq_on_kp)
+
+        pts_min_kp = round(punts_kp / min_jugats_kp, 2) if min_jugats_kp > 0 else None
+
+        kp_rows.append({
+            "jugadora": jug_kp, "equip_id": eq_id_kp, "equip_nom": eq_nom_kp,
+            "punts": punts_kp, "ts": ts_kp, "n_intents": tc_int_kp + tl_int_kp,
+            "pm": (pf_kp - pc_kp) if ivs_kp else None, "usage": usage_kp,
+            "minuts": round(min_jugats_kp, 1), "pts_min": pts_min_kp,
+        })
+
+    df_kp = pd.DataFrame(kp_rows)
+
+    def _card_or_dash(label, cond, value_fn, sub_fn, color=C_ACCENT):
+        if cond:
+            st.markdown(card(label, value_fn(), sub_fn(), color), unsafe_allow_html=True)
+        else:
+            st.markdown(card(label, "—", "Dades insuficients", C_LABEL), unsafe_allow_html=True)
+
+    r1c1, r1c2, r1c3 = st.columns(3)
+    r2c1, r2c2, r2c3 = st.columns(3)
+
+    with r1c1:
+        cond = not df_kp.empty and df_kp["punts"].notna().any()
+        if cond:
+            top_pts = df_kp.loc[df_kp["punts"].idxmax()]
+            col_pts = COLOR_A if top_pts["equip_id"] == (str(teams[0]) if teams else None) else COLOR_B
+        _card_or_dash("Màxima anotadora", cond,
+            lambda: top_pts["jugadora"], lambda: f"{int(top_pts['punts'])} punts · {top_pts['equip_nom']}",
+            col_pts if cond else C_LABEL)
+
+    with r1c2:
+        df_ts_ok = df_kp[(df_kp["n_intents"] >= 3) & df_kp["ts"].notna()]
+        cond = not df_ts_ok.empty
+        if cond:
+            top_ts = df_ts_ok.loc[df_ts_ok["ts"].idxmax()]
+            col_ts = COLOR_A if top_ts["equip_id"] == (str(teams[0]) if teams else None) else COLOR_B
+        _card_or_dash("Millor TS%", cond,
+            lambda: top_ts["jugadora"], lambda: f"{top_ts['ts']}% TS · {top_ts['equip_nom']} (≥3 intents)",
+            col_ts if cond else C_LABEL)
+
+    with r1c3:
+        df_pm_ok = df_kp[df_kp["pm"].notna()]
+        cond = not df_pm_ok.empty
+        if cond:
+            top_pm = df_pm_ok.loc[df_pm_ok["pm"].idxmax()]
+            col_pm = C_SUCCESS if top_pm["pm"] >= 0 else C_ERROR
+        _card_or_dash("Millor +/-", cond,
+            lambda: top_pm["jugadora"], lambda: f"{'+' if top_pm['pm']>=0 else ''}{int(top_pm['pm'])} · {top_pm['equip_nom']}",
+            col_pm if cond else C_LABEL)
+
+    with r2c1:
+        df_us_ok = df_kp[df_kp["usage"].notna() & df_kp["pts_min"].notna()]
+        cond = False
+        if not df_us_ok.empty:
+            mitj_usage_eq = df_us_ok.groupby("equip_id")["usage"].transform("mean")
+            df_us_cand = df_us_ok[df_us_ok["usage"] >= mitj_usage_eq]
+            cond = not df_us_cand.empty
+        if cond:
+            top_us = df_us_cand.loc[df_us_cand["pts_min"].idxmax()]
+            col_us = COLOR_A if top_us["equip_id"] == (str(teams[0]) if teams else None) else COLOR_B
+        _card_or_dash("Millor Usage% × Pts/min", cond,
+            lambda: top_us["jugadora"], lambda: f"Usage {top_us['usage']:.1f}% · {top_us['pts_min']} pts/min",
+            col_us if cond else C_LABEL)
+
+    with r2c2:
+        ef_kp = calc_eficiencies(df_orig, teams, team_names)
+        tid_a_kp = teams[0] if teams else None
+        tid_b_kp = teams[1] if len(teams) > 1 else None
+        net_a_kp = ef_kp.get(tid_a_kp, {}).get("net_rtg") if tid_a_kp else None
+        net_b_kp = ef_kp.get(tid_b_kp, {}).get("net_rtg") if tid_b_kp else None
+        cond = net_a_kp is not None
+        _card_or_dash("Net Rating", cond,
+            lambda: f"{'+' if net_a_kp>=0 else ''}{net_a_kp}",
+            lambda: f"{nom_a} · {nom_b}: {'+' if (net_b_kp or 0)>=0 else ''}{net_b_kp if net_b_kp is not None else '—'}",
+            (COLOR_A if cond and net_a_kp >= 0 else C_ERROR) if cond else C_LABEL)
+
+    with r2c3:
+        from scipy import stats as _sp_stats_kp
+        def _rot_equip(eq_id_r):
+            d = df_kp[(df_kp["equip_id"] == str(eq_id_r)) & df_kp["pm"].notna() & (df_kp["minuts"] >= 0.5)].copy()
+            if len(d) < 3: return None
+            d["pm_min"] = d["pm"] / d["minuts"].replace(0, 1)
+            if d["minuts"].std() == 0 or d["pm_min"].std() == 0: return None
+            rho, _ = _sp_stats_kp.pearsonr(d["minuts"], d["pm_min"])
+            return round(5 * (rho + 1), 1)
+        rot_a_kp = _rot_equip(teams[0]) if teams else None
+        rot_b_kp = _rot_equip(teams[1]) if len(teams) > 1 else None
+        cond = rot_a_kp is not None
+        def _rot_semafor(v):
+            if v is None: return "—"
+            if v >= 7.5: return f"🟢{v}"
+            if v >= 5.5: return f"🟡{v}"
+            if v >= 3.5: return f"🟠{v}"
+            return f"🔴{v}"
+        _card_or_dash("ROT", cond,
+            lambda: _rot_semafor(rot_a_kp),
+            lambda: f"{nom_a} · {nom_b}: {_rot_semafor(rot_b_kp)}",
+            C_ACCENT if cond else C_LABEL)
 
 # ══════════════════════════════════════════════════
 # TAB 2: JUGADORES
@@ -3652,6 +3862,76 @@ with t3:
         fig_qt.update_layout(barmode="group")
         st.plotly_chart(chart_style(fig_qt, 260, "True Shooting % per quart"), use_container_width=True)
 
+    # ── Liderant vs. Remolcant ────────────────────────────────────────────
+    st.markdown(sec("📈 Liderant vs. Remolcant"), unsafe_allow_html=True)
+    st.caption(
+        "Eficiència ofensiva segons l'estat del marcador ABANS de cada acció (no després — "
+        "si ja s'ha tirat, el marcador ja inclouria el resultat de la pròpia jugada). "
+        "Reutilitza score_evo() ja existent; mínim 4 possessions per bucket per ser fiable."
+    )
+    score_prev_lvr = score_df.sort_values("num")[["num", "diff"]].copy()
+    score_prev_lvr["marge_previ_a"] = score_prev_lvr["diff"].shift(1).fillna(0)
+    df_lvr = df_orig.merge(score_prev_lvr[["num", "marge_previ_a"]], on="num", how="left")
+    df_lvr["marge_previ_a"] = df_lvr["marge_previ_a"].fillna(0)
+
+    MIN_POSS_LVR = 4
+    bucket_order_lvr = ["📈 Liderant", "➡️ Empatat", "📉 Remolcant"]
+    bucket_colors_lvr = {"📈 Liderant": C_SUCCESS, "➡️ Empatat": C_LABEL, "📉 Remolcant": C_ERROR}
+
+    for tid_lvr, tnom_lvr in [(teams[0] if teams else None, nom_a), (teams[1] if len(teams)>1 else None, nom_b)]:
+        if tid_lvr is None: continue
+        st.markdown(f"**{tnom_lvr}**")
+        signe_lvr = 1 if tid_lvr == (teams[0] if teams else None) else -1
+        df_eq_lvr = df_lvr[df_lvr["idEquip"] == tid_lvr].copy()
+        df_eq_lvr["marge_propi"] = df_eq_lvr["marge_previ_a"] * signe_lvr
+        df_eq_lvr["bucket"] = df_eq_lvr["marge_propi"].apply(
+            lambda m: "📈 Liderant" if m > 0 else ("➡️ Empatat" if m == 0 else "📉 Remolcant"))
+
+        resultats_lvr = {}
+        for bkt in bucket_order_lvr:
+            df_b_lvr = df_eq_lvr[df_eq_lvr["bucket"] == bkt]
+            poss_b_lvr = calc_possessions(df_b_lvr)
+            if poss_b_lvr < MIN_POSS_LVR:
+                resultats_lvr[bkt] = None
+                continue
+            pts_b_lvr = int(df_b_lvr["punts"].sum())
+            tc_conv_b = int(df_b_lvr["accio"].str.contains("Cistella de 2|Cistella de 3", case=False, na=False).sum())
+            tc_int_b = tc_conv_b + int(df_b_lvr["accio"].str.contains(
+                "Intent fallat de 2|Intent fallat de 3|fallat de 2|fallat de 3", case=False, na=False).sum())
+            tl_conv_b = int(df_b_lvr["accio"].str.contains("Cistella de 1", case=False, na=False).sum())
+            tl_int_b = tl_conv_b + int(df_b_lvr["accio"].str.contains("Intent fallat de 1", case=False, na=False).sum())
+            ts_denom_b = 2 * (tc_int_b + 0.44 * tl_int_b)
+            resultats_lvr[bkt] = {
+                "poss": round(poss_b_lvr, 1), "pts": pts_b_lvr,
+                "off_rtg": round(pts_b_lvr / poss_b_lvr * 100, 1),
+                "ppp": round(pts_b_lvr / poss_b_lvr, 2),
+                "ts": round(pts_b_lvr / ts_denom_b * 100, 1) if ts_denom_b > 0 else 0,
+            }
+
+        cols_lvr = st.columns(3)
+        for col_lvr, bkt in zip(cols_lvr, bucket_order_lvr):
+            with col_lvr:
+                r_lvr = resultats_lvr[bkt]
+                if r_lvr is None:
+                    st.markdown(card(bkt, "—", "Dades insuficients", C_LABEL), unsafe_allow_html=True)
+                else:
+                    st.markdown(card(bkt, r_lvr["off_rtg"],
+                        f"TS% {r_lvr['ts']} · {r_lvr['poss']} poss · PPP {r_lvr['ppp']}",
+                        bucket_colors_lvr[bkt]), unsafe_allow_html=True)
+
+        vals_chart_lvr = [(bkt, resultats_lvr[bkt]["off_rtg"]) for bkt in bucket_order_lvr if resultats_lvr[bkt] is not None]
+        if vals_chart_lvr:
+            fig_lvr = go.Figure()
+            fig_lvr.add_trace(go.Bar(
+                x=[v[0] for v in vals_chart_lvr], y=[v[1] for v in vals_chart_lvr],
+                marker_color=[bucket_colors_lvr[v[0]] for v in vals_chart_lvr],
+                text=[f"{v[1]}" for v in vals_chart_lvr], textposition="outside"))
+            fig_lvr.update_layout(yaxis_title="Off Rtg")
+            st.plotly_chart(chart_style(fig_lvr, 240, f"{tnom_lvr} — Off Rtg segons l'estat del marcador"),
+                use_container_width=True)
+        else:
+            st.info(f"No hi ha prou possessions en cap bucket per a {tnom_lvr}.")
+
     st.markdown(sec("Momentum shifts"), unsafe_allow_html=True)
     st.caption("Runs de 5+ punts consecutius sense resposta del rival.")
     THRESHOLD=5; shift_rows=[]
@@ -3780,6 +4060,47 @@ with t9:
 # TAB 5: HISTÒRIC JUGADORES
 # ══════════════════════════════════════════════════
 with t4:
+    # ── Comparació d'equips (tornado chart) ─────────────────────────────────
+    st.markdown(sec("📊 Comparació d'equips"), unsafe_allow_html=True)
+    st.caption("Off/Def/Net Rtg, TS%, eFG% i possessions totals dels dos equips d'aquest partit, costat a costat.")
+
+    tid_a_cmp = teams[0] if teams else None
+    tid_b_cmp = teams[1] if len(teams) > 1 else None
+    if tid_a_cmp and tid_b_cmp:
+        ef_cmp = calc_eficiencies(df_orig, teams, team_names)
+        df_eq_a_cmp = df_orig[df_orig["idEquip"] == tid_a_cmp]
+        df_eq_b_cmp = df_orig[df_orig["idEquip"] == tid_b_cmp]
+        met_a_cmp = calc_metriques_partit(df_eq_a_cmp, match_id, nom_a, nom_b)
+        met_b_cmp = calc_metriques_partit(df_eq_b_cmp, match_id, nom_b, nom_a)
+
+        metrics_cmp = [
+            ("Off Rtg", ef_cmp[tid_a_cmp]["off_rtg"], ef_cmp[tid_b_cmp]["off_rtg"]),
+            ("Def Rtg", ef_cmp[tid_a_cmp]["def_rtg"], ef_cmp[tid_b_cmp]["def_rtg"]),
+            ("Net Rtg", ef_cmp[tid_a_cmp]["net_rtg"], ef_cmp[tid_b_cmp]["net_rtg"]),
+            ("TS%", met_a_cmp["TS%"], met_b_cmp["TS%"]),
+            ("eFG%", met_a_cmp["eFG%"], met_b_cmp["eFG%"]),
+            ("Possessions", met_a_cmp["Possessions"], met_b_cmp["Possessions"]),
+        ]
+        labels_cmp = [m[0] for m in metrics_cmp]
+        vals_a_cmp = [m[1] for m in metrics_cmp]
+        vals_b_cmp = [m[2] for m in metrics_cmp]
+
+        fig_cmp = go.Figure()
+        fig_cmp.add_trace(go.Bar(
+            y=labels_cmp, x=vals_a_cmp, orientation="h", name=nom_a,
+            marker_color=COLOR_A, text=[f"{v:g}" for v in vals_a_cmp], textposition="outside"))
+        fig_cmp.add_trace(go.Bar(
+            y=labels_cmp, x=[-v for v in vals_b_cmp], orientation="h", name=nom_b,
+            marker_color=COLOR_B, text=[f"{v:g}" for v in vals_b_cmp], textposition="outside"))
+        fig_cmp.update_layout(
+            barmode="overlay",
+            xaxis=dict(showticklabels=False, zeroline=True, zerolinecolor=C_CARD_BORDER, zerolinewidth=1.5),
+            yaxis=dict(title=""),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+        st.plotly_chart(chart_style(fig_cmp, 340, "Comparació d'equips"), use_container_width=True)
+    else:
+        st.info("Calen dos equips per a la comparació.")
+
     # ── ROT — Índex de gestió de rotacions ─────────────────────────────────
     st.markdown(sec("ROT — Índex de gestió de rotacions"), unsafe_allow_html=True)
     st.caption("ROT = 5 · (ρ + 1)  on ρ = correlació de Pearson entre minuts jugats i +/- per minut de cada jugadora. Escala 0-10. ROT alt = les jugadores que juguen més aporten més.")
@@ -4199,6 +4520,71 @@ with t_onoff:
                 st.plotly_chart(
                     chart_style(fig_to, 420, "TS% vs Δ Net Rtg — Talent vs Optimization ofensiu"),
                     use_container_width=True)
+
+            # ── Lineup Impact Tool ────────────────────────────────────────────
+            st.markdown(sec("🧩 Lineup Impact Tool"), unsafe_allow_html=True)
+            st.caption(
+                "Compara el rendiment de l'equip amb un lineup concret a pista ('Amb aquest lineup') "
+                "enfront de la resta del partit. 'A pista' = han de ser-hi TOTES; 'Fora de pista' = cap "
+                "d'elles hi pot ser. Mínim 4 possessions per ser fiable."
+            )
+            if tid_oo2:
+                col_li1, col_li2 = st.columns(2)
+                with col_li1:
+                    jugs_on_li = st.multiselect(
+                        "A pista (ON) — màx. 5", jugs_oo2, key="li_on", max_selections=5)
+                with col_li2:
+                    jugs_off_li = st.multiselect(
+                        "Fora de pista (OFF)",
+                        [j for j in jugs_oo2 if j not in jugs_on_li], key="li_off")
+
+                n_quarts_li = int(df_onoff2["quart"].max()) if not df_onoff2.empty else 4
+                usar_rang_li = st.checkbox("Limitar a un rang de quarts", key="li_rang")
+                quart_ini_li, quart_fi_li = None, None
+                if usar_rang_li:
+                    quart_ini_li, quart_fi_li = st.select_slider(
+                        "Rang de quarts", options=list(range(1, n_quarts_li+1)),
+                        value=(1, n_quarts_li), key="li_quarts")
+
+                if st.button("Calcular", key="li_calcula"):
+                    if not jugs_on_li:
+                        st.warning("Selecciona com a mínim una jugadora que hagi d'estar a pista.")
+                    else:
+                        df_li = df_onoff2.copy()
+                        df_li["jugador"] = df_li[col_jug2]
+                        res_li = calc_lineup_impact(
+                            df_li, jugs_on_li, jugs_off_li, tid_oo2, teams_oo2,
+                            quart_ini_li, quart_fi_li)
+                        if not res_li:
+                            st.info("No hi ha prou dades per calcular aquest lineup.")
+                        else:
+                            col_lu, col_re = st.columns(2)
+                            for col_x, bucket_key, titol_x in [
+                                (col_lu, "lineup", "Amb aquest lineup"),
+                                (col_re, "resta", "Resta del partit"),
+                            ]:
+                                b = res_li[bucket_key]
+                                with col_x:
+                                    st.markdown(f"**{titol_x}**")
+                                    if b["minuts"] <= 0:
+                                        st.caption("— Sense minuts en aquesta situació —")
+                                        continue
+                                    c1li, c2li, c3li = st.columns(3)
+                                    with c1li:
+                                        st.markdown(card("Minuts", b["minuts"], "", COLOR_A), unsafe_allow_html=True)
+                                    with c2li:
+                                        off_txt = b["off_rtg"] if b["off_rtg"] is not None else "—"
+                                        st.markdown(card("Off Rtg", off_txt, "pts/100 poss", COLOR_A), unsafe_allow_html=True)
+                                    with c3li:
+                                        def_txt = b["def_rtg"] if b["def_rtg"] is not None else "—"
+                                        st.markdown(card("Def Rtg", def_txt, "pts/100 poss", "#dc2626"), unsafe_allow_html=True)
+                                    if b["net_rtg"] is not None:
+                                        nc_li = "#16a34a" if b["net_rtg"] >= 0 else "#dc2626"
+                                        st.markdown(card("Net Rating",
+                                            f"{'+' if b['net_rtg']>=0 else ''}{b['net_rtg']}",
+                                            f"{b['pts_of']}-{b['pts_def']} pts", nc_li), unsafe_allow_html=True)
+                                    else:
+                                        st.caption("⚠️ Poques possessions per un rating fiable")
 
 with t5:
     # ══════════════════════════════════════════════════
@@ -6165,6 +6551,32 @@ console.log(`✅ Copiat! Total: ${punts.length} | Cistelles: ${punts.filter(p=>p
 
         except Exception as e:
             st.error(f"Error: {e}")
+
+    # ── Punts a la pintura ───────────────────────────────────────────────────
+    st.markdown(sec("🎯 Punts a la pintura"), unsafe_allow_html=True)
+    st.caption(
+        "Percentatge dels punts totals de cada equip anotats des de la 🎯 Zona pintada, "
+        "segons el mapa de tir guardat per aquest partit."
+    )
+    df_tirs_pintura = load_tirs_fcbq(match_id=match_id)
+    col_pin_a, col_pin_b = st.columns(2)
+    for col_pin, tid_pin, nom_pin, color_pin in [
+        (col_pin_a, teams[0] if teams else None, nom_a, COLOR_A),
+        (col_pin_b, teams[1] if len(teams)>1 else None, nom_b, COLOR_B),
+    ]:
+        with col_pin:
+            st.markdown(f"**{nom_pin}**")
+            df_tirs_eq_pin = df_tirs_pintura[df_tirs_pintura["equip_nom"]==nom_pin] if not df_tirs_pintura.empty else df_tirs_pintura
+            if tid_pin is None or df_tirs_eq_pin.empty:
+                st.caption("— Sense mapa de tir per aquest partit —")
+                continue
+            zones_pin = df_tirs_eq_pin.apply(lambda r: classifica_zona_tir(float(r["x"]), float(r["y"])), axis=1)
+            fets_pintura = int(df_tirs_eq_pin[zones_pin=="🎯 Zona pintada"]["fet"].sum())
+            pts_pintura = fets_pintura * 2
+            pts_tot_eq_pin = int(df_orig[df_orig["idEquip"]==tid_pin]["punts"].sum())
+            pct_pin = round(pts_pintura / pts_tot_eq_pin * 100, 1) if pts_tot_eq_pin > 0 else 0
+            st.markdown(card("% Punts a la pintura", f"{pct_pin}%",
+                f"{pts_pintura} de {pts_tot_eq_pin} punts totals", color_pin), unsafe_allow_html=True)
 
     # ── Mapa acumulat ───────────────────────────────────────────────────────
     st.markdown(sec("Mapa de tir acumulat — temporada"), unsafe_allow_html=True)
