@@ -1547,6 +1547,7 @@ def calc_metriques_partit(df_jug, match_id, nom_equip, nom_rival):
         "TS%":          round(pts_tot / ts_denom * 100, 1) if ts_denom > 0 else 0,
         "TC%":          round(tc_conv / tc_int * 100, 1) if tc_int > 0 else 0,
         "eFG%":         round((tc_conv + 0.5 * c3_conv) / tc_int * 100, 1) if tc_int > 0 else 0,
+        "FTAr":         round(tl_int / tc_int * 100, 1) if tc_int > 0 else 0,
         "2pts%":        round(c2_conv / c2_int * 100, 1) if c2_int > 0 else 0,
         "3pts%":        round(c3_conv / c3_int * 100, 1) if c3_int > 0 else 0,
         "TL%":          round(tl_conv / tl_int * 100, 1) if tl_int > 0 else 0,
@@ -1769,9 +1770,9 @@ def genera_excel_analisi():
         ("IDENTIFICACIÓ",2,4,'0C447C'),
         ("RESULTAT",5,6,'185FA5'),
         ("POSSESSIONS",7,9,'0F6E56'),
-        ("EFICIÈNCIA DE TIR",10,15,'3B6D11'),
-        ("DISTRIBUCIÓ PUNTS",16,18,'854F0B'),
-        ("DETALL TIRS",19,21,'533800' if False else '993C1D'),
+        ("EFICIÈNCIA DE TIR",10,16,'3B6D11'),
+        ("DISTRIBUCIÓ PUNTS",17,19,'854F0B'),
+        ("DETALL TIRS",20,22,'533800' if False else '993C1D'),
     ]
     row=4
     for grup,c_ini,c_fi,color in grups:
@@ -1785,7 +1786,7 @@ def genera_excel_analisi():
     caps=[('Data',11),('Equip',20),('Rival',20),
           ('Pts',8),('Pts rival',9),
           ('Poss.',9),('Pts/Poss',10),('Off Rtg',9),
-          ('TS%',8),('TC%',8),('eFG%',8),('2pts%',8),('3pts%',8),('TL%',8),
+          ('TS%',8),('TC%',8),('eFG%',8),('FTAr',8),('2pts%',8),('3pts%',8),('TL%',8),
           ('%Pts 2',9),('%Pts 3',9),('%Pts TL',9),
           ('1pt conv',9),('1pt int',9),('1pt%',8),
           ('2pts conv',9),('2pts int',9),('2pts%',8),
@@ -1847,7 +1848,7 @@ def genera_excel_analisi():
             r['Data'], r['Equip'], r['Rival'],
             r['Pts'], r['Pts rival'],
             r['Possessions'], r['Pts/Poss'], r['Off Rtg'],
-            r['TS%'], r['TC%'], r['eFG%'], r['2pts%'], r['3pts%'], r['TL%'],
+            r['TS%'], r['TC%'], r['eFG%'], r['FTAr'], r['2pts%'], r['3pts%'], r['TL%'],
             r['%Pts 2pts'], r['%Pts 3pts'], r['%Pts TL'],
             r['1pt conv'], r['1pt int'], r['1pt%'],
             r['2pts conv'], r['2pts int'], r['2pts% ef'],
@@ -1870,7 +1871,7 @@ def genera_excel_analisi():
     fc(ws1,row,3,'',bg=GROC); fc(ws1,row,4,'',bg=GROC)
     data_ini = row - len(all_rows) - 1
     data_fi  = row - 2
-    for ci in range(5,22):
+    for ci in range(5,23):
         col_l = get_column_letter(ci)
         c2=ws1.cell(row=row,column=ci)
         c2.value=f'=IFERROR(AVERAGE({col_l}{data_ini}:{col_l}{data_fi}),"")'
@@ -6803,6 +6804,23 @@ console.log(`✅ Copiat! Total: ${punts.length} | Cistelles: ${punts.filter(p=>p
                                 f"🎯 **Pauta d'scouting**: el {top_vol['pct_tirs']}% dels tirs (amb mostra "
                                 f"suficient) vénen de **{top_vol['zona']}** ({int(top_vol['tirs_sel'])} tirs). "
                                 f"Convé {tip_rebot}."
+                            )
+
+                        # ── MOREYr — Rim rate + 3PA rate ─────────────────────────
+                        st.markdown("**📊 MOREYr — Tirs en zones d'alt valor**")
+                        tirs_totals_mr = df_sq["tirs_sel"].sum()
+                        tirs_pintada_mr = df_sq[df_sq["zona"]=="🎯 Zona pintada"]["tirs_sel"].sum()
+                        tirs_triple_mr = df_sq[df_sq["zona"].str.startswith("🏹")]["tirs_sel"].sum()
+                        moreyr = round((tirs_pintada_mr+tirs_triple_mr)/tirs_totals_mr*100, 1) if tirs_totals_mr > 0 else None
+                        if moreyr is None:
+                            st.info("Cal mapa de tir per calcular MOREYr")
+                        else:
+                            st.markdown(card("MOREYr", f"{moreyr}%", "Rim + Triple / Total tirs", C_ACCENT),
+                                unsafe_allow_html=True)
+                            st.caption(
+                                "MOREYr alt = l'equip concentra els seus tirs en zones d'alt valor esperat "
+                                "(pintada i triple), evitant el mig camp llarg de baixa eficiència. No jutja "
+                                "si l'equip encerta més o menys — només d'on tira."
                             )
                     else:
                         st.info("No hi ha prou tirs a la selecció actual per a aquesta anàlisi.")
