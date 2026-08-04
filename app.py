@@ -950,7 +950,8 @@ def score_evo(df):
         if "-" in marc:
             try:
                 sa,sb=int(marc.split("-")[0]),int(marc.split("-")[1])
-                rows.append({"num":r["num"],"quart":r["quart"],"temps":r["temps"],"scoreA":sa,"scoreB":sb,"diff":sa-sb})
+                rows.append({"num":r["num"],"quart":r["quart"],"temps":r["temps"],"scoreA":sa,"scoreB":sb,"diff":sa-sb,
+                             "min_num":r.get("min_num",0)})
             except: pass
     return pd.DataFrame(rows)
 
@@ -4694,12 +4695,8 @@ with t5:
             # Línies de parcial de l'equip (±)
             if not score_df_rot.empty:
                 score_df_rot["t_min"] = score_df_rot.apply(
-                    lambda r: (int(r["quart"])-1)*10 + r.get("min_num", 0)
-                    if "min_num" in r else (int(r["quart"])-1)*10, axis=1)
-
-                if "min_num" not in score_df_rot.columns:
-                    # Estima minut des del número de jugada
-                    score_df_rot["t_min"] = score_df_rot["num"] / score_df_rot["num"].max() * MINS_TOTAL
+                    lambda r: (int(r["quart"])-1)*10 + (10 - float(r.get("min_num",0)))
+                    if float(r.get("min_num",0)) <= 10 else float(r.get("min_num",0)), axis=1)
 
                 parcial_eq  = score_df_rot["scoreA"] if tid_rot == teams[0] else score_df_rot["scoreB"]
                 parcial_riv = score_df_rot["scoreB"] if tid_rot == teams[0] else score_df_rot["scoreA"]
@@ -4980,19 +4977,20 @@ with t5:
                 st.info(f"{jug_p1} i {jug_p2} no han jugat juntes en aquest partit.")
             else:
                 total_min_j = sum(f-i for i,f in juntes)
-                parcial_j = 0
+                # Suma punts directament del play-by-play (mateix metode que el mapa de calor
+                # de parelles, per garantir que els dos valors coincideixen sempre)
+                df_orig_par = df_orig.copy()
+                df_orig_par["t_abs"] = df_orig_par.apply(
+                    lambda r: (int(r["quart"])-1)*10+(10-float(r["min_num"]))
+                    if float(r.get("min_num",0))<=10 else float(r.get("min_num",0)), axis=1)
+                rival_rot_par = teams[1] if tid_rot == teams[0] else (teams[0] if teams else None)
+                pf_j = pc_j = 0
                 for t_ini,t_fi in juntes:
-                    if "t_min" in score_df_rot.columns:
-                        df_j = score_df_rot[(score_df_rot["t_min"]>=t_ini)&(score_df_rot["t_min"]<=t_fi)]
-                    else:
-                        n1=int(t_ini/MINS_TOTAL*len(score_df_rot))
-                        n2=int(t_fi/MINS_TOTAL*len(score_df_rot))
-                        df_j = score_df_rot.iloc[n1:n2]
-                    if not df_j.empty:
-                        if tid_rot == teams[0]:
-                            parcial_j += (df_j["scoreA"].iloc[-1]-df_j["scoreA"].iloc[0]) -                                          (df_j["scoreB"].iloc[-1]-df_j["scoreB"].iloc[0])
-                        else:
-                            parcial_j += (df_j["scoreB"].iloc[-1]-df_j["scoreB"].iloc[0]) -                                          (df_j["scoreA"].iloc[-1]-df_j["scoreA"].iloc[0])
+                    df_j = df_orig_par[(df_orig_par["t_abs"]>=t_ini)&(df_orig_par["t_abs"]<=t_fi)]
+                    pf_j += int(df_j[df_j["idEquip"]==tid_rot]["punts"].sum())
+                    if rival_rot_par:
+                        pc_j += int(df_j[df_j["idEquip"]==rival_rot_par]["punts"].sum())
+                parcial_j = pf_j - pc_j
 
                 c1,c2,c3 = st.columns(3)
                 col_p = "#16a34a" if parcial_j >= 0 else "#dc2626"
