@@ -6606,6 +6606,13 @@ console.log(`✅ Copiat! Total: ${punts.length} | Cistelles: ${punts.filter(p=>p
             key="sel_partits_mapa")
         if sel_partits:
             df_acum = df_tirs_bd[df_tirs_bd["match_id"].isin(sel_partits)]
+
+            equips_acum = sorted(df_acum["equip_nom"].dropna().unique().tolist())
+            eq_acum_sel = st.radio("Filtra per equip", ["Tots els equips"] + equips_acum,
+                horizontal=True, key="eq_acum_sel")
+            if eq_acum_sel != "Tots els equips":
+                df_acum = df_acum[df_acum["equip_nom"] == eq_acum_sel]
+
             tirs_acum = df_acum[["x","y","fet"]].to_dict("records")
             fets_a = int(df_acum["fet"].sum()); tot_a = len(df_acum)
             c1,c2,c3 = st.columns(3)
@@ -6617,7 +6624,8 @@ console.log(`✅ Copiat! Total: ${punts.length} | Cistelles: ${punts.filter(p=>p
                 ["🎯 Punts individuals","🔥 Mapa de calor","🔥 Calor cistelles","🔥 Calor fallats"],
                 horizontal=True, key="viz_acum_mapa")
 
-            titol_acum = f"{len(sel_partits)} partits seleccionats"
+            titol_acum = (f"{eq_acum_sel} — {len(sel_partits)} partits" if eq_acum_sel != "Tots els equips"
+                          else f"{len(sel_partits)} partits seleccionats")
             if viz_acum == "🎯 Punts individuals":
                 st.markdown(dibuixa_mapa_tir_fcbq(tirs_acum, titol_acum), unsafe_allow_html=True)
             elif viz_acum == "🔥 Mapa de calor":
