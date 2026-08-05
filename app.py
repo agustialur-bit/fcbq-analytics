@@ -498,14 +498,16 @@ MINS_PER_QUART = 10
 def calc_minuts_reals(df):
     """Calcula els minuts reals jugats per cada jugador usant Entra/Surt del camp."""
     players = {}
+    quart_max = int(df["quart"].max()) if not df.empty else 1
     for _, m in df.iterrows():
         nom = m.get("jugador","")
         if not nom or str(nom) in ("","nan"): continue
         idmove_str = str(m.get("accio",""))
         min_ = float(m.get("min_num", 0))
-        # Reconstruïm minut absolut: min_num ja és minut dins del quart
+        # min_num és el minut DINS del quart (cronòmetre enrere: 10→0)
         quart = int(m.get("quart", 1)) if m.get("quart","") != "" else 1
-        t = (quart - 1) * MINS_PER_QUART + min_
+        t = (quart - 1) * MINS_PER_QUART + (MINS_PER_QUART - min_ if min_ <= MINS_PER_QUART else min_)
+        t = max(0, min(t, quart * MINS_PER_QUART))
 
         if nom not in players:
             players[nom] = {"intervals": [], "entrada": None}
@@ -519,11 +521,18 @@ def calc_minuts_reals(df):
             else:
                 inici_quart = (quart - 1) * MINS_PER_QUART
                 players[nom]["intervals"].append((inici_quart, t))
+        elif "Final de període" in idmove_str:
+            if players[nom]["entrada"] is not None:
+                fi = quart * MINS_PER_QUART
+                if fi > players[nom]["entrada"]:
+                    players[nom]["intervals"].append((players[nom]["entrada"], fi))
+                players[nom]["entrada"] = None
 
-    # Tanca intervals oberts
+    # Tanca intervals oberts (jugadores que acaben el partit sense "Surt del camp")
+    fi_partit = quart_max * MINS_PER_QUART
     for nom, p in players.items():
-        if p["entrada"] is not None:
-            p["intervals"].append((p["entrada"], p["entrada"] + MINS_PER_QUART))
+        if p["entrada"] is not None and fi_partit > p["entrada"]:
+            p["intervals"].append((p["entrada"], fi_partit))
 
     minuts = {}
     for nom, p in players.items():
@@ -1932,7 +1941,7 @@ def genera_excel_analisi():
     ws2.row_dimensions[2].height=8
     row2=3
     for ci,cap,w in zip(range(2,16),
-        ['#','Jugadora','Equip','Part.','Pts','Pts/P','Min','Min/P','C2','C3','TL','Faltes','Impacte','Usage%'],
+        ['#','Jugadora','Equip','Part.','Pts','Pts/P','Min (temp.)','Min/P','C2','C3','TL','Faltes','Impacte','Usage%'],
         [5,24,20,8,9,9,9,9,7,7,7,9,12,10]):
         fc(ws2,row2,ci,cap,bold=True,bg=BLAU_MIG,fg=BLANC,size=10)
         ws2.column_dimensions[get_column_letter(ci)].width=w
@@ -2089,6 +2098,11 @@ def genera_excel_analisi():
                 for jj,(ti_p,ei_p) in list(en_pista_p.items()):
                     if fi_p > ti_p: intervals_p.setdefault(jj,[]).append((ti_p,fi_p,ei_p))
                 en_pista_p={}
+
+        # Tanca jugadores encara a pista (acaben el partit sense "Surt del camp" final)
+        fi_partit_p = int(df_jug_p["quart"].max())*MINS_Q if not df_jug_p.empty else MINS_Q
+        for jj,(ti_p,ei_p) in en_pista_p.items():
+            if fi_partit_p > ti_p: intervals_p.setdefault(jj,[]).append((ti_p,fi_partit_p,ei_p))
 
         # Precalcula t_abs
         df_t = df_jug_p.copy()
@@ -2920,7 +2934,7 @@ def genera_excel_temporada():
     ws2.row_dimensions[1].height=38; ws2.row_dimensions[2].height=8
     row=3
     for ci,cap,w in zip(range(2,18),
-        ['#','Jugadora','Equip','Part.','Pts','Pts/P','Min','Min/P','C2','C3','TL','Faltes','Impacte','OWS','WS','WS/40min'],
+        ['#','Jugadora','Equip','Part.','Pts','Pts/P','Min (temp.)','Min/P','C2','C3','TL','Faltes','Impacte','OWS','WS','WS/40min'],
         [5,24,20,8,9,9,9,9,7,7,7,9,12,8,8,10]):
         fc(ws2,row,ci,cap,bold=True,bg=BLAU_MIG,fg=BLANC,align='center',size=10)
         ws2.column_dimensions[get_column_letter(ci)].width=w
@@ -4486,7 +4500,7 @@ with t_onoff:
                     mode="markers+text", name=eq_oo2,
                     marker=dict(size=sizes_norm_to, color=color_to,
                                 line=dict(width=1.5, color=C_WHITE), opacity=0.85),
-                    text=df_talent_opt["Jugadora"].apply(lambda n: n.split()[-1] if n.split() else n),
+                    text=df_talent_opt["Jugadora"].apply(lambda n: n.split()[1] if len(n.split())>1 else n),
                     textposition="top center", textfont=dict(size=9),
                     hovertemplate="<b>%{text}</b><br>TS%: %{x:.1f}%<br>Δ Net Rtg: %{y:+.1f}<extra></extra>",
                 ))
@@ -5633,7 +5647,7 @@ with t6:
                 mode="markers+text", name=eq_p40_sel,
                 marker=dict(size=sizes_norm, color=COLOR_A,
                             line=dict(width=1.5, color=C_WHITE), opacity=0.88),
-                text=df_p40["Jugadora"].apply(lambda n: n.split()[-1] if n.split() else n),
+                text=df_p40["Jugadora"].apply(lambda n: n.split()[1] if len(n.split())>1 else n),
                 textposition="top center", textfont=dict(size=9, color=C_TEXT),
                 hovertemplate=(
                     "<b>%{text}</b><br>Usage%: %{x:.1f}%<br>Pts/40min: %{y:.1f}<br>"
