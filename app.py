@@ -1302,14 +1302,14 @@ def calc_eficiencies(df_orig, teams, team_names):
         }
     return result
 
-def calc_onoff(df_orig, jugadora, equip_id, teams):
-    """Calcula On/Off Rating d'una jugadora usant intervals reals."""
+def calc_onoff_raw(df_orig, jugadora, equip_id, teams):
+    """Calcula punts/possessions ON i OFF en brut (sense convertir a ràtio) a partir
+    dels intervals reals Entra/Surt d'una jugadora en UN partit. Bloc de construcció
+    compartit per calc_onoff() (rating d'un partit) i calc_onoff_agregat() (multi-partit)."""
     rival_id = next((t for t in teams if t != equip_id), None)
     if rival_id is None: return None
 
     MINS_Q = 10
-    MIN_POSS = 4  # mínim de possessions per considerar el rating vàlid
-
     col_j = "jugador" if "jugador" in df_orig.columns else "jugadora"
 
     # Calcula intervals reals de la jugadora
@@ -1360,11 +1360,21 @@ def calc_onoff(df_orig, jugadora, equip_id, teams):
     df_off_eq = df_t[~mask_on & (df_t["idEquip"]==equip_id)]
     df_off_riv= df_t[~mask_on & (df_t["idEquip"]==rival_id)]
 
-    def rtg(df_e, df_r):
-        pts  = int(df_e["punts"].sum())
-        poss = calc_possessions(df_e)
-        pts_r  = int(df_r["punts"].sum())
-        poss_r = calc_possessions(df_r)
+    return {
+        "pts_on":      int(df_on_eq["punts"].sum()),  "poss_on":      calc_possessions(df_on_eq),
+        "pts_on_riv":  int(df_on_riv["punts"].sum()), "poss_on_riv":  calc_possessions(df_on_riv),
+        "pts_off":     int(df_off_eq["punts"].sum()), "poss_off":     calc_possessions(df_off_eq),
+        "pts_off_riv": int(df_off_riv["punts"].sum()),"poss_off_riv": calc_possessions(df_off_riv),
+    }
+
+def calc_onoff(df_orig, jugadora, equip_id, teams):
+    """Calcula On/Off Rating d'una jugadora usant intervals reals (un sol partit)."""
+    MIN_POSS = 4  # mínim de possessions per considerar el rating vàlid
+
+    raw = calc_onoff_raw(df_orig, jugadora, equip_id, teams)
+    if raw is None: return None
+
+    def rtg(pts, poss, pts_r, poss_r):
         # Si poques possessions, rating no fiable
         if poss < MIN_POSS: return None, None, None
         off  = round(pts/poss*100, 1)
@@ -1372,26 +1382,258 @@ def calc_onoff(df_orig, jugadora, equip_id, teams):
         net  = round(off-deff, 1) if deff is not None else None
         return off, deff, net
 
-    on_off,  on_def,  on_net  = rtg(df_on_eq,  df_on_riv)
-    off_off, off_def, off_net = rtg(df_off_eq, df_off_riv)
+    on_off,  on_def,  on_net  = rtg(raw["pts_on"],  raw["poss_on"],  raw["pts_on_riv"],  raw["poss_on_riv"])
+    off_off, off_def, off_net = rtg(raw["pts_off"], raw["poss_off"], raw["pts_off_riv"], raw["poss_off_riv"])
 
     if on_net is None or off_net is None:
         diff = None
     else:
         diff = round(on_net - off_net, 1)
         # Cap de valors poc raonables (>50 punts/100 poss és sospitós)
-        if abs(diff) > 50 and not (
-            (oo2.get("on_poss",0) if False else calc_possessions(df_on_eq)) >= 8 and
-            calc_possessions(df_off_eq) >= 8):
+        if abs(diff) > 50 and not (raw["poss_on"] >= 8 and raw["poss_off"] >= 8):
             diff = None  # marca com no fiable
 
     return {
         "on_off_rtg":  on_off,  "on_def_rtg":  on_def,  "on_net_rtg":  on_net,
         "off_off_rtg": off_off, "off_def_rtg": off_def, "off_net_rtg": off_net,
         "diff": diff,
-        "on_poss":  round(calc_possessions(df_on_eq), 1),
-        "off_poss": round(calc_possessions(df_off_eq), 1),
+        "on_poss":  round(raw["poss_on"], 1),
+        "off_poss": round(raw["poss_off"], 1),
     }
+
+def calc_onoff_agregat(df_partits, min_poss_on=150, min_poss_off=150):
+    """On/Off Rating agregat de TOTS els partits disponibles, ponderat per possessions:
+    suma punts i possessions ON/OFF de tots els partits abans de dividir, en comptes de
+    fer la mitjana dels Net Ratings de cada partit per separat (que faria pesar igual un
+    partit de pocs minuts que un de molts). Marca "fiable" segons un llindar mínim de
+    possessions de temporada (per defecte 150 ON i 150 OFF), configurable."""
+    acumulat = {}       # (equip_id, jugadora) -> sumes en brut
+    noms_equip_agr = {}
+
+    for _, p in df_partits.iterrows():
+        df_m = load_jugades_db(p['match_id'])
+        if df_m.empty: continue
+        teams_m = get_teams_ordered(df_m)
+        if len(teams_m) < 2: continue
+
+        tn_m = {}
+        if len(teams_m) >= 1: tn_m[str(teams_m[0])] = p['nom_a']
+        if len(teams_m) >= 2: tn_m[str(teams_m[1])] = p['nom_b']
+        noms_equip_agr.update(tn_m)
+
+        col_j_m = "jugador" if "jugador" in df_m.columns else "jugadora"
+        df_m = df_m.copy()
+        df_m["jugador"] = df_m[col_j_m].fillna("")
+
+        for jug in df_m["jugador"].unique():
+            if not jug or str(jug) in ("", "nan"): continue
+            eq_id = str(df_m[df_m["jugador"]==jug]["idEquip"].iloc[0])
+            raw = calc_onoff_raw(df_m, jug, eq_id, teams_m)
+            if raw is None: continue
+
+            key = (eq_id, jug)
+            if key not in acumulat:
+                acumulat[key] = {"pts_on":0,"poss_on":0.0,"pts_on_riv":0,"poss_on_riv":0.0,
+                                  "pts_off":0,"poss_off":0.0,"pts_off_riv":0,"poss_off_riv":0.0,
+                                  "partits":0}
+            a = acumulat[key]
+            a["pts_on"]      += raw["pts_on"];      a["poss_on"]      += raw["poss_on"]
+            a["pts_on_riv"]  += raw["pts_on_riv"];  a["poss_on_riv"]  += raw["poss_on_riv"]
+            a["pts_off"]     += raw["pts_off"];     a["poss_off"]     += raw["poss_off"]
+            a["pts_off_riv"] += raw["pts_off_riv"]; a["poss_off_riv"] += raw["poss_off_riv"]
+            a["partits"]     += 1
+
+    resultats = []
+    for (eq_id, jug), a in acumulat.items():
+        net_on  = round(100 * (a["pts_on"]  - a["pts_on_riv"])  / a["poss_on"],  1) if a["poss_on"]  > 0 else None
+        net_off = round(100 * (a["pts_off"] - a["pts_off_riv"]) / a["poss_off"], 1) if a["poss_off"] > 0 else None
+        onoff_agr = round(net_on - net_off, 1) if (net_on is not None and net_off is not None) else None
+        fiable = a["poss_on"] >= min_poss_on and a["poss_off"] >= min_poss_off
+        resultats.append({
+            "jugadora": jug, "equip_id": eq_id, "equip_nom": noms_equip_agr.get(eq_id, "?"),
+            "partits": a["partits"],
+            "poss_on": round(a["poss_on"], 1), "poss_off": round(a["poss_off"], 1),
+            "net_on": net_on, "net_off": net_off, "onoff_agregat": onoff_agr,
+            "fiable": fiable,
+        })
+    return resultats
+
+def calc_context_bloc(df_partits, top_n_bloc=3, llindar_concentrat=65):
+    """Per cada jugadora, identifica amb quines companyes comparteix més % dels seus
+    minuts ON (reutilitza calc_pm_combinacions mode 'parelles' i get_intervals_jugadores_global,
+    acumulat de tots els partits). Marca "context concentrat" si el % compartit amb la
+    companya més freqüent supera el llindar (per defecte 65%)."""
+    parelles_acum = {}    # (equip_id, frozenset({j1,j2})) -> minuts acumulats
+    on_total_acum = {}    # (equip_id, jugadora) -> minuts ON totals acumulats
+    noms_equip_ctx = {}
+
+    for _, p in df_partits.iterrows():
+        df_m = load_jugades_db(p['match_id'])
+        if df_m.empty: continue
+        teams_m = get_teams_ordered(df_m)
+        if len(teams_m) < 2: continue
+
+        tn_m = {}
+        if len(teams_m) >= 1: tn_m[str(teams_m[0])] = p['nom_a']
+        if len(teams_m) >= 2: tn_m[str(teams_m[1])] = p['nom_b']
+        noms_equip_ctx.update(tn_m)
+
+        col_j_m = "jugador" if "jugador" in df_m.columns else "jugadora"
+        df_m = df_m.copy()
+        df_m["jugador"] = df_m[col_j_m].fillna("")
+
+        # Minuts ON totals per jugadora (independent de companyes)
+        intervals_m = get_intervals_jugadores_global(df_m)
+        for jug, ivs in intervals_m.items():
+            if not ivs: continue
+            eq_id = str(ivs[0][2])
+            key = (eq_id, jug)
+            on_total_acum[key] = on_total_acum.get(key, 0.0) + sum(tf-ti for ti,tf,_ in ivs)
+
+        # Minuts compartits per parella
+        for r in calc_pm_combinacions(df_m, mode="parelles"):
+            eq_id = str(r["equip"])
+            key = (eq_id, frozenset(r["combinacio"]))
+            parelles_acum[key] = parelles_acum.get(key, 0.0) + r["minuts"]
+
+    resultats = []
+    for (eq_id, jug), min_on_total in on_total_acum.items():
+        if min_on_total <= 0: continue
+        companyes = []
+        for (eq_par, combo), min_par in parelles_acum.items():
+            if eq_par != eq_id or jug not in combo: continue
+            altra = [j for j in combo if j != jug][0]
+            # min() perquè calc_pm_combinacions() i get_intervals_jugadores_global() usen
+            # reconstruccions de microintervals independents; poden diferir per soroll
+            # d'arrodoniment de dècimes, però la parella mai pot superar el total individual.
+            pct = min(round(min_par / min_on_total * 100, 1), 100.0)
+            companyes.append((altra, round(min_par, 1), pct))
+        companyes.sort(key=lambda x: -x[1])
+        top_companyes = companyes[:top_n_bloc]
+        pct_top = top_companyes[0][2] if top_companyes else 0.0
+
+        resultats.append({
+            "jugadora": jug, "equip_id": eq_id, "equip_nom": noms_equip_ctx.get(eq_id, "?"),
+            "min_on_total": round(min_on_total, 1),
+            "bloc_habitual": ", ".join(f"{c[0]} ({c[2]}%)" for c in top_companyes),
+            "pct_bloc_top": pct_top,
+            "context_concentrat": pct_top >= llindar_concentrat,
+            "_top_companya": top_companyes[0][0] if top_companyes else None,
+        })
+    return resultats
+
+def calc_onoff_bloc_split(df_orig, jugadora, companys, equip_id, teams):
+    """Divideix les possessions ON d'una jugadora (UN partit) en dos blocs: 'amb_bloc'
+    (almenys una de les companyes donades també és a pista) i 'sense_bloc' (cap de les
+    companyes donades és a pista). Reutilitza el patró de microintervals de
+    calc_lineup_impact(). Retorna punts/possessions en brut (equip i rival) de cada bloc,
+    pensat per acumular entre partits abans de dividir."""
+    rival_id = next((t for t in teams if t != equip_id), None)
+    if rival_id is None or not companys: return None
+
+    MINS_Q = 10
+    intervals_jug = get_intervals_jugadores_global(df_orig)
+    ivs_jugadora = [(ti, tf) for ti, tf, ei in intervals_jug.get(jugadora, []) if str(ei) == str(equip_id)]
+    if not ivs_jugadora: return None
+
+    df_t = df_orig.copy()
+    df_t["t_abs"] = df_t.apply(
+        lambda r: (int(r["quart"])-1)*10+(10-float(r["min_num"]))
+        if float(r.get("min_num",0))<=10 else float(r.get("min_num",0)), axis=1)
+
+    canvis = set()
+    for ti, tf in ivs_jugadora:
+        canvis.add(round(ti, 2)); canvis.add(round(tf, 2))
+    for comp in companys:
+        for ti, tf, ei in intervals_jug.get(comp, []):
+            if str(ei) != str(equip_id): continue
+            for ti_j, tf_j in ivs_jugadora:
+                if tf > ti_j and ti < tf_j:
+                    canvis.add(round(max(ti, ti_j), 2)); canvis.add(round(min(tf, tf_j), 2))
+    canvis = sorted(canvis)
+
+    amb_bloc_ivs, sense_bloc_ivs = [], []
+    for i in range(len(canvis)-1):
+        t0, t1 = canvis[i], canvis[i+1]
+        if t1 - t0 < 0.01: continue
+        tm = (t0+t1)/2
+        if not any(ti <= tm < tf for ti, tf in ivs_jugadora): continue
+        company_present = any(
+            any(ti <= tm < tf for ti, tf, ei in intervals_jug.get(comp, []) if str(ei) == str(equip_id))
+            for comp in companys)
+        (amb_bloc_ivs if company_present else sense_bloc_ivs).append((t0, t1))
+
+    def sum_pts_poss(intervals):
+        if not intervals: return {"pts":0, "poss":0.0, "pts_riv":0, "poss_riv":0.0}
+        mask = df_t["t_abs"].apply(lambda t: any(ti <= t < tf for ti,tf in intervals))
+        df_eq  = df_t[mask & (df_t["idEquip"]==equip_id)]
+        df_riv = df_t[mask & (df_t["idEquip"]==rival_id)]
+        return {"pts": int(df_eq["punts"].sum()), "poss": calc_possessions(df_eq),
+                "pts_riv": int(df_riv["punts"].sum()), "poss_riv": calc_possessions(df_riv)}
+
+    return {"amb_bloc": sum_pts_poss(amb_bloc_ivs), "sense_bloc": sum_pts_poss(sense_bloc_ivs)}
+
+def calc_context_onoff(df_partits, min_poss_seg=40):
+    """Combina la companya habitual (calc_context_bloc) amb l'On/Off segmentat amb/sense
+    aquest bloc (calc_onoff_bloc_split), acumulat de tots els partits, i deriva un
+    indicador de fiabilitat de context (🟢/🟡/🔴/⚪) a partir de com de consistent és el
+    Net Rating de la jugadora amb i sense la seva companya més freqüent."""
+    bloc_info = calc_context_bloc(df_partits)
+    resultats = []
+
+    for info in bloc_info:
+        jug, eq_id = info["jugadora"], info["equip_id"]
+        top_companya = info["_top_companya"]
+
+        if top_companya is None:
+            resultats.append({**info, "net_amb_bloc": None, "net_sense_bloc": None,
+                "poss_amb_bloc": 0.0, "poss_sense_bloc": 0.0, "fiabilitat_context": "⚪ Dades insuficients"})
+            continue
+
+        acum_amb   = {"pts":0, "poss":0.0, "pts_riv":0, "poss_riv":0.0}
+        acum_sense = {"pts":0, "poss":0.0, "pts_riv":0, "poss_riv":0.0}
+        for _, p in df_partits.iterrows():
+            df_m = load_jugades_db(p['match_id'])
+            if df_m.empty: continue
+            teams_m = get_teams_ordered(df_m)
+            if len(teams_m) < 2: continue
+            col_j_m = "jugador" if "jugador" in df_m.columns else "jugadora"
+            df_m = df_m.copy()
+            df_m["jugador"] = df_m[col_j_m].fillna("")
+            if jug not in df_m["jugador"].values: continue
+
+            split = calc_onoff_bloc_split(df_m, jug, [top_companya], eq_id, teams_m)
+            if split is None: continue
+            for k in acum_amb:   acum_amb[k]   += split["amb_bloc"][k]
+            for k in acum_sense: acum_sense[k] += split["sense_bloc"][k]
+
+        def net(a):
+            return round(100*(a["pts"]-a["pts_riv"])/a["poss"], 1) if a["poss"] > 0 else None
+
+        net_amb, net_sense = net(acum_amb), net(acum_sense)
+        fiable_amb   = acum_amb["poss"]   >= min_poss_seg
+        fiable_sense = acum_sense["poss"] >= min_poss_seg
+
+        if net_amb is not None and net_sense is not None and fiable_amb and fiable_sense:
+            diferencia = abs(net_amb - net_sense)
+            if diferencia <= 5 and not info["context_concentrat"]:
+                semafor = "🟢 Mèrit individual"
+            elif diferencia <= 10:
+                semafor = "🟡 Context parcial"
+            else:
+                semafor = "🔴 Molt lligat al context"
+        elif info["context_concentrat"]:
+            semafor = "🟡 Context concentrat (dades insuf. per segmentar)"
+        else:
+            semafor = "⚪ Dades insuficients"
+
+        resultats.append({
+            **info,
+            "net_amb_bloc": net_amb, "net_sense_bloc": net_sense,
+            "poss_amb_bloc": round(acum_amb["poss"], 1), "poss_sense_bloc": round(acum_sense["poss"], 1),
+            "fiabilitat_context": semafor,
+        })
+    return resultats
 
 def calc_onoff_ts(df_orig, jugadora, equip_id, teams):
     """Calcula el TS% de l'EQUIP quan la jugadora és ON vs OFF (intervals reals)."""
@@ -2404,6 +2646,99 @@ def genera_excel_analisi():
         fc(ws5b,row5b,10,r['ts_off'] if r['ts_off'] is not None else '—',bg='FDE8E8',fg='993C1D',bold=True)
         fc(ws5b,row5b,11,f"{'+'if diff_v>=0 else ''}{diff_v}",bold=True,bg=diff_bg,fg=diff_fg)
         ws5b.row_dimensions[row5b].height=17; row5b+=1
+
+    # ── PESTANYA 5c: ON/OFF AGREGAT (ponderat per possessions) ─────────────
+    ws5c = wb.create_sheet("On-Off Agregat")
+    ws5c.sheet_view.showGridLines=False; ws5c.column_dimensions['A'].width=2
+    ws5c.merge_cells('B1:J1')
+    c=ws5c['B1']; c.value='🏀  MICKI ANALÍTICA — ON/OFF RATING AGREGAT (PONDERAT PER POSSESSIONS)'
+    c.font=Font(name='Arial',bold=True,color=BLANC,size=13)
+    c.fill=fons(BLAU_FOSC); c.alignment=Alignment(horizontal='center',vertical='center')
+    ws5c.row_dimensions[1].height=36
+    ws5c.merge_cells('B2:J2')
+    c=ws5c['B2']; c.value=("Suma punts i possessions ON/OFF de tots els partits abans de dividir "
+        "(no fa mitjana de Net Ratings per partit) · Fiable si Poss ON ≥150 i Poss OFF ≥150")
+    c.font=Font(name='Arial',color=BLANC,size=9); c.fill=fons(BLAU_MIG)
+    c.alignment=Alignment(horizontal='center',vertical='center',wrap_text=True)
+    ws5c.row_dimensions[2].height=26; ws5c.row_dimensions[3].height=6
+
+    row5c=4
+    for ci,cap,w in zip(range(2,10),
+        ['Jugadora','Equip','Partits','Poss ON','Poss OFF','Net Rtg ON','Net Rtg OFF','On/Off Agregat'],
+        [24,18,8,10,10,11,11,13]):
+        fc(ws5c,row5c,ci,cap,bold=True,bg=BLAU_MIG,fg=BLANC,size=9)
+        ws5c.column_dimensions[get_column_letter(ci)].width=w
+    ws5c.column_dimensions['J'].width=14
+    fc(ws5c,row5c,10,'Mostra fiable',bold=True,bg=BLAU_MIG,fg=BLANC,size=9)
+    ws5c.row_dimensions[row5c].height=18; row5c+=1
+
+    res_onoff_agr_xl = calc_onoff_agregat(df_p, min_poss_on=150, min_poss_off=150)
+    res_onoff_agr_xl = [r for r in res_onoff_agr_xl if r["onoff_agregat"] is not None]
+    res_onoff_agr_xl.sort(key=lambda r: r["onoff_agregat"], reverse=True)
+
+    for i,r in enumerate(res_onoff_agr_xl):
+        bg = BLAU_CLAR if i%2==0 else BLANC
+        v = r["onoff_agregat"]
+        diff_bg = 'D5F5E3' if v>2 else ('FADBD8' if v<-2 else GROC)
+        diff_fg = '0F6E56' if v>2 else ('993C1D' if v<-2 else '854F0B')
+        fiab_txt = '✅ Sí' if r["fiable"] else '⚠️ No'
+        fiab_bg = BLANC if r["fiable"] else 'FFF3CD'
+
+        fc(ws5c,row5c,2,r['jugadora'],bold=True,fg=BLAU_FOSC,bg=bg,align='left')
+        fc(ws5c,row5c,3,r['equip_nom'],bg=bg,align='left',size=9)
+        fc(ws5c,row5c,4,r['partits'],bg=bg)
+        fc(ws5c,row5c,5,r['poss_on'],bg=bg)
+        fc(ws5c,row5c,6,r['poss_off'],bg=bg)
+        fc(ws5c,row5c,7,r['net_on'] if r['net_on'] is not None else '—',bg='E8F5E9')
+        fc(ws5c,row5c,8,r['net_off'] if r['net_off'] is not None else '—',bg='FDE8E8')
+        fc(ws5c,row5c,9,f"{'+'if v>=0 else ''}{v}",bold=True,bg=diff_bg,fg=diff_fg)
+        fc(ws5c,row5c,10,fiab_txt,bg=fiab_bg,size=9)
+        ws5c.row_dimensions[row5c].height=17; row5c+=1
+
+    # ── PESTANYA 5d: CONTEXT DE L'ON/OFF (mèrit individual vs companya habitual) ──
+    ws5d = wb.create_sheet("Context On-Off")
+    ws5d.sheet_view.showGridLines=False; ws5d.column_dimensions['A'].width=2
+    ws5d.merge_cells('B1:I1')
+    c=ws5d['B1']; c.value='🏀  MICKI ANALÍTICA — CONTEXT DE L\'ON/OFF (MÈRIT INDIVIDUAL O COMPANYA?)'
+    c.font=Font(name='Arial',bold=True,color=BLANC,size=12)
+    c.fill=fons(BLAU_FOSC); c.alignment=Alignment(horizontal='center',vertical='center')
+    ws5d.row_dimensions[1].height=36
+    ws5d.merge_cells('B2:I2')
+    c=ws5d['B2']; c.value=("Divideix l'On/Off Rating agregat entre minuts ON amb la companya més freqüent "
+        "i sense ella · No inclou força del rival (sense font fiable amb les dades actuals)")
+    c.font=Font(name='Arial',color=BLANC,size=9); c.fill=fons(BLAU_MIG)
+    c.alignment=Alignment(horizontal='center',vertical='center',wrap_text=True)
+    ws5d.row_dimensions[2].height=26; ws5d.row_dimensions[3].height=6
+
+    row5d=4
+    for ci,cap,w in zip(range(2,10),
+        ['Jugadora','Equip','On/Off Agregat','Bloc habitual','% min ON amb top companya',
+         'Net amb bloc','Net sense bloc','Fiabilitat de context'],
+        [24,18,13,40,16,11,12,32]):
+        fc(ws5d,row5d,ci,cap,bold=True,bg=BLAU_MIG,fg=BLANC,size=9)
+        ws5d.column_dimensions[get_column_letter(ci)].width=w
+    ws5d.row_dimensions[row5d].height=18; row5d+=1
+
+    onoff_map_xl = {r["jugadora"]: r["onoff_agregat"] for r in res_onoff_agr_xl}
+    res_context_xl = calc_context_onoff(df_p, min_poss_seg=40)
+    res_context_xl = [r for r in res_context_xl if onoff_map_xl.get(r["jugadora"]) is not None]
+    res_context_xl.sort(key=lambda r: onoff_map_xl[r["jugadora"]], reverse=True)
+
+    for i,r in enumerate(res_context_xl):
+        bg = BLAU_CLAR if i%2==0 else BLANC
+        onoff_v = onoff_map_xl[r["jugadora"]]
+        onoff_bg = 'D5F5E3' if onoff_v>2 else ('FADBD8' if onoff_v<-2 else GROC)
+        onoff_fg = '0F6E56' if onoff_v>2 else ('993C1D' if onoff_v<-2 else '854F0B')
+
+        fc(ws5d,row5d,2,r['jugadora'],bold=True,fg=BLAU_FOSC,bg=bg,align='left')
+        fc(ws5d,row5d,3,r['equip_nom'],bg=bg,align='left',size=9)
+        fc(ws5d,row5d,4,f"{'+'if onoff_v>=0 else ''}{onoff_v}",bold=True,bg=onoff_bg,fg=onoff_fg)
+        fc(ws5d,row5d,5,r['bloc_habitual'] or '—',bg=bg,align='left',size=9)
+        fc(ws5d,row5d,6,r['pct_bloc_top'],bg=bg)
+        fc(ws5d,row5d,7,r['net_amb_bloc'] if r['net_amb_bloc'] is not None else '—',bg='E8F5E9')
+        fc(ws5d,row5d,8,r['net_sense_bloc'] if r['net_sense_bloc'] is not None else '—',bg='FDE8E8')
+        fc(ws5d,row5d,9,r['fiabilitat_context'],bg=bg,align='left',size=9)
+        ws5d.row_dimensions[row5d].height=17; row5d+=1
 
     # ── Noms equips per match_id (per pestanyes 6 i 7) ─────────────────────
     eq_noms_per_match = {}
@@ -4601,6 +4936,101 @@ with t_onoff:
                                             f"{b['pts_of']}-{b['pts_def']} pts", nc_li), unsafe_allow_html=True)
                                     else:
                                         st.caption("⚠️ Poques possessions per un rating fiable")
+
+            # ── On/Off Rating agregat multi-partit ──────────────────────────────
+            st.markdown(sec("📐 On/Off Rating agregat — tota la temporada"), unsafe_allow_html=True)
+            st.caption(
+                "Suma punts i possessions ON/OFF de TOTS els partits carregats abans de dividir "
+                "(Net Rating = 100 × Σ(Pts fets − Pts rebuts) / Σ(Possessions)), en lloc de fer la "
+                "mitjana dels Net Ratings de cada partit per separat — així un partit amb pocs minuts "
+                "no pesa igual que un amb molts."
+            )
+            col_mp1, col_mp2 = st.columns(2)
+            with col_mp1:
+                min_poss_on_ui = st.number_input("Mínim possessions ON per ser fiable",
+                    min_value=0, value=150, step=10, key="min_poss_on_agr")
+            with col_mp2:
+                min_poss_off_ui = st.number_input("Mínim possessions OFF per ser fiable",
+                    min_value=0, value=150, step=10, key="min_poss_off_agr")
+
+            df_p_agr = load_partits_db()
+            if df_p_agr.empty:
+                st.info("Carrega partits per veure l'On/Off Rating agregat.")
+            else:
+                res_onoff_agr = calc_onoff_agregat(df_p_agr, min_poss_on_ui, min_poss_off_ui)
+                if not res_onoff_agr:
+                    st.info("No hi ha dades suficients per calcular l'On/Off Rating agregat.")
+                else:
+                    df_onoff_agr = pd.DataFrame(res_onoff_agr)
+                    df_onoff_agr = df_onoff_agr[df_onoff_agr["onoff_agregat"].notna()].sort_values(
+                        "onoff_agregat", ascending=False)
+
+                    colors_agr = []
+                    for _, row_agr in df_onoff_agr.iterrows():
+                        if not row_agr["fiable"]:
+                            colors_agr.append(C_WARNING)
+                        elif row_agr["onoff_agregat"] >= 0:
+                            colors_agr.append(C_SUCCESS)
+                        else:
+                            colors_agr.append(C_ERROR)
+
+                    fig_agr = go.Figure()
+                    fig_agr.add_trace(go.Bar(
+                        x=df_onoff_agr["jugadora"], y=df_onoff_agr["onoff_agregat"],
+                        marker_color=colors_agr,
+                        text=[f"{'+' if v>=0 else ''}{v}" for v in df_onoff_agr["onoff_agregat"]],
+                        textposition="outside"))
+                    fig_agr.add_hline(y=0, line_dash="solid", line_color=C_CARD_BORDER)
+                    fig_agr.update_layout(yaxis_title="On/Off Rating agregat (pts/100 poss)")
+                    st.plotly_chart(
+                        chart_style(fig_agr, max(280, len(df_onoff_agr)*28), "On/Off Rating agregat de temporada"),
+                        use_container_width=True)
+                    st.caption(f"🟠 = mostra no fiable (per sota del llindar de {min_poss_on_ui} poss ON / {min_poss_off_ui} poss OFF)")
+
+                    with st.expander("Veure taula completa"):
+                        df_show_agr = df_onoff_agr[[
+                            "jugadora","equip_nom","partits","poss_on","poss_off",
+                            "net_on","net_off","onoff_agregat","fiable"
+                        ]].copy()
+                        df_show_agr["fiable"] = df_show_agr["fiable"].map({True: "✅ Sí", False: "⚠️ No"})
+                        df_show_agr.columns = ["Jugadora","Equip","Partits","Poss ON","Poss OFF",
+                            "Net Rtg ON","Net Rtg OFF","On/Off Agregat","Mostra fiable"]
+                        st.dataframe(df_show_agr, use_container_width=True, hide_index=True)
+
+                    # ── Descomposició de context ──────────────────────────────────
+                    st.markdown(sec("🧭 Context de l'On/Off — mèrit individual o companya habitual?"),
+                        unsafe_allow_html=True)
+                    st.caption(
+                        "Un On/Off alt pot ser mèrit real de la jugadora, o pot venir 'prestat' per jugar "
+                        "gairebé sempre amb la mateixa companya forta. Aquí es divideixen els seus minuts ON "
+                        "entre 'amb la seva companya més freqüent' i 'sense ella': si el Net Rating es manté "
+                        "alt als dos costats, és mèrit individual; si només es manté a un, és efecte de context. "
+                        "⚠️ No inclou la força del rival (no hi ha una font fiable d'això amb les dades actuals) "
+                        "— és un indicador basat només en concentració de companyes i consistència del Net Rating."
+                    )
+                    min_poss_seg_ui = st.number_input(
+                        "Mínim possessions per segment (amb/sense bloc) per considerar-lo fiable",
+                        min_value=0, value=40, step=5, key="min_poss_seg_ctx")
+
+                    res_context = calc_context_onoff(df_p_agr, min_poss_seg=min_poss_seg_ui)
+                    if not res_context:
+                        st.info("No hi ha dades suficients per calcular la descomposició de context.")
+                    else:
+                        onoff_map = {r["jugadora"]: r["onoff_agregat"] for r in res_onoff_agr}
+                        df_ctx = pd.DataFrame(res_context)
+                        df_ctx["onoff_agregat"] = df_ctx["jugadora"].map(onoff_map)
+                        df_ctx = df_ctx[df_ctx["onoff_agregat"].notna()].sort_values(
+                            "onoff_agregat", ascending=False)
+
+                        df_show_ctx = df_ctx[[
+                            "jugadora","equip_nom","onoff_agregat","bloc_habitual","pct_bloc_top",
+                            "net_amb_bloc","net_sense_bloc","fiabilitat_context"
+                        ]].copy()
+                        for col_ctx in ["net_amb_bloc","net_sense_bloc"]:
+                            df_show_ctx[col_ctx] = df_show_ctx[col_ctx].apply(lambda v: v if v is not None else "—")
+                        df_show_ctx.columns = ["Jugadora","Equip","On/Off Agregat","Bloc habitual (companyes)",
+                            "% min ON amb top companya","Net amb bloc","Net sense bloc","Fiabilitat de context"]
+                        st.dataframe(df_show_ctx, use_container_width=True, hide_index=True)
 
 with t5:
     # ══════════════════════════════════════════════════
