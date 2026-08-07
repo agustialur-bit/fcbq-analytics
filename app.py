@@ -4218,6 +4218,58 @@ with t3:
         fig_qt.update_layout(barmode="group")
         st.plotly_chart(chart_style(fig_qt, 260, "True Shooting % per quart"), use_container_width=True)
 
+        # ── Tipus de tirs per quart ─────────────────────────────────────────
+        st.markdown(sec("🎯 Tipus de tirs per quart"), unsafe_allow_html=True)
+        st.caption(
+            "Intents de 2, 3 i tirs lliures per quart (encerts inclosos als intents). Útil per veure "
+            "si un quart de TS% baix ve d'haver tirat més triples o més tirs lliures del normal."
+        )
+        tipus_rows = []
+        for q in quarts_uniq:
+            df_q_tip = df_orig[df_orig["quart"] == q]
+            for tid, nom_eq in [(teams[0] if teams else None, nom_a), (teams[1] if len(teams) > 1 else None, nom_b)]:
+                if tid is None: continue
+                dq_eq = df_q_tip[df_q_tip["idEquip"].astype(str) == str(tid)]
+                c2_int = int(dq_eq["accio"].str.contains("Cistella de 2|Intent fallat de 2|fallat de 2", case=False, na=False).sum())
+                c3_int = int(dq_eq["accio"].str.contains("Cistella de 3|Intent fallat de 3|fallat de 3", case=False, na=False).sum())
+                tl_int = int(dq_eq["accio"].str.contains("Cistella de 1|Intent fallat de 1", case=False, na=False).sum())
+                tot_int = c2_int + c3_int + tl_int
+                tipus_rows.append({
+                    "quart": int(q), "equip": nom_eq,
+                    "2PA": c2_int, "3PA": c3_int, "TLA": tl_int,
+                    "%2PA": round(c2_int/tot_int*100, 0) if tot_int > 0 else 0,
+                    "%3PA": round(c3_int/tot_int*100, 0) if tot_int > 0 else 0,
+                    "%TLA": round(tl_int/tot_int*100, 0) if tot_int > 0 else 0,
+                })
+        df_tipus_q = pd.DataFrame(tipus_rows)
+
+        caps_tip = ["Quart",
+            f"2PA {nom_a}", f"3PA {nom_a}", f"TLA {nom_a}", f"%3PA {nom_a}",
+            f"2PA {nom_b}", f"3PA {nom_b}", f"TLA {nom_b}", f"%3PA {nom_b}"]
+        html_tip = ('<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;'
+                    f'font-size:12px;color:{C_TEXT}">')
+        html_tip += '<tr>' + ''.join(
+            f'<th style="background:{C_BG_SOFT};color:{C_ACCENT_DARK};padding:6px 10px;'
+            f'text-align:center;border:1px solid {C_BORDER};font-weight:600">{c}</th>' for c in caps_tip) + '</tr>'
+        for i_tip, q_val in enumerate(quarts_uniq):
+            ra_t = df_tipus_q[(df_tipus_q["quart"]==q_val)&(df_tipus_q["equip"]==nom_a)]
+            rb_t = df_tipus_q[(df_tipus_q["quart"]==q_val)&(df_tipus_q["equip"]==nom_b)]
+            if ra_t.empty or rb_t.empty: continue
+            ra_t, rb_t = ra_t.iloc[0], rb_t.iloc[0]
+            bg_tip = C_WHITE if i_tip % 2 == 0 else C_BG
+            vals_tip = [f"Q{q_val}",
+                ra_t["2PA"], ra_t["3PA"], ra_t["TLA"], f"{ra_t['%3PA']:.0f}%",
+                rb_t["2PA"], rb_t["3PA"], rb_t["TLA"], f"{rb_t['%3PA']:.0f}%"]
+            html_tip += '<tr>'
+            for ci_tip, val_tip in enumerate(vals_tip):
+                align_tip = 'left' if ci_tip == 0 else 'center'
+                html_tip += (f'<td style="padding:5px 10px;border:1px solid {C_BORDER};background:{bg_tip};'
+                             f'color:{C_TEXT};text-align:{align_tip}">{val_tip}</td>')
+            html_tip += '</tr>'
+        html_tip += '</table></div>'
+        st.markdown(html_tip, unsafe_allow_html=True)
+        st.caption("PA = intents (attempts) · TLA = tirs lliures intentats · %3PA = % dels intents totals que van ser de triple")
+
     # ── Liderant vs. Remolcant ────────────────────────────────────────────
     st.markdown(sec("📈 Liderant vs. Remolcant"), unsafe_allow_html=True)
     st.caption(
