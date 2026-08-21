@@ -3348,7 +3348,8 @@ with t1:
         if teams: cmap[team_names.get(teams[0], nom_a)] = COLOR_A
         if len(teams)>1: cmap[team_names.get(teams[1], nom_b)] = COLOR_B
         fig2=px.bar(pq,x="quart",y="punts",color="equip_nom",barmode="group",
-            color_discrete_map=cmap,labels={"quart":"Quart","punts":"Punts","equip_nom":"Equip"})
+            color_discrete_map=cmap,category_orders={"equip_nom":[nom_a,nom_b]},
+            labels={"quart":"Quart","punts":"Punts","equip_nom":"Equip"})
         st.plotly_chart(chart_style(fig2,240),use_container_width=True)
 
     # Mapa de calor minuts
@@ -3794,6 +3795,7 @@ with t3:
             resum_eq["Efectivitat %"] = (resum_eq["Anotats"]/resum_eq["Total"]*100).round(0)
             fig_to = px.bar(resum_eq, x="equip_nom", y="Efectivitat %",
                 color="equip_nom", color_discrete_map=color_map_eq,
+                category_orders={"equip_nom":[nom_a,nom_b]},
                 text="Efectivitat %", labels={"equip_nom":"Equip"})
             fig_to.update_traces(texttemplate="%{text}%", textposition="outside")
             st.plotly_chart(chart_style(fig_to, 220, "Efectivitat dels temps morts per equip"), use_container_width=True)
