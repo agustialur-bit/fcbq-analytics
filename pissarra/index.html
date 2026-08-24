@@ -352,6 +352,7 @@
 
   function emptyFrame(){ return {players:[], ball:null, texts:[], arrows:[], paths:{}}; }
   function clone(o){ return JSON.parse(JSON.stringify(o)); }
+  function straightPts(pts){ return [pts[0], pts[pts.length-1]]; }
 
   function commitCurrentFrame(){
     frames[frameIndex] = { players:clone(players), ball: ball?clone(ball):null, texts:clone(texts), arrows:clone(arrows), paths:clone(paths) };
@@ -660,7 +661,7 @@
     if(pendingScreenroll && m!=='screenroll'){
       // Canvia d'eina amb un bloqueig a mig fer (sense continuació): el deixa com a bloqueig sol.
       arrows.push({type:'screen', pts: pendingScreenroll.pts});
-      if(followPlayer) paths[followPlayer.id] = clone(pendingScreenroll.pts);
+      if(followPlayer) paths[followPlayer.id] = clone(straightPts(pendingScreenroll.pts));
       pendingScreenroll = null; followPlayer = null; followBall = false;
       render();
     }
@@ -798,20 +799,24 @@
       if(mode==='screenroll' && pendingScreenroll){
         // Acaba de fer el segon tram (la continuació).
         if(drawingArrow.pts.length>1){
+          const leg1 = straightPts(pendingScreenroll.pts), leg2 = straightPts(drawingArrow.pts);
           arrows.push({type:'screenroll', pts: pendingScreenroll.pts, pts2: drawingArrow.pts});
-          if(followPlayer) paths[followPlayer.id] = clone([...pendingScreenroll.pts, ...drawingArrow.pts.slice(1)]);
+          if(followPlayer) paths[followPlayer.id] = clone([leg1[0], leg1[1], leg2[1]]);
         } else {
           arrows.push({type:'screen', pts: pendingScreenroll.pts});
-          if(followPlayer) paths[followPlayer.id] = clone(pendingScreenroll.pts);
+          if(followPlayer) paths[followPlayer.id] = clone(straightPts(pendingScreenroll.pts));
         }
         pendingScreenroll = null;
       } else if(drawingArrow.pts.length>1){
         if(!followPlayer) pushHistory();
         arrows.push(drawingArrow);
         if(followPlayer){
-          // També ho guarda com a recorregut, perquè s'animi en previsualitzar la jugada.
-          paths[followPlayer.id] = clone(drawingArrow.pts);
-          if(followBall && ball) paths['BALL'] = clone(drawingArrow.pts);
+          // També ho guarda com a recorregut, perquè s'animi en previsualitzar la jugada
+          // (recte per al bloqueig, ja que el traç dibuixat també ho és; sencer per al bot,
+          // que necessita seguir l'ondulació real del recorregut).
+          const followPts = drawingArrow.type==='screen' ? straightPts(drawingArrow.pts) : drawingArrow.pts;
+          paths[followPlayer.id] = clone(followPts);
+          if(followBall && ball) paths['BALL'] = clone(followPts);
         }
       }
       drawingArrow=null;
