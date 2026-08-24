@@ -203,21 +203,15 @@
     <div>
       <span class="group-label">Línies i símbols</span>
       <div class="tool-grid">
-        <button class="tool" data-mode="move">Moviment</button>
+        <button class="tool" data-mode="path">Traçar recorregut</button>
         <button class="tool" data-mode="pass">Passada</button>
         <button class="tool" data-mode="screen">Bloqueig</button>
+        <button class="tool" data-mode="screenroll">Bloqueig + continuació</button>
         <button class="tool" data-mode="dribble">Bot</button>
         <button class="tool" data-mode="shot">Tir</button>
         <button class="tool" data-mode="handoff">Mà a mà</button>
       </div>
-    </div>
-
-    <div>
-      <span class="group-label">Animació</span>
-      <div class="field">
-        <button class="tool full-row" data-mode="path">Traçar recorregut</button>
-      </div>
-      <p class="legend">Selecciona un jugador o la pilota, tria "Traçar recorregut" i dibuixa el camí que farà en animar aquesta acció.</p>
+      <p class="legend">Per "Traçar recorregut": selecciona un jugador o la pilota abans de dibuixar el camí que farà en animar aquesta acció.</p>
     </div>
 
     <div>
@@ -230,11 +224,11 @@
 
     <div class="legend">
       <b>Llegenda:</b><br>
-      — moviment sòlid<br>
       ┄ passada (discontinu)<br>
       ⌐ bloqueig (traç curt)<br>
+      ⌐— bloqueig i continuació<br>
       ~ bot (ondulat)<br>
-      ★ tir<br>
+      ──› tir (recte)<br>
       ●┄#┄› mà a mà
     </div>
   </div>
@@ -514,19 +508,28 @@
     ctx.fill();
   }
 
-  function drawStar(cx,cy,r){
-    ctx.beginPath();
-    for(let i=0;i<5;i++){
-      const a1 = -Math.PI/2 + i*(2*Math.PI/5);
-      const a2 = a1 + Math.PI/5;
-      const x1=cx+r*Math.cos(a1), y1=cy+r*Math.sin(a1);
-      const x2=cx+r*0.45*Math.cos(a2), y2=cy+r*0.45*Math.sin(a2);
-      if(i===0) ctx.moveTo(x1,y1); else ctx.lineTo(x1,y1);
-      ctx.lineTo(x2,y2);
+  function findElbowIndex(pts){
+    // Punt on el traçat canvia més de direcció, per situar-hi el símbol de
+    // bloqueig quan la jugadora continua (bota/talla) després de fer-lo.
+    if(pts.length<3) return 0;
+    let bestIdx=Math.floor(pts.length/2), bestAngle=-1;
+    for(let i=1;i<pts.length-1;i++){
+      const [x0,y0]=pts[i-1], [x1,y1]=pts[i], [x2,y2]=pts[i+1];
+      const a1=Math.atan2(y1-y0,x1-x0), a2=Math.atan2(y2-y1,x2-x1);
+      let da=Math.abs(a2-a1);
+      if(da>Math.PI) da=2*Math.PI-da;
+      if(da>bestAngle){ bestAngle=da; bestIdx=i; }
     }
-    ctx.closePath();
-    ctx.fillStyle='#141a24';
-    ctx.fill();
+    return bestIdx;
+  }
+
+  function drawScreenMark(cx,cy,angle){
+    const L=15;
+    ctx.beginPath();
+    ctx.moveTo(cx-L*Math.cos(angle), cy-L*Math.sin(angle));
+    ctx.lineTo(cx+L*Math.cos(angle), cy+L*Math.sin(angle));
+    ctx.lineWidth=6;
+    ctx.stroke();
   }
 
   function drawPolylineArrow(pts, type){
@@ -536,7 +539,7 @@
     else if(type==='handoff') ctx.setLineDash([10,4,2,4]);
     else ctx.setLineDash([]);
 
-    if(type==='pass'){
+    if(type==='pass' || type==='shot'){
       const p0 = pts[0], p1 = pts[pts.length-1];
       ctx.beginPath();
       ctx.moveTo(p0[0], p0[1]);
@@ -576,17 +579,10 @@
     ctx.setLineDash([]);
 
     const last = pts[pts.length-1];
-    const prev = type==='pass' ? pts[0] : pts[pts.length-2];
+    const prev = (type==='pass' || type==='shot') ? pts[0] : pts[pts.length-2];
     if(type==='screen'){
       const angle = Math.atan2(last[1]-prev[1], last[0]-prev[0]) + Math.PI/2;
-      const L=15;
-      ctx.beginPath();
-      ctx.moveTo(last[0]-L*Math.cos(angle), last[1]-L*Math.sin(angle));
-      ctx.lineTo(last[0]+L*Math.cos(angle), last[1]+L*Math.sin(angle));
-      ctx.lineWidth=6;
-      ctx.stroke();
-    } else if(type==='shot'){
-      drawStar(last[0], last[1], 8);
+      drawScreenMark(last[0], last[1], angle);
     } else {
       drawArrowHead(prev[0],prev[1],last[0],last[1]);
       if(type==='handoff'){
@@ -600,6 +596,12 @@
         ctx.strokeText('#', mid[0], mid[1]-6);
         ctx.fillStyle='#141a24';
         ctx.fillText('#', mid[0], mid[1]-6);
+      }
+      if(type==='screenroll'){
+        const idx = findElbowIndex(pts);
+        const p0 = pts[Math.max(0,idx-1)], p1 = pts[Math.min(pts.length-1,idx+1)];
+        const angle = Math.atan2(p1[1]-p0[1], p1[0]-p0[0]) + Math.PI/2;
+        drawScreenMark(pts[idx][0], pts[idx][1], angle);
       }
     }
   }
@@ -654,7 +656,7 @@
     mode = m;
     document.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('active', b.dataset.mode===m));
     const labels = {select:'Seleccionar',offense:'+ Atac',defense:'+ Defensa',ball:'+ Pilota',text:'+ Text',
-      delete:'Esborrar',move:'Moviment',pass:'Passada',screen:'Bloqueig',dribble:'Bot',shot:'Tir',handoff:'Mà a mà',path:'Traçar recorregut'};
+      delete:'Esborrar',pass:'Passada',screen:'Bloqueig',screenroll:'Bloqueig + continuació',dribble:'Bot',shot:'Tir',handoff:'Mà a mà',path:'Traçar recorregut'};
     document.getElementById('modeChip').textContent = 'Mode: '+(labels[m]||m);
     if(window.innerWidth<=980){
       document.querySelector('.side').classList.remove('open');
@@ -731,7 +733,7 @@
         dribbleDragPlayer = p;
         drawingArrow = {type:'dribble', pts:[[p.x,p.y]]};
       }
-    } else if(['move','pass','screen','dribble','shot','handoff'].includes(mode)){
+    } else if(['pass','screen','screenroll','dribble','shot','handoff'].includes(mode)){
       drawingArrow = {type:mode, pts:[[x,y]]};
     } else if(mode==='path'){
       if(!selectedPlayerId && !ballSelected){ alert('Primer selecciona un jugador o la pilota (mode Seleccionar) i torna a triar Traçar recorregut.'); setMode('select'); return; }
