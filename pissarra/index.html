@@ -502,9 +502,9 @@
     texts.forEach(t=> ctx.fillText(t.text, t.x, t.y));
   }
 
-  function drawArrowHead(x1,y1,x2,y2){
+  function drawArrowHead(x1,y1,x2,y2,len){
     const angle = Math.atan2(y2-y1,x2-x1);
-    const len=10;
+    len = len || 10;
     ctx.beginPath();
     ctx.moveTo(x2,y2);
     ctx.lineTo(x2-len*Math.cos(angle-0.4), y2-len*Math.sin(angle-0.4));
@@ -581,7 +581,7 @@
       const angle = Math.atan2(last[1]-prev[1], last[0]-prev[0]) + Math.PI/2;
       drawScreenMark(last[0], last[1], angle);
     } else {
-      drawArrowHead(prev[0],prev[1],last[0],last[1]);
+      drawArrowHead(prev[0],prev[1],last[0],last[1], type==='shot' ? 18 : 10);
       if(type==='handoff'){
         ctx.beginPath(); ctx.arc(pts[0][0], pts[0][1], 5, 0, Math.PI*2);
         ctx.fillStyle = '#141a24'; ctx.fill();
