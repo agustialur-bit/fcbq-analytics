@@ -340,7 +340,9 @@
   let ballSelected = false;
   let currentPlayName = null;
   let currentPlayId = null;
-  let dribbleDragPlayer = null;
+  let followPlayer = null;   // jugador que segueix el ratolí durant un tram (bot, bloqueig, bloqueig+continuació)
+  let followBall = false;    // si la pilota també segueix (només bot)
+  let pendingScreenroll = null; // {pts} del primer tram (bloqueig) mentre s'espera el segon (continuació)
   let lastTapTime = 0, lastTapPos = null;
   function nextAvailableNum(team){
     const used = new Set(players.filter(p=>p.team===team).map(p=>p.num));
@@ -360,6 +362,7 @@
     players = clone(f.players); ball = f.ball?clone(f.ball):null;
     texts = clone(f.texts); arrows = clone(f.arrows); paths = clone(f.paths);
     selectedPlayerId = null; history = [];
+    pendingScreenroll = null; followPlayer = null; followBall = false; drawingArrow = null;
     updateFrameLabel();
   }
   function updateFrameLabel(){
@@ -386,11 +389,13 @@
     if(!history.length) return;
     const state = JSON.parse(history.pop());
     ({players,ball,texts,arrows,paths} = state);
+    pendingScreenroll = null; followPlayer = null; followBall = false; drawingArrow = null;
     render();
   }
   function clearAll(){
     pushHistory();
     players=[]; ball=null; texts=[]; arrows=[]; paths={}; selectedPlayerId=null;
+    pendingScreenroll = null; followPlayer = null; followBall = false; drawingArrow = null;
     render();
   }
 
@@ -508,20 +513,7 @@
     ctx.fill();
   }
 
-  function findElbowIndex(pts){
-    // Punt on el traçat canvia més de direcció, per situar-hi el símbol de
-    // bloqueig quan la jugadora continua (bota/talla) després de fer-lo.
-    if(pts.length<3) return 0;
-    let bestIdx=Math.floor(pts.length/2), bestAngle=-1;
-    for(let i=1;i<pts.length-1;i++){
-      const [x0,y0]=pts[i-1], [x1,y1]=pts[i], [x2,y2]=pts[i+1];
-      const a1=Math.atan2(y1-y0,x1-x0), a2=Math.atan2(y2-y1,x2-x1);
-      let da=Math.abs(a2-a1);
-      if(da>Math.PI) da=2*Math.PI-da;
-      if(da>bestAngle){ bestAngle=da; bestIdx=i; }
-    }
-    return bestIdx;
-  }
+  const CONTINUATION_COLOR = '#e6197a';
 
   function drawScreenMark(cx,cy,angle){
     const L=15;
@@ -532,14 +524,18 @@
     ctx.stroke();
   }
 
-  function drawPolylineArrow(pts, type){
+  // Dibuixa un sol tram (pts + type) amb un color concret. type pot ser
+  // qualsevol dels tipus d'acció normals, o 'screenroll2' per al tram de
+  // continuació d'un bloqueig+continuació (recte, acaba en fletxa).
+  function drawArrowLeg(pts, type, color){
     if(pts.length<2) return;
-    ctx.lineWidth=2.6; ctx.strokeStyle = '#141a24';
+    ctx.lineWidth=2.6; ctx.strokeStyle = color;
     if(type==='pass') ctx.setLineDash([8,7]);
     else if(type==='handoff') ctx.setLineDash([10,4,2,4]);
     else ctx.setLineDash([]);
 
-    if(type==='pass' || type==='shot'){
+    const isStraight = type==='pass' || type==='shot' || type==='screen' || type==='screenroll2';
+    if(isStraight){
       const p0 = pts[0], p1 = pts[pts.length-1];
       ctx.beginPath();
       ctx.moveTo(p0[0], p0[1]);
@@ -579,7 +575,7 @@
     ctx.setLineDash([]);
 
     const last = pts[pts.length-1];
-    const prev = (type==='pass' || type==='shot') ? pts[0] : pts[pts.length-2];
+    const prev = isStraight ? pts[0] : pts[pts.length-2];
     if(type==='screen'){
       const angle = Math.atan2(last[1]-prev[1], last[0]-prev[0]) + Math.PI/2;
       drawScreenMark(last[0], last[1], angle);
@@ -597,13 +593,20 @@
         ctx.fillStyle='#141a24';
         ctx.fillText('#', mid[0], mid[1]-6);
       }
-      if(type==='screenroll'){
-        const idx = findElbowIndex(pts);
-        const p0 = pts[Math.max(0,idx-1)], p1 = pts[Math.min(pts.length-1,idx+1)];
-        const angle = Math.atan2(p1[1]-p0[1], p1[0]-p0[0]) + Math.PI/2;
-        drawScreenMark(pts[idx][0], pts[idx][1], angle);
-      }
     }
+  }
+
+  // a = {pts, type, pts2?}. 'screenroll' té dos trams: pts (el bloqueig,
+  // tinta fosca) i pts2 (la continuació, en color diferent).
+  function drawPolylineArrow(a){
+    if(!a || !a.pts) return;
+    if(a.type==='screenroll'){
+      drawArrowLeg(a.pts, 'screen', '#141a24');
+      if(a.pts2) drawArrowLeg(a.pts2, 'screenroll2', CONTINUATION_COLOR);
+      return;
+    }
+    const color = a.type==='screenroll2' ? CONTINUATION_COLOR : '#141a24';
+    drawArrowLeg(a.pts, a.type, color);
   }
 
   function drawAnimPaths(){
@@ -645,14 +648,22 @@
     ctx.clearRect(0,0,canvas.width,canvas.height);
     courtType==='half' ? drawHalfCourt() : drawFullCourt();
     drawAnimPaths();
-    arrows.forEach(a=>drawPolylineArrow(a.pts,a.type));
-    if(drawingArrow) drawPolylineArrow(drawingArrow.pts, drawingArrow.type);
+    arrows.forEach(a=>drawPolylineArrow(a));
+    if(pendingScreenroll) drawPolylineArrow({type:'screen', pts:pendingScreenroll.pts});
+    if(drawingArrow) drawPolylineArrow(drawingArrow);
     drawPlayers();
     drawTexts();
     updateSelectedChip();
   }
 
   function setMode(m){
+    if(pendingScreenroll && m!=='screenroll'){
+      // Canvia d'eina amb un bloqueig a mig fer (sense continuació): el deixa com a bloqueig sol.
+      arrows.push({type:'screen', pts: pendingScreenroll.pts});
+      if(followPlayer) paths[followPlayer.id] = clone(pendingScreenroll.pts);
+      pendingScreenroll = null; followPlayer = null; followBall = false;
+      render();
+    }
     mode = m;
     document.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('active', b.dataset.mode===m));
     const labels = {select:'Seleccionar',offense:'+ Atac',defense:'+ Defensa',ball:'+ Pilota',text:'+ Text',
@@ -721,7 +732,7 @@
       else if(ball && Math.hypot(ball.x-x,ball.y-y)<14){ ball=null; }
       else {
         let idx=-1, best=999;
-        arrows.forEach((a,i)=>{ a.pts.forEach(pt=>{ const d=Math.hypot(pt[0]-x,pt[1]-y); if(d<14 && d<best){best=d; idx=i;} }); });
+        arrows.forEach((a,i)=>{ [...a.pts, ...(a.pts2||[])].forEach(pt=>{ const d=Math.hypot(pt[0]-x,pt[1]-y); if(d<14 && d<best){best=d; idx=i;} }); });
         if(idx>-1) arrows.splice(idx,1);
         else { texts = texts.filter(t=> Math.hypot(t.x-x,t.y-y) > 16); }
       }
@@ -730,10 +741,23 @@
       const p = players.find(pl=>pl.id===selectedPlayerId);
       if(p){
         pushHistory();
-        dribbleDragPlayer = p;
+        followPlayer = p; followBall = true;
         drawingArrow = {type:'dribble', pts:[[p.x,p.y]]};
       }
-    } else if(['pass','screen','screenroll','dribble','shot','handoff'].includes(mode)){
+    } else if(mode==='screen' || mode==='screenroll'){
+      if(mode==='screenroll' && pendingScreenroll){
+        // Segon tram: la continuació, sempre encaixada on va acabar el bloqueig.
+        const startPt = pendingScreenroll.pts[pendingScreenroll.pts.length-1];
+        drawingArrow = {type:'screenroll2', pts:[startPt]};
+      } else {
+        pushHistory();
+        drawingArrow = {type:'screen', pts:[[x,y]]};
+      }
+      if(selectedPlayerId){
+        const p = players.find(pl=>pl.id===selectedPlayerId);
+        if(p){ followPlayer = p; followBall = false; }
+      }
+    } else if(['pass','dribble','shot','handoff'].includes(mode)){
       drawingArrow = {type:mode, pts:[[x,y]]};
     } else if(mode==='path'){
       if(!selectedPlayerId && !ballSelected){ alert('Primer selecciona un jugador o la pilota (mode Seleccionar) i torna a triar Traçar recorregut.'); setMode('select'); return; }
@@ -752,28 +776,47 @@
     if(dragTarget){ dragTarget.x=x; dragTarget.y=y; render(); }
     else if(drawingArrow){
       drawingArrow.pts.push([x,y]);
-      if(dribbleDragPlayer){
-        dribbleDragPlayer.x=x; dribbleDragPlayer.y=y;
-        if(ball){ ball.x=x; ball.y=y; }
+      if(followPlayer){
+        followPlayer.x=x; followPlayer.y=y;
+        if(followBall && ball){ ball.x=x; ball.y=y; }
       }
       render();
     }
     else if(tracingPathFor){ paths[tracingPathFor].push([x,y]); render(); }
   });
   function endStroke(){
+    if(mode==='screenroll' && drawingArrow && !pendingScreenroll){
+      // Acaba de fer el primer tram (el bloqueig): el deixa pendent i espera
+      // que torni a prémer per dibuixar la continuació, sense tancar l'acció.
+      if(drawingArrow.pts.length>1) pendingScreenroll = {pts: drawingArrow.pts};
+      drawingArrow = null;
+      dragTarget = null; tracingPathFor = null;
+      render();
+      return;
+    }
     if(drawingArrow){
-      if(drawingArrow.pts.length>1){
-        if(!dribbleDragPlayer) pushHistory();
+      if(mode==='screenroll' && pendingScreenroll){
+        // Acaba de fer el segon tram (la continuació).
+        if(drawingArrow.pts.length>1){
+          arrows.push({type:'screenroll', pts: pendingScreenroll.pts, pts2: drawingArrow.pts});
+          if(followPlayer) paths[followPlayer.id] = clone([...pendingScreenroll.pts, ...drawingArrow.pts.slice(1)]);
+        } else {
+          arrows.push({type:'screen', pts: pendingScreenroll.pts});
+          if(followPlayer) paths[followPlayer.id] = clone(pendingScreenroll.pts);
+        }
+        pendingScreenroll = null;
+      } else if(drawingArrow.pts.length>1){
+        if(!followPlayer) pushHistory();
         arrows.push(drawingArrow);
-        if(dribbleDragPlayer){
+        if(followPlayer){
           // També ho guarda com a recorregut, perquè s'animi en previsualitzar la jugada.
-          paths[dribbleDragPlayer.id] = clone(drawingArrow.pts);
-          if(ball) paths['BALL'] = clone(drawingArrow.pts);
+          paths[followPlayer.id] = clone(drawingArrow.pts);
+          if(followBall && ball) paths['BALL'] = clone(drawingArrow.pts);
         }
       }
       drawingArrow=null;
     }
-    dragTarget=null; tracingPathFor=null; dribbleDragPlayer=null;
+    dragTarget=null; tracingPathFor=null; followPlayer=null; followBall=false;
     render();
   }
   canvas.addEventListener('mouseup', endStroke);
@@ -914,7 +957,7 @@
           for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0],pts[i][1]);
           ctx.stroke(); ctx.restore();
         });
-        frameData.arrows.forEach(a=>drawPolylineArrow(a.pts,a.type));
+        frameData.arrows.forEach(a=>drawPolylineArrow(a));
         const savedPlayers=players, savedBall=ball, savedTexts=texts;
         players = localPlayers; ball = frameData.ball; texts = frameData.texts;
         drawPlayers(); drawTexts();
