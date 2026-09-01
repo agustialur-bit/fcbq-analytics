@@ -1,4 +1,5 @@
 __pycache__/
 *.pyc
 historic.db
+historic_lf2.db
 .claude/

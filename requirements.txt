@@ -5,3 +5,4 @@ openpyxl
 scipy
 Pillow
 python-pptx
+requests
