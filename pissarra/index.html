@@ -1,0 +1,1333 @@
+<!DOCTYPE html>
+<html lang="ca">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pissarra — Manresa</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<style>
+  :root{
+    --ink:#141a24;
+    --panel:#1b2330;
+    --panel-2:#222c3d;
+    --line:#33415a;
+    --chalk:#f4ede1;
+    --navy:#123a6b;
+    --pink:#e6197a;
+    --crimson:#c1272d;
+    --amber:#e8a33d;
+    --text:#eef1f6;
+    --text-dim:#93a1b8;
+    --radius:10px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;background:var(--ink);color:var(--text);font-family:'Inter',sans-serif;}
+  body{display:flex;flex-direction:column;min-height:100vh;}
+
+  header{
+    display:flex;align-items:baseline;gap:14px;
+    padding:18px 24px 14px;
+    border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,#1c2534,#161d29);
+  }
+  header .brand{font-family:'Bebas Neue',sans-serif;font-size:32px;letter-spacing:2px;color:var(--chalk);}
+  header .brand span{color:var(--pink);}
+  header .sub{font-size:12.5px;color:var(--text-dim);letter-spacing:.3px;}
+
+  .layout{
+    flex:1;display:grid;
+    grid-template-columns:230px 1fr 260px;
+    gap:0;min-height:0;
+  }
+  .mobile-toggle-bar{display:none;}
+
+  .side{
+    background:var(--panel);
+    border-right:1px solid var(--line);
+    padding:16px;
+    display:flex;flex-direction:column;gap:18px;
+    overflow-y:auto;
+  }
+  .group-label{
+    font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:1.5px;
+    color:var(--text-dim);text-transform:uppercase;margin-bottom:8px;display:block;
+  }
+  .tool-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  button.tool{
+    background:var(--panel-2);border:1px solid var(--line);color:var(--text);
+    border-radius:var(--radius);padding:9px 8px;font-size:12.5px;font-weight:600;
+    cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px;
+    transition:.12s;line-height:1.15;
+  }
+  button.tool:hover{border-color:var(--amber);}
+  button.tool.active{background:var(--amber);border-color:var(--amber);color:#241704;}
+  button.full-row{grid-column:1/-1;}
+
+  input[type=text]{
+    width:100%;background:var(--panel-2);border:1px solid var(--line);color:var(--text);
+    border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit;
+  }
+  .field{display:flex;flex-direction:column;gap:6px;}
+  .btn{
+    background:var(--navy);color:#fff;border:none;border-radius:8px;
+    padding:10px 12px;font-weight:700;font-size:13px;cursor:pointer;letter-spacing:.2px;
+  }
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--text);}
+  .btn.small{padding:7px 10px;font-size:12px;}
+  .btn:hover{filter:brightness(1.12);}
+  .btn:disabled{opacity:.35;cursor:not-allowed;}
+  .row{display:flex;gap:8px;}
+  .row > *{flex:1;}
+
+  .stage{
+    display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
+    padding:22px;overflow:auto;background:
+      radial-gradient(ellipse at 50% -10%, #26314539, transparent 60%), var(--ink);
+  }
+  .court-frame{
+    background:#0e1420;border:1px solid var(--line);border-radius:14px;
+    padding:16px;box-shadow:0 20px 50px -20px #000a;
+  }
+  canvas{display:block;border-radius:4px;cursor:crosshair;touch-action:none;max-width:100%;height:auto;}
+
+  .frame-strip{
+    display:flex;align-items:center;gap:10px;margin-top:14px;
+    background:var(--panel-2);border:1px solid var(--line);border-radius:999px;
+    padding:6px 8px 6px 16px;flex-wrap:wrap;justify-content:center;
+  }
+  .frame-strip .frame-label{
+    font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--chalk);min-width:110px;text-align:center;
+  }
+  .frame-strip button{
+    background:var(--ink);border:1px solid var(--line);color:var(--text);
+    border-radius:999px;width:30px;height:30px;cursor:pointer;font-size:14px;
+  }
+  .frame-strip button:hover{border-color:var(--amber);}
+  .frame-strip button:disabled{opacity:.3;cursor:not-allowed;}
+
+  .stage-tools{display:flex;gap:10px;margin-top:14px;align-items:center;flex-wrap:wrap;justify-content:center;}
+  .chip{
+    font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-dim);
+    border:1px solid var(--line);border-radius:20px;padding:5px 12px;
+  }
+
+  .plays{
+    background:var(--panel);border-left:1px solid var(--line);
+    padding:16px;display:flex;flex-direction:column;gap:14px;overflow-y:auto;
+  }
+  .play-item{
+    background:var(--panel-2);border:1px solid var(--line);border-radius:8px;
+    padding:9px 10px;display:flex;align-items:center;justify-content:space-between;gap:6px;
+    cursor:pointer;font-size:13px;
+  }
+  .play-item:hover{border-color:var(--amber);}
+  .play-item.current{border-color:var(--amber);background:#2a2313;}
+  .play-item .name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .play-item .meta{font-size:10.5px;color:var(--text-dim);font-family:'JetBrains Mono',monospace;}
+  .play-item .del{color:var(--text-dim);font-size:15px;padding:2px 5px;border-radius:5px;}
+  .play-item .del:hover{color:var(--crimson);background:#0003;}
+  .play-item .share{font-size:14px;padding:2px 5px;border-radius:5px;}
+  .play-item .share:hover{background:#0003;}
+  .empty-note{color:var(--text-dim);font-size:12.5px;line-height:1.5;}
+  .legend{font-size:11.5px;color:var(--text-dim);line-height:1.7;}
+  .legend b{color:var(--text);}
+
+  .modal-overlay{position:fixed;inset:0;background:rgba(10,14,20,0.6);display:none;align-items:center;justify-content:center;z-index:100;}
+  .modal-overlay.open{display:flex;}
+  .modal-box{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;width:280px;max-width:88vw;}
+  .modal-box input{width:100%;margin:10px 0 14px;}
+
+  @media (max-width:980px){
+    html, body{height:auto;}
+    .layout{grid-template-columns:1fr;flex:none;overflow:visible;}
+    .side{order:1;overflow:visible;}
+    .stage{order:2;overflow:visible;height:auto;}
+    .plays{order:3;overflow:visible;}
+    .mobile-toggle-bar{
+      display:flex; gap:8px; padding:10px 14px;
+      background:var(--panel); border-bottom:1px solid var(--line);
+    }
+    .mobile-toggle-bar button{
+      flex:1; background:var(--panel-2); border:1px solid var(--line); color:var(--text);
+      border-radius:8px; padding:10px; font-weight:700; font-size:13px; cursor:pointer;
+    }
+    .mobile-toggle-bar button.active{background:var(--amber); color:#241704; border-color:var(--amber);}
+    .side, .plays{ display:none; }
+    .side.open, .plays.open{ display:flex; }
+    .stage{ padding:10px; }
+    .court-frame{ padding:8px; }
+    canvas{ max-height:30vh; width:auto; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">PISSARRA <span>MANRESA</span></div>
+  <div class="sub">Dissenya · anima · exporta</div>
+</header>
+
+<div class="mobile-toggle-bar">
+  <button id="toggleTools">🛠 Eines</button>
+  <button id="togglePlays">📁 Jugades</button>
+</div>
+
+<div class="layout">
+
+  <div class="side">
+    <div>
+      <span class="group-label">Pista</span>
+      <div class="row">
+        <button class="tool active" id="btnHalf">Mig camp</button>
+        <button class="tool" id="btnFull">Camp sencer</button>
+      </div>
+    </div>
+
+    <div>
+      <span class="group-label">Afegir</span>
+      <div class="tool-grid">
+        <button class="tool active" data-mode="select">Seleccionar</button>
+        <button class="tool" data-mode="offense">+ Atac</button>
+        <button class="tool" data-mode="defense">+ Defensa</button>
+        <button class="tool" data-mode="ball">+ Pilota</button>
+        <button class="tool" data-mode="text">+ Text</button>
+        <button class="tool" data-mode="delete">Esborrar</button>
+      </div>
+    </div>
+
+    <div>
+      <span class="group-label">Línies i símbols</span>
+      <div class="tool-grid">
+        <button class="tool" data-mode="path">Traçar recorregut</button>
+        <button class="tool" data-mode="pass">Passada</button>
+        <button class="tool" data-mode="screen">Bloqueig</button>
+        <button class="tool" data-mode="screenroll">Bloqueig + continuació</button>
+        <button class="tool" data-mode="dribble">Bot</button>
+        <button class="tool" data-mode="shot">Tir</button>
+        <button class="tool" data-mode="handoff">Mà a mà</button>
+      </div>
+      <p class="legend">Per "Traçar recorregut": selecciona un jugador o la pilota abans de dibuixar el camí que farà en animar aquesta acció.</p>
+    </div>
+
+    <div>
+      <span class="group-label">Edició</span>
+      <div class="row">
+        <button class="btn ghost" id="btnUndo">Desfer</button>
+        <button class="btn ghost" id="btnClear">Netejar acció</button>
+      </div>
+    </div>
+
+    <div class="legend">
+      <b>Llegenda:</b><br>
+      ┄ passada (discontinu)<br>
+      ⌐ bloqueig (traç curt)<br>
+      ⌐— bloqueig i continuació<br>
+      ~ bot (ondulat)<br>
+      ──› tir (recte)<br>
+      ●┄#┄› mà a mà
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="court-frame">
+      <canvas id="court" width="640" height="600"></canvas>
+    </div>
+
+    <div class="frame-strip">
+      <button id="framePrev" title="Acció anterior">‹</button>
+      <span class="frame-label" id="frameLabel">Acció 1 / 1</span>
+      <button id="frameNext" title="Acció següent">›</button>
+      <span style="width:1px;height:20px;background:var(--line);"></span>
+      <button class="btn small" id="frameAdd" style="border-radius:999px;width:auto;">+ Nova acció</button>
+      <button class="btn small ghost" id="frameDup" style="border-radius:999px;width:auto;">Duplicar</button>
+      <button class="btn small ghost" id="frameDel" style="border-radius:999px;width:auto;">Eliminar</button>
+    </div>
+
+    <div class="stage-tools">
+      <button class="btn" id="btnPlayAnim">▶ Previsualitzar acció</button>
+      <button class="btn" id="btnPlayAll">▶▶ Previsualitzar jugada completa</button>
+      <button class="btn ghost" id="btnExportPNG">Exportar PNG</button>
+      <button class="btn ghost" id="btnExportPDF">Exportar PDF (jugada)</button>
+      <button class="btn ghost" id="btnExportVideo">Exportar vídeo (jugada)</button>
+      <button class="btn ghost" id="btnExportGIF">Exportar GIF (jugada)</button>
+      <span class="chip" id="selectedChip">Jugador: —</span>
+      <span class="chip" id="modeChip">Mode: Seleccionar</span>
+    </div>
+  </div>
+
+  <div class="plays">
+    <div>
+      <span class="group-label">Jugada actual</span>
+      <div class="field">
+        <input type="text" id="playName" placeholder="Nom de la jugada (ex: Horns 1)">
+        <div class="row">
+          <button class="btn" id="btnSave">Desar</button>
+          <button class="btn ghost" id="btnNew">Nova</button>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <span class="group-label">Llibreria de jugades</span>
+      <div id="playList" style="display:flex;flex-direction:column;gap:8px;"></div>
+      <p class="empty-note" id="emptyNote">Encara no hi ha cap jugada desada al núvol.</p>
+    </div>
+
+    <div>
+      <span class="group-label">Playbook complet</span>
+      <button class="btn ghost full-row" id="btnExportAllPDF" style="width:100%;">Exportar totes en un PDF</button>
+      <p class="legend" style="margin-top:8px;">Les jugades es guarden al núvol (Firebase): tot l'staff amb l'enllaç de la pissarra les veu i les pot consultar. Fes servir el 🔗 de cada jugada per compartir-la directament.</p>
+      <button class="btn ghost full-row" id="btnExportJSON" style="width:100%;margin-top:6px;">Exportar còpia (.json)</button>
+      <label class="btn ghost full-row" style="width:100%;margin-top:6px;text-align:center;display:block;cursor:pointer;">
+        Importar còpia (.json)
+        <input type="file" id="importJSON" accept=".json" style="display:none;">
+      </label>
+    </div>
+  </div>
+
+</div>
+
+<div class="modal-overlay" id="textModal">
+  <div class="modal-box">
+    <span class="group-label">Afegir text a la pista</span>
+    <input type="text" id="textModalInput" placeholder="Escriu el text...">
+    <div class="row">
+      <button class="btn ghost" id="textModalCancel">Cancel·lar</button>
+      <button class="btn" id="textModalOk">Afegir</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const canvas = document.getElementById('court');
+  const ctx = canvas.getContext('2d');
+  const sizes = { half:[640,600], full:[1200,640] };
+
+  // --- Configuració de Firebase ---
+  const firebaseConfig = {
+    apiKey: "AIzaSyA67j0kTgXqG_gXC6aOAnwg66TZP3sgNXs",
+    authDomain: "playbook-manresa-copa.firebaseapp.com",
+    projectId: "playbook-manresa-copa",
+    storageBucket: "playbook-manresa-copa.firebasestorage.app",
+    messagingSenderId: "145116343756",
+    appId: "1:145116343756:web:3de50bedd5b57b553ec169"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.firestore();
+  const playsCol = db.collection('plays');
+  let playsCache = {}; // id -> {name, courtType, frames}
+  let firestoreReady = false;
+  let pendingShareId = new URLSearchParams(location.search).get('play');
+
+  let courtType = 'half';
+  let frames = [ emptyFrame() ];
+  let frameIndex = 0;
+
+  let players, ball, texts, arrows, paths;
+
+  let mode = 'select';
+  let history = [];
+  let dragTarget = null;
+  let drawingArrow = null;
+  let tracingPathFor = null;
+  let selectedPlayerId = null;
+  let ballSelected = false;
+  let currentPlayName = null;
+  let currentPlayId = null;
+  let followPlayer = null;   // jugador que segueix el ratolí durant un tram (bot, bloqueig, bloqueig+continuació)
+  let followBall = false;    // si la pilota també segueix (només bot)
+  let pendingScreenroll = null; // {pts} del primer tram (bloqueig) mentre s'espera el segon (continuació)
+  let lastTapTime = 0, lastTapPos = null;
+  function nextAvailableNum(team){
+    const used = new Set(players.filter(p=>p.team===team).map(p=>p.num));
+    for(let n=1;n<=5;n++){ if(!used.has(n)) return n; }
+    return null;
+  }
+
+  function emptyFrame(){ return {players:[], ball:null, texts:[], arrows:[], paths:{}}; }
+  function clone(o){ return JSON.parse(JSON.stringify(o)); }
+  function straightPts(pts){ return [pts[0], pts[pts.length-1]]; }
+
+  function commitCurrentFrame(){
+    frames[frameIndex] = { players:clone(players), ball: ball?clone(ball):null, texts:clone(texts), arrows:clone(arrows), paths:clone(paths) };
+  }
+  function loadFrame(i){
+    frameIndex = i;
+    const f = frames[i];
+    players = clone(f.players); ball = f.ball?clone(f.ball):null;
+    texts = clone(f.texts); arrows = clone(f.arrows); paths = clone(f.paths);
+    selectedPlayerId = null; history = [];
+    pendingScreenroll = null; followPlayer = null; followBall = false; drawingArrow = null;
+    updateFrameLabel();
+  }
+  function updateFrameLabel(){
+    document.getElementById('frameLabel').textContent = 'Acció '+(frameIndex+1)+' / '+frames.length;
+    document.getElementById('framePrev').disabled = frameIndex===0;
+    document.getElementById('frameNext').disabled = frameIndex===frames.length-1;
+    document.getElementById('frameDel').disabled = frames.length<=1;
+  }
+
+  function setCourt(type){
+    courtType = type;
+    const [w,h] = sizes[type];
+    canvas.width = w; canvas.height = h;
+    document.getElementById('btnHalf').classList.toggle('active', type==='half');
+    document.getElementById('btnFull').classList.toggle('active', type==='full');
+    render();
+  }
+
+  function pushHistory(){
+    history.push(JSON.stringify({players,ball,texts,arrows,paths}));
+    if(history.length>60) history.shift();
+  }
+  function undo(){
+    if(!history.length) return;
+    const state = JSON.parse(history.pop());
+    ({players,ball,texts,arrows,paths} = state);
+    pendingScreenroll = null; followPlayer = null; followBall = false; drawingArrow = null;
+    render();
+  }
+  function clearAll(){
+    pushHistory();
+    players=[]; ball=null; texts=[]; arrows=[]; paths={}; selectedPlayerId=null;
+    pendingScreenroll = null; followPlayer = null; followBall = false; drawingArrow = null;
+    render();
+  }
+
+  function drawHalfCourt(){
+    const w=canvas.width, h=canvas.height;
+    ctx.fillStyle = getWoodGradient(w,h);
+    ctx.fillRect(0,0,w,h);
+    drawWoodGrain(w,h);
+    ctx.strokeStyle = 'rgba(35,26,16,0.55)'; ctx.lineWidth = 2.5;
+    ctx.strokeRect(6,6,w-12,h-12);
+    const cx = w/2, baseline = 6, hoopY = baseline + 40;
+    const keyW = 160, keyH = 190;
+    ctx.strokeRect(cx-keyW/2, baseline, keyW, keyH);
+    ctx.beginPath(); ctx.arc(cx, baseline+keyH, 60, 0, Math.PI*2); ctx.stroke();
+    ctx.setLineDash([6,6]);
+    ctx.beginPath(); ctx.arc(cx, baseline+keyH, 60, 0, Math.PI); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath(); ctx.arc(cx, hoopY, 9, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx-30, baseline+22); ctx.lineTo(cx+30, baseline+22); ctx.stroke();
+    const r3 = w*0.42;
+    ctx.beginPath();
+    ctx.moveTo(cx-r3, baseline);
+    ctx.lineTo(cx-r3, baseline+140);
+    ctx.arc(cx, hoopY, r3-2, Math.PI, 0, true);
+    ctx.lineTo(cx+r3, baseline);
+    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(6,h-6); ctx.lineTo(w-6,h-6); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, h-6, 60, Math.PI, Math.PI*2); ctx.stroke();
+  }
+
+  function drawFullCourt(){
+    const w=canvas.width, h=canvas.height;
+    ctx.fillStyle = getWoodGradient(w,h);
+    ctx.fillRect(0,0,w,h);
+    drawWoodGrain(w,h);
+    ctx.strokeStyle = 'rgba(35,26,16,0.55)'; ctx.lineWidth = 2.5;
+    ctx.strokeRect(6,6,w-12,h-12);
+    const cy = h/2;
+    ctx.beginPath(); ctx.moveTo(w/2,6); ctx.lineTo(w/2,h-6); ctx.stroke();
+    ctx.beginPath(); ctx.arc(w/2,cy,55,0,Math.PI*2); ctx.stroke();
+    [ {side:1,x0:6}, {side:-1,x0:w-6} ].forEach(({side,x0})=>{
+      const hoopX = x0 + side*40;
+      const keyW=190, keyH=160;
+      ctx.strokeRect(side>0?6:w-6-keyW, cy-keyH/2, keyW, keyH);
+      ctx.beginPath(); ctx.arc(side>0?6+keyW:w-6-keyW, cy, 60, 0, Math.PI*2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(hoopX, cy, 9, 0, Math.PI*2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x0+side*22, cy-30); ctx.lineTo(x0+side*22, cy+30); ctx.stroke();
+      const r3 = h*0.42;
+      ctx.beginPath();
+      ctx.moveTo(x0, cy-r3);
+      ctx.lineTo(x0+side*140, cy-r3);
+      ctx.arc(hoopX, cy, r3-2, -Math.PI/2, Math.PI/2, side<0);
+      ctx.lineTo(x0, cy+r3);
+      ctx.stroke();
+    });
+  }
+
+  function getWoodGradient(w,h){
+    const g = ctx.createLinearGradient(0,0,w,h);
+    g.addColorStop(0,'#ecd4a3'); g.addColorStop(1,'#e0c184');
+    return g;
+  }
+  function drawWoodGrain(w,h){
+    ctx.save();
+    ctx.strokeStyle='rgba(120,84,40,0.12)'; ctx.lineWidth=1;
+    for(let i=0;i<h;i+=9){
+      ctx.beginPath(); ctx.moveTo(0,i+((i/9)%2)*3); ctx.lineTo(w,i);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawPlayers(){
+    players.forEach(p=>{
+      ctx.beginPath();
+      ctx.arc(p.x,p.y,17,0,Math.PI*2);
+      ctx.fillStyle = p.team==='O' ? '#e6197a' : '#3a4a63';
+      ctx.fill();
+      ctx.lineWidth = (p.id===selectedPlayerId) ? 3 : 1.5;
+      ctx.strokeStyle = (p.id===selectedPlayerId) ? '#e8a33d' : '#1c2430';
+      ctx.stroke();
+      ctx.fillStyle = '#fff';
+      const label = String(p.num);
+      ctx.font = (label.length>2 ? '700 10px' : '700 14px') + ' Inter, sans-serif';
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(label, p.x, p.y+1);
+    });
+    if(ball){
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, 9, 0, Math.PI*2);
+      ctx.fillStyle = '#e8732a';
+      ctx.fill();
+      ctx.lineWidth = ballSelected ? 3 : 1.5;
+      ctx.strokeStyle = ballSelected ? '#e8a33d' : '#2b1704';
+      ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ball.x-9,ball.y); ctx.lineTo(ball.x+9,ball.y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ball.x,ball.y-9); ctx.lineTo(ball.x,ball.y+9); ctx.stroke();
+    }
+  }
+
+  function drawTexts(){
+    ctx.fillStyle='#141a24'; ctx.font='700 15px Inter, sans-serif'; ctx.textAlign='left';
+    texts.forEach(t=> ctx.fillText(t.text, t.x, t.y));
+  }
+
+  function drawArrowHead(x1,y1,x2,y2,len){
+    const angle = Math.atan2(y2-y1,x2-x1);
+    len = len || 10;
+    ctx.beginPath();
+    ctx.moveTo(x2,y2);
+    ctx.lineTo(x2-len*Math.cos(angle-0.4), y2-len*Math.sin(angle-0.4));
+    ctx.lineTo(x2-len*Math.cos(angle+0.4), y2-len*Math.sin(angle+0.4));
+    ctx.closePath();
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.fill();
+  }
+
+  const CONTINUATION_COLOR = '#e6197a';
+
+  function drawScreenMark(cx,cy,angle){
+    const L=15;
+    ctx.beginPath();
+    ctx.moveTo(cx-L*Math.cos(angle), cy-L*Math.sin(angle));
+    ctx.lineTo(cx+L*Math.cos(angle), cy+L*Math.sin(angle));
+    ctx.lineWidth=6;
+    ctx.stroke();
+  }
+
+  // Dibuixa un sol tram (pts + type) amb un color concret. type pot ser
+  // qualsevol dels tipus d'acció normals, o 'screenroll2' per al tram de
+  // continuació d'un bloqueig+continuació (recte, acaba en fletxa).
+  function drawArrowLeg(pts, type, color){
+    if(pts.length<2) return;
+    ctx.lineWidth=2.6; ctx.strokeStyle = color;
+    if(type==='pass') ctx.setLineDash([8,7]);
+    else if(type==='handoff') ctx.setLineDash([10,4,2,4]);
+    else ctx.setLineDash([]);
+
+    const isStraight = type==='pass' || type==='shot' || type==='screen' || type==='screenroll2';
+    if(isStraight){
+      const p0 = pts[0], p1 = pts[pts.length-1];
+      ctx.beginPath();
+      ctx.moveTo(p0[0], p0[1]);
+      ctx.lineTo(p1[0], p1[1]);
+      ctx.stroke();
+    } else if(type==='dribble'){
+      // Ona contínua basada en la distància recorreguda sobre tot el traçat
+      // (no reiniciada a cada punt capturat del ratolí), perquè es vegi sempre
+      // clara sense dependre de la velocitat/mostreig de l'arrossegament.
+      const AMPLITUDE = 5.5, WAVELEN = 16, STEP = 4;
+      ctx.beginPath();
+      let dist = 0, first = true;
+      for(let i=0;i<pts.length-1;i++){
+        const [x1,y1]=pts[i], [x2,y2]=pts[i+1];
+        const segLen = Math.hypot(x2-x1,y2-y1);
+        if(segLen < 0.001) continue;
+        const ux = (x2-x1)/segLen, uy = (y2-y1)/segLen;
+        const nx = -uy, ny = ux;
+        const steps = Math.max(1, Math.ceil(segLen/STEP));
+        for(let s=0;s<=steps;s++){
+          if(s===0 && i>0) continue;
+          const t = s/steps;
+          const x = x1+(x2-x1)*t, y = y1+(y2-y1)*t;
+          const off = Math.sin((dist+segLen*t)/WAVELEN*Math.PI*2)*AMPLITUDE;
+          const wx = x+nx*off, wy = y+ny*off;
+          if(first){ ctx.moveTo(wx,wy); first=false; } else { ctx.lineTo(wx,wy); }
+        }
+        dist += segLen;
+      }
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0], pts[0][1]);
+      for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0], pts[i][1]);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    const last = pts[pts.length-1];
+    const prev = isStraight ? pts[0] : pts[pts.length-2];
+    if(type==='screen'){
+      const angle = Math.atan2(last[1]-prev[1], last[0]-prev[0]) + Math.PI/2;
+      drawScreenMark(last[0], last[1], angle);
+    } else {
+      drawArrowHead(prev[0],prev[1],last[0],last[1], type==='shot' ? 18 : 10);
+      if(type==='handoff'){
+        ctx.beginPath(); ctx.arc(pts[0][0], pts[0][1], 5, 0, Math.PI*2);
+        ctx.fillStyle = '#141a24'; ctx.fill();
+        const midIdx = Math.floor((pts.length-1)/2);
+        const mid = pts[midIdx];
+        ctx.font='800 16px Inter, sans-serif';
+        ctx.textAlign='center'; ctx.textBaseline='bottom';
+        ctx.lineWidth=4; ctx.strokeStyle='#fff';
+        ctx.strokeText('#', mid[0], mid[1]-6);
+        ctx.fillStyle='#141a24';
+        ctx.fillText('#', mid[0], mid[1]-6);
+      }
+    }
+  }
+
+  // a = {pts, type, pts2?}. 'screenroll' té dos trams: pts (el bloqueig,
+  // tinta fosca) i pts2 (la continuació, en color diferent).
+  function drawPolylineArrow(a){
+    if(!a || !a.pts) return;
+    if(a.type==='screenroll'){
+      drawArrowLeg(a.pts, 'screen', '#141a24');
+      if(a.pts2) drawArrowLeg(a.pts2, 'screenroll2', CONTINUATION_COLOR);
+      return;
+    }
+    const color = a.type==='screenroll2' ? CONTINUATION_COLOR : '#141a24';
+    drawArrowLeg(a.pts, a.type, color);
+  }
+
+  function drawAnimPaths(){
+    Object.entries(paths).forEach(([id,pts])=>{
+      if(pts.length<2) return;
+      ctx.save();
+      ctx.setLineDash([10,7]);
+      ctx.strokeStyle = id==='BALL' ? 'rgba(232,115,42,0.85)' : 'rgba(230,25,122,0.8)';
+      ctx.lineWidth=3.5;
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0],pts[0][1]);
+      for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0],pts[i][1]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      const last = pts[pts.length-1], prev = pts[pts.length-2];
+      const angle = Math.atan2(last[1]-prev[1], last[0]-prev[0]);
+      const len=13;
+      ctx.beginPath();
+      ctx.moveTo(last[0],last[1]);
+      ctx.lineTo(last[0]-len*Math.cos(angle-0.4), last[1]-len*Math.sin(angle-0.4));
+      ctx.lineTo(last[0]-len*Math.cos(angle+0.4), last[1]-len*Math.sin(angle+0.4));
+      ctx.closePath();
+      ctx.fillStyle = ctx.strokeStyle;
+      ctx.fill();
+      ctx.restore();
+    });
+  }
+
+  function updateSelectedChip(){
+    const chip = document.getElementById('selectedChip');
+    if(!chip) return;
+    if(ballSelected){ chip.textContent = 'Seleccionat: Pilota'; return; }
+    if(!selectedPlayerId){ chip.textContent = 'Jugador: —'; return; }
+    const p = players.find(pl=>pl.id===selectedPlayerId);
+    chip.textContent = p ? ('Jugador seleccionat: '+(p.team==='O'?'Atac ':'Def ')+p.num) : 'Jugador: —';
+  }
+
+  function render(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    courtType==='half' ? drawHalfCourt() : drawFullCourt();
+    drawAnimPaths();
+    arrows.forEach(a=>drawPolylineArrow(a));
+    if(pendingScreenroll) drawPolylineArrow({type:'screen', pts:pendingScreenroll.pts});
+    if(drawingArrow) drawPolylineArrow(drawingArrow);
+    drawPlayers();
+    drawTexts();
+    updateSelectedChip();
+  }
+
+  function setMode(m){
+    if(pendingScreenroll && m!=='screenroll'){
+      // Canvia d'eina amb un bloqueig a mig fer (sense continuació): el deixa com a bloqueig sol.
+      arrows.push({type:'screen', pts: pendingScreenroll.pts});
+      if(followPlayer) paths[followPlayer.id] = clone(straightPts(pendingScreenroll.pts));
+      pendingScreenroll = null; followPlayer = null; followBall = false;
+      render();
+    }
+    mode = m;
+    document.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('active', b.dataset.mode===m));
+    const labels = {select:'Seleccionar',offense:'+ Atac',defense:'+ Defensa',ball:'+ Pilota',text:'+ Text',
+      delete:'Esborrar',pass:'Passada',screen:'Bloqueig',screenroll:'Bloqueig + continuació',dribble:'Bot',shot:'Tir',handoff:'Mà a mà',path:'Traçar recorregut'};
+    document.getElementById('modeChip').textContent = 'Mode: '+(labels[m]||m);
+    if(window.innerWidth<=980){
+      document.querySelector('.side').classList.remove('open');
+      document.getElementById('toggleTools').classList.remove('active');
+    }
+  }
+  document.querySelectorAll('[data-mode]').forEach(b=> b.addEventListener('click',()=>setMode(b.dataset.mode)));
+
+  const toggleToolsBtn = document.getElementById('toggleTools');
+  const togglePlaysBtn = document.getElementById('togglePlays');
+  toggleToolsBtn.onclick = ()=>{
+    const side = document.querySelector('.side');
+    const opening = !side.classList.contains('open');
+    side.classList.toggle('open', opening);
+    document.querySelector('.plays').classList.remove('open');
+    toggleToolsBtn.classList.toggle('active', opening);
+    togglePlaysBtn.classList.remove('active');
+  };
+  togglePlaysBtn.onclick = ()=>{
+    const plays = document.querySelector('.plays');
+    const opening = !plays.classList.contains('open');
+    plays.classList.toggle('open', opening);
+    document.querySelector('.side').classList.remove('open');
+    togglePlaysBtn.classList.toggle('active', opening);
+    toggleToolsBtn.classList.remove('active');
+  };
+
+  function pos(evt){
+    const r = canvas.getBoundingClientRect();
+    const cx = (evt.touches? evt.touches[0].clientX : evt.clientX) - r.left;
+    const cy = (evt.touches? evt.touches[0].clientY : evt.clientY) - r.top;
+    return [cx * canvas.width/r.width, cy * canvas.height/r.height];
+  }
+  function hitPlayer(x,y){ return players.find(p=> Math.hypot(p.x-x,p.y-y) < 18); }
+
+  canvas.addEventListener('mousedown', e=>{
+    const [x,y] = pos(e);
+    if(mode==='select'){
+      const hp = hitPlayer(x,y);
+      if(hp){ dragTarget=hp; selectedPlayerId=hp.id; ballSelected=false; pushHistory(); }
+      else if(ball && Math.hypot(ball.x-x,ball.y-y)<14){ dragTarget=ball; ballSelected=true; selectedPlayerId=null; pushHistory(); }
+      else { selectedPlayerId=null; ballSelected=false; }
+      render();
+    } else if(mode==='offense' || mode==='defense'){
+      const team = mode==='offense'?'O':'D';
+      const num = nextAvailableNum(team);
+      if(num === null){
+        alert('Ja hi ha 5 jugadores de '+(team==='O'?'atac':'defensa')+' a la pista (màxim per equip).');
+        return;
+      }
+      pushHistory();
+      players.push({id:'p'+Date.now()+Math.random(), team, num, x, y});
+      render();
+    } else if(mode==='ball'){
+      pushHistory(); ball = {x,y}; render();
+    } else if(mode==='text'){
+      openTextModal(x,y);
+    } else if(mode==='delete'){
+      pushHistory();
+      const hp = hitPlayer(x,y);
+      if(hp){ players = players.filter(p=>p!==hp); delete paths[hp.id]; }
+      else if(ball && Math.hypot(ball.x-x,ball.y-y)<14){ ball=null; }
+      else {
+        let idx=-1, best=999;
+        arrows.forEach((a,i)=>{ [...a.pts, ...(a.pts2||[])].forEach(pt=>{ const d=Math.hypot(pt[0]-x,pt[1]-y); if(d<14 && d<best){best=d; idx=i;} }); });
+        if(idx>-1) arrows.splice(idx,1);
+        else { texts = texts.filter(t=> Math.hypot(t.x-x,t.y-y) > 16); }
+      }
+      render();
+    } else if(mode==='dribble' && selectedPlayerId){
+      const p = players.find(pl=>pl.id===selectedPlayerId);
+      if(p){
+        pushHistory();
+        followPlayer = p; followBall = true;
+        drawingArrow = {type:'dribble', pts:[[p.x,p.y]]};
+      }
+    } else if(mode==='screen' || mode==='screenroll'){
+      if(mode==='screenroll' && pendingScreenroll){
+        // Segon tram: la continuació, sempre encaixada on va acabar el bloqueig.
+        const startPt = pendingScreenroll.pts[pendingScreenroll.pts.length-1];
+        drawingArrow = {type:'screenroll2', pts:[startPt]};
+      } else {
+        pushHistory();
+        drawingArrow = {type:'screen', pts:[[x,y]]};
+      }
+      if(selectedPlayerId){
+        const p = players.find(pl=>pl.id===selectedPlayerId);
+        if(p){ followPlayer = p; followBall = false; }
+      }
+    } else if(['pass','dribble','shot','handoff'].includes(mode)){
+      drawingArrow = {type:mode, pts:[[x,y]]};
+    } else if(mode==='path'){
+      if(!selectedPlayerId && !ballSelected){ alert('Primer selecciona un jugador o la pilota (mode Seleccionar) i torna a triar Traçar recorregut.'); setMode('select'); return; }
+      if(ballSelected){
+        tracingPathFor = 'BALL';
+        paths['BALL'] = ball ? [[ball.x, ball.y]] : [[x,y]];
+      } else {
+        const p = players.find(pl=>pl.id===selectedPlayerId);
+        tracingPathFor = selectedPlayerId;
+        paths[tracingPathFor] = p ? [[p.x, p.y]] : [[x,y]];
+      }
+    }
+  });
+  canvas.addEventListener('mousemove', e=>{
+    const [x,y] = pos(e);
+    if(dragTarget){ dragTarget.x=x; dragTarget.y=y; render(); }
+    else if(drawingArrow){
+      drawingArrow.pts.push([x,y]);
+      if(followPlayer){
+        followPlayer.x=x; followPlayer.y=y;
+        if(followBall && ball){ ball.x=x; ball.y=y; }
+      }
+      render();
+    }
+    else if(tracingPathFor){ paths[tracingPathFor].push([x,y]); render(); }
+  });
+  function endStroke(){
+    if(mode==='screenroll' && drawingArrow && !pendingScreenroll){
+      // Acaba de fer el primer tram (el bloqueig): el deixa pendent i espera
+      // que torni a prémer per dibuixar la continuació, sense tancar l'acció.
+      if(drawingArrow.pts.length>1) pendingScreenroll = {pts: drawingArrow.pts};
+      drawingArrow = null;
+      dragTarget = null; tracingPathFor = null;
+      render();
+      return;
+    }
+    if(drawingArrow){
+      if(mode==='screenroll' && pendingScreenroll){
+        // Acaba de fer el segon tram (la continuació).
+        if(drawingArrow.pts.length>1){
+          const leg1 = straightPts(pendingScreenroll.pts), leg2 = straightPts(drawingArrow.pts);
+          arrows.push({type:'screenroll', pts: pendingScreenroll.pts, pts2: drawingArrow.pts});
+          if(followPlayer) paths[followPlayer.id] = clone([leg1[0], leg1[1], leg2[1]]);
+        } else {
+          arrows.push({type:'screen', pts: pendingScreenroll.pts});
+          if(followPlayer) paths[followPlayer.id] = clone(straightPts(pendingScreenroll.pts));
+        }
+        pendingScreenroll = null;
+      } else if(drawingArrow.pts.length>1){
+        if(!followPlayer) pushHistory();
+        arrows.push(drawingArrow);
+        if(followPlayer){
+          // També ho guarda com a recorregut, perquè s'animi en previsualitzar la jugada
+          // (recte per al bloqueig, ja que el traç dibuixat també ho és; sencer per al bot,
+          // que necessita seguir l'ondulació real del recorregut).
+          const followPts = drawingArrow.type==='screen' ? straightPts(drawingArrow.pts) : drawingArrow.pts;
+          paths[followPlayer.id] = clone(followPts);
+          if(followBall && ball) paths['BALL'] = clone(followPts);
+        }
+      }
+      drawingArrow=null;
+    }
+    dragTarget=null; tracingPathFor=null; followPlayer=null; followBall=false;
+    render();
+  }
+  canvas.addEventListener('mouseup', endStroke);
+  canvas.addEventListener('mouseleave', endStroke);
+  canvas.addEventListener('touchstart', e=>{
+    e.preventDefault();
+    const [tx,ty] = pos(e);
+    if(maybeHandleDoubleTap(tx,ty)) return;
+    canvas.dispatchEvent(new MouseEvent('mousedown', toMouseInit(e)));
+  }, {passive:false});
+  canvas.addEventListener('touchmove', e=>{e.preventDefault(); canvas.dispatchEvent(new MouseEvent('mousemove', toMouseInit(e)));}, {passive:false});
+  canvas.addEventListener('touchend', e=>{e.preventDefault(); endStroke();}, {passive:false});
+  function toMouseInit(e){ const t = e.touches[0] || e.changedTouches[0]; return {clientX:t.clientX, clientY:t.clientY}; }
+
+  function renamePlayerAt(x,y){
+    const hp = hitPlayer(x,y);
+    if(!hp) return;
+    const nou = prompt('Nom o dorsal de la jugadora:', String(hp.num));
+    if(nou !== null && nou.trim() !== ''){
+      pushHistory();
+      hp.num = nou.trim();
+      render();
+    }
+  }
+  function maybeHandleDoubleTap(x,y){
+    const now = Date.now();
+    if(lastTapPos && (now-lastTapTime) < 350 && Math.hypot(x-lastTapPos[0], y-lastTapPos[1]) < 20){
+      renamePlayerAt(x,y);
+      lastTapTime = 0; lastTapPos = null;
+      return true;
+    }
+    lastTapTime = now; lastTapPos = [x,y];
+    return false;
+  }
+  canvas.addEventListener('dblclick', e=>{ const [x,y] = pos(e); renamePlayerAt(x,y); });
+
+  let pendingTextPos = null;
+  function openTextModal(x,y){
+    pendingTextPos = [x,y];
+    const input = document.getElementById('textModalInput');
+    input.value = '';
+    document.getElementById('textModal').classList.add('open');
+    setTimeout(()=>input.focus(), 60);
+  }
+  function closeTextModal(){
+    document.getElementById('textModal').classList.remove('open');
+    pendingTextPos = null;
+  }
+  document.getElementById('textModalCancel').onclick = closeTextModal;
+  document.getElementById('textModalOk').onclick = ()=>{
+    const val = document.getElementById('textModalInput').value.trim();
+    if(val && pendingTextPos){
+      pushHistory();
+      texts.push({x:pendingTextPos[0], y:pendingTextPos[1], text:val});
+      render();
+    }
+    closeTextModal();
+  };
+  document.getElementById('textModalInput').addEventListener('keydown', e=>{
+    if(e.key==='Enter') document.getElementById('textModalOk').click();
+  });
+
+  document.getElementById('btnHalf').onclick = ()=>setCourt('half');
+  document.getElementById('btnFull').onclick = ()=>setCourt('full');
+  document.getElementById('btnUndo').onclick = undo;
+  document.getElementById('btnClear').onclick = ()=>{ if(confirm('Netejar aquesta acció?')) clearAll(); };
+
+  document.getElementById('framePrev').onclick = ()=>{ commitCurrentFrame(); loadFrame(frameIndex-1); render(); };
+  document.getElementById('frameNext').onclick = ()=>{ commitCurrentFrame(); loadFrame(frameIndex+1); render(); };
+  document.getElementById('frameAdd').onclick = ()=>{
+    commitCurrentFrame();
+    const contPlayers = clone(players).map(p=>{
+      const path = paths[p.id];
+      if(path && path.length>=2){
+        const last = path[path.length-1];
+        return Object.assign({}, p, {x:last[0], y:last[1]});
+      }
+      return p;
+    });
+    let contBall = ball ? clone(ball) : null;
+    const ballPath = paths['BALL'];
+    if(ballPath && ballPath.length>=2 && contBall){
+      const last = ballPath[ballPath.length-1];
+      contBall.x = last[0]; contBall.y = last[1];
+    }
+    const cont = { players: contPlayers, ball: contBall, texts:[], arrows:[], paths:{} };
+    frames.splice(frameIndex+1, 0, cont);
+    loadFrame(frameIndex+1); render();
+  };
+  document.getElementById('frameDup').onclick = ()=>{
+    commitCurrentFrame();
+    frames.splice(frameIndex+1, 0, clone(frames[frameIndex]));
+    loadFrame(frameIndex+1); render();
+  };
+  document.getElementById('frameDel').onclick = ()=>{
+    if(frames.length<=1) return;
+    if(!confirm('Eliminar aquesta acció?')) return;
+    frames.splice(frameIndex,1);
+    loadFrame(Math.max(0, frameIndex-1)); render();
+  };
+
+  function animateFrame(durationMs, frameData){
+    return new Promise(resolve=>{
+      const localPaths = frameData.paths;
+      if(!Object.keys(localPaths).length){ resolve(); return; }
+      const start = performance.now();
+      const localPlayers = frameData.players;
+      const localBall = frameData.ball;
+      function frame(now){
+        const t = Math.min(1, Math.max(0, (now-start)/durationMs));
+        localPlayers.forEach(p=>{
+          const path = localPaths[p.id];
+          if(!path || path.length<2) return;
+          const segCount = path.length-1;
+          const segF = t*segCount;
+          const segI = Math.min(segCount-1, Math.floor(segF));
+          const lf = segF-segI;
+          const [x1,y1] = path[segI], [x2,y2] = path[segI+1];
+          p.x = x1+(x2-x1)*lf; p.y = y1+(y2-y1)*lf;
+        });
+        const ballPath = localPaths['BALL'];
+        if(ballPath && ballPath.length>=2 && localBall){
+          const segCount = ballPath.length-1;
+          const segF = t*segCount;
+          const segI = Math.min(segCount-1, Math.floor(segF));
+          const lf = segF-segI;
+          const [x1,y1] = ballPath[segI], [x2,y2] = ballPath[segI+1];
+          localBall.x = x1+(x2-x1)*lf; localBall.y = y1+(y2-y1)*lf;
+        }
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        courtType==='half' ? drawHalfCourt() : drawFullCourt();
+        Object.entries(localPaths).forEach(([id,pts])=>{
+          ctx.save();
+          ctx.setLineDash([10,7]);
+          ctx.strokeStyle = id==='BALL' ? 'rgba(232,115,42,0.85)' : 'rgba(230,25,122,0.8)';
+          ctx.lineWidth=3.5;
+          ctx.beginPath(); ctx.moveTo(pts[0][0],pts[0][1]);
+          for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0],pts[i][1]);
+          ctx.stroke(); ctx.restore();
+        });
+        frameData.arrows.forEach(a=>drawPolylineArrow(a));
+        const savedPlayers=players, savedBall=ball, savedTexts=texts;
+        players = localPlayers; ball = frameData.ball; texts = frameData.texts;
+        drawPlayers(); drawTexts();
+        players=savedPlayers; ball=savedBall; texts=savedTexts;
+        if(t<1) requestAnimationFrame(frame); else resolve();
+      }
+      requestAnimationFrame(frame);
+    });
+  }
+
+  document.getElementById('btnPlayAnim').onclick = async ()=>{
+    if(!Object.keys(paths).length){ alert('No hi ha cap recorregut traçat en aquesta acció.'); return; }
+    commitCurrentFrame();
+    await animateFrame(2000, clone(frames[frameIndex]));
+    render();
+  };
+
+  async function playAllFrames(){
+    commitCurrentFrame();
+    const startIndex = frameIndex;
+    for(let i=0;i<frames.length;i++){
+      const fd = clone(frames[i]);
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      courtType==='half' ? drawHalfCourt() : drawFullCourt();
+      const sp=players, sb=ball, st=texts, sa=arrows, spaths=paths;
+      players=fd.players; ball=fd.ball; texts=fd.texts; arrows=fd.arrows; paths=fd.paths;
+      render();
+      players=sp; ball=sb; texts=st; arrows=sa; paths=spaths;
+      await new Promise(r=>setTimeout(r,450));
+      if(Object.keys(fd.paths).length) await animateFrame(1900, fd);
+      await new Promise(r=>setTimeout(r,250));
+    }
+    loadFrame(startIndex); render();
+  }
+  document.getElementById('btnPlayAll').onclick = playAllFrames;
+
+  document.getElementById('btnExportPNG').onclick = ()=>{
+    try{
+      const link = document.createElement('a');
+      link.download = (document.getElementById('playName').value || 'jugada') + '_accio'+(frameIndex+1)+'.png';
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    }catch(err){
+      console.error(err);
+      alert('Error exportant el PNG: '+err.message);
+    }
+  };
+
+  function addCanvasToPDF(pdf, title, isFirst){
+    if(!isFirst) pdf.addPage(canvas.width>canvas.height?'l':'p');
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+    const margin = 30;
+    const imgW = pageW - margin*2;
+    const scale = imgW / canvas.width;
+    const imgH = canvas.height * scale;
+    pdf.setFont('helvetica','bold'); pdf.setFontSize(15);
+    pdf.text(title, margin, margin+2);
+    pdf.addImage(canvas.toDataURL('image/png'), 'PNG', margin, margin+14, imgW, Math.min(imgH, pageH-margin*2-14));
+  }
+
+  document.getElementById('btnExportPDF').onclick = ()=>{
+    try{
+      if(!window.jspdf){ alert('No s\'ha pogut carregar la llibreria de PDF (jsPDF). Comprova la connexió a internet i torna-ho a provar.'); return; }
+      commitCurrentFrame();
+      const name = document.getElementById('playName').value || 'Jugada';
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({orientation: canvas.width>canvas.height?'l':'p', unit:'pt', format:'a4'});
+      const savedIndex = frameIndex;
+      frames.forEach((f,i)=>{
+        const sp=players, sb=ball, st=texts, sa=arrows, spaths=paths;
+        players=f.players; ball=f.ball; texts=f.texts; arrows=f.arrows; paths=f.paths;
+        render();
+        addCanvasToPDF(pdf, name + ' — Acció '+(i+1)+'/'+frames.length, i===0);
+        players=sp; ball=sb; texts=st; arrows=sa; paths=spaths;
+      });
+      loadFrame(savedIndex); render();
+      pdf.save(name.replace(/\s+/g,'_') + '.pdf');
+    }catch(err){
+      console.error(err);
+      alert('Error exportant el PDF: '+err.message);
+    }
+  };
+
+  document.getElementById('btnExportAllPDF').onclick = ()=>{
+    try{
+      if(!window.jspdf){ alert('No s\'ha pogut carregar la llibreria de PDF (jsPDF). Comprova la connexió a internet i torna-ho a provar.'); return; }
+      const plays = nameKeyedPlays();
+      const names = Object.keys(plays);
+      if(!names.length){ alert('No tens cap jugada desada encara.'); return; }
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({orientation:'p', unit:'pt', format:'a4'});
+      let firstPage = true;
+      const savedState = {courtType, frames:clone(frames), frameIndex};
+      names.forEach(name=>{
+        const playData = plays[name];
+        const pCourtType = playData.courtType || 'half';
+        const [w,h] = sizes[pCourtType]; canvas.width=w; canvas.height=h;
+        const pFrames = playData.frames || [playData];
+        pFrames.forEach((f,i)=>{
+          const sp=players, sb=ball, st=texts, sa=arrows, sct=courtType, spaths=paths;
+          players=f.players; ball=f.ball; texts=f.texts; arrows=f.arrows; courtType=pCourtType; paths=f.paths;
+          render();
+          addCanvasToPDF(pdf, name + ' — Acció '+(i+1)+'/'+pFrames.length, firstPage);
+          firstPage = false;
+          players=sp; ball=sb; texts=st; arrows=sa; courtType=sct; paths=spaths;
+        });
+      });
+      courtType = savedState.courtType;
+      const [w,h] = sizes[courtType]; canvas.width=w; canvas.height=h;
+      frames = savedState.frames; loadFrame(savedState.frameIndex); render();
+      pdf.save('playbook_manresa.pdf');
+    }catch(err){
+      console.error(err);
+      alert('Error exportant el playbook: '+err.message);
+    }
+  };
+
+  document.getElementById('btnExportVideo').onclick = async ()=>{
+    try{
+      if(!canvas.captureStream || !window.MediaRecorder){
+        alert('El teu navegador no permet exportar vídeo directament des d\'aquí (passa sovint a Safari/iOS). Prova-ho des de Chrome (Android o ordinador), o fes servir Exportar PDF mentre ho revisem.');
+        return;
+      }
+      commitCurrentFrame();
+      const hasAnyPath = frames.some(f=>Object.keys(f.paths).length);
+      if(!hasAnyPath){ alert("Traça almenys un recorregut en alguna acció abans d'exportar el vídeo."); return; }
+      const stream = canvas.captureStream(30);
+      const mimeCandidates = ['video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm','video/mp4'];
+      const mime = mimeCandidates.find(m=>MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
+      const recorder = mime ? new MediaRecorder(stream, {mimeType:mime}) : new MediaRecorder(stream);
+      const chunks = [];
+      recorder.ondataavailable = e=>{ if(e.data && e.data.size) chunks.push(e.data); };
+      const done = new Promise((resolve,reject)=>{
+        recorder.onstop = ()=>{
+          try{
+            const blob = new Blob(chunks, {type:mime||'video/webm'});
+            const link = document.createElement('a');
+            link.download = (document.getElementById('playName').value || 'jugada') + '.webm';
+            link.href = URL.createObjectURL(blob);
+            link.click();
+            resolve();
+          }catch(err){ reject(err); }
+        };
+        recorder.onerror = reject;
+      });
+      recorder.start();
+      await playAllFrames();
+      setTimeout(()=>recorder.stop(), 200);
+      await done;
+    }catch(err){
+      console.error(err);
+      alert('Error exportant el vídeo: '+err.message+'\n\nProva-ho des de Chrome (Android o ordinador) si ets a Safari/iOS.');
+    }
+  };
+
+  let gifWorkerBlobUrl = null;
+  async function getGifWorkerUrl(){
+    // Els navegadors no permeten crear un Worker apuntant directament a un
+    // altre domini (CDN): cal baixar-lo i servir-lo com a blob del mateix origen.
+    if(gifWorkerBlobUrl) return gifWorkerBlobUrl;
+    const resp = await fetch('https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js');
+    if(!resp.ok) throw new Error('No s\'ha pogut descarregar el worker del GIF (' + resp.status + ')');
+    const text = await resp.text();
+    const blob = new Blob([text], {type:'application/javascript'});
+    gifWorkerBlobUrl = URL.createObjectURL(blob);
+    return gifWorkerBlobUrl;
+  }
+
+  document.getElementById('btnExportGIF').onclick = async ()=>{
+    try{
+      if(!window.GIF){ alert('No s\'ha pogut carregar la llibreria de GIF. Comprova la connexió a internet i torna-ho a provar.'); return; }
+      commitCurrentFrame();
+      const hasAnyPath = frames.some(f=>Object.keys(f.paths).length);
+      if(!hasAnyPath){ alert("Traça almenys un recorregut en alguna acció abans d'exportar el GIF."); return; }
+      const FPS = 8;
+      const SCALE = 0.6; // mida reduïda: és un dibuix senzill, no cal tanta resolució
+      const gifW = Math.round(canvas.width*SCALE), gifH = Math.round(canvas.height*SCALE);
+      const gifCanvas = document.createElement('canvas');
+      gifCanvas.width = gifW; gifCanvas.height = gifH;
+      const gifCtx = gifCanvas.getContext('2d');
+      const workerUrl = await getGifWorkerUrl();
+      const gif = new GIF({
+        workers: 2, quality: 15,
+        width: gifW, height: gifH,
+        workerScript: workerUrl
+      });
+      const captureInterval = setInterval(()=>{
+        gifCtx.clearRect(0,0,gifW,gifH);
+        gifCtx.drawImage(canvas, 0,0, gifW,gifH);
+        gif.addFrame(gifCanvas, {copy:true, delay: Math.round(1000/FPS)});
+      }, Math.round(1000/FPS));
+      await playAllFrames();
+      clearInterval(captureInterval);
+      const done = new Promise((resolve,reject)=>{
+        gif.on('finished', blob=>{
+          const link = document.createElement('a');
+          link.download = (document.getElementById('playName').value || 'jugada') + '.gif';
+          link.href = URL.createObjectURL(blob);
+          link.click();
+          resolve();
+        });
+        gif.on('abort', ()=> reject(new Error('Exportació de GIF cancel·lada.')));
+      });
+      gif.render();
+      await done;
+    }catch(err){
+      console.error(err);
+      alert('Error exportant el GIF: '+err.message);
+    }
+  };
+
+  function snapshotPlay(){
+    commitCurrentFrame();
+    return { courtType, frames: clone(frames) };
+  }
+  // Firestore no permet arrays niats (array dins d'array), i 'frames' en conté
+  // (punts [x,y] dins de fletxes/recorreguts). Es guarda com a JSON serialitzat.
+  function getFramesFromDoc(d){
+    if(d && d.framesJson){
+      try{ return JSON.parse(d.framesJson); }catch(e){ return []; }
+    }
+    return (d && d.frames) || [];
+  }
+  function applyPlay(s){
+    courtType = s.courtType || 'half';
+    const [w,h] = sizes[courtType]; canvas.width=w; canvas.height=h;
+    document.getElementById('btnHalf').classList.toggle('active', courtType==='half');
+    document.getElementById('btnFull').classList.toggle('active', courtType==='full');
+    const parsedFrames = getFramesFromDoc(s);
+    frames = clone(parsedFrames.length ? parsedFrames : [emptyFrame()]);
+    loadFrame(0);
+  }
+  function nameKeyedPlays(){
+    const out = {};
+    Object.values(playsCache).forEach(d=>{ out[d.name] = { courtType:d.courtType, frames:getFramesFromDoc(d) }; });
+    return out;
+  }
+
+  function shareUrlFor(id){
+    return location.origin + location.pathname + '?play=' + id;
+  }
+
+  async function copyShareLink(id){
+    const url = shareUrlFor(id);
+    try{
+      await navigator.clipboard.writeText(url);
+      alert('Enllaç copiat! Comparteix-lo amb el teu staff:\n' + url);
+    }catch(err){
+      prompt('Copia aquest enllaç per compartir la jugada:', url);
+    }
+  }
+
+  function refreshPlayList(){
+    const list = document.getElementById('playList');
+    const entries = Object.entries(playsCache).sort((a,b)=> (a[1].name||'').localeCompare(b[1].name||''));
+    list.innerHTML = '';
+    document.getElementById('emptyNote').style.display = entries.length ? 'none' : 'block';
+    entries.forEach(([id, data])=>{
+      const nFrames = getFramesFromDoc(data).length;
+      const div = document.createElement('div');
+      div.className = 'play-item' + (id===currentPlayId ? ' current' : '');
+      div.innerHTML = '<span class="name">'+data.name+'</span><span class="meta">'+nFrames+' acc.</span>'
+        + '<span class="share" title="Compartir enllaç" style="cursor:pointer;">🔗</span>'
+        + '<span class="del" title="Eliminar">✕</span>';
+      div.querySelector('.name').onclick = ()=>{
+        applyPlay(data); currentPlayId = id; currentPlayName = data.name;
+        document.getElementById('playName').value = data.name;
+        render(); refreshPlayList();
+      };
+      div.querySelector('.share').onclick = (ev)=>{
+        ev.stopPropagation();
+        copyShareLink(id);
+      };
+      div.querySelector('.del').onclick = (ev)=>{
+        ev.stopPropagation();
+        if(confirm('Eliminar la jugada "'+data.name+'"?')){
+          playsCol.doc(id).delete().catch(err=> alert('Error eliminant: '+err.message));
+        }
+      };
+      list.appendChild(div);
+    });
+  }
+
+  document.getElementById('btnSave').onclick = async ()=>{
+    const name = document.getElementById('playName').value.trim();
+    if(!name){ alert('Posa un nom a la jugada abans de desar-la.'); return; }
+    const snap = snapshotPlay();
+    const data = {
+      name, courtType: snap.courtType, framesJson: JSON.stringify(snap.frames),
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    };
+    try{
+      const existing = Object.entries(playsCache).find(([id,d])=> d.name===name);
+      if(existing){
+        await playsCol.doc(existing[0]).set(data);
+        currentPlayId = existing[0];
+      } else {
+        const ref = await playsCol.add(data);
+        currentPlayId = ref.id;
+      }
+      currentPlayName = name;
+    }catch(err){
+      alert('Error desant la jugada (revisa la connexió i la configuració de Firebase): '+err.message);
+    }
+  };
+  document.getElementById('btnNew').onclick = ()=>{
+    if(!confirm('Començar una jugada nova? Es perdrà el que no hagis desat.')) return;
+    frames = [emptyFrame()]; loadFrame(0);
+    currentPlayName=null; currentPlayId=null; document.getElementById('playName').value='';
+    render(); refreshPlayList();
+  };
+
+  document.getElementById('btnExportJSON').onclick = ()=>{
+    const plays = nameKeyedPlays();
+    const blob = new Blob([JSON.stringify(plays,null,2)], {type:'application/json'});
+    const link = document.createElement('a');
+    link.download = 'jugades_manresa.json';
+    link.href = URL.createObjectURL(blob);
+    link.click();
+  };
+  document.getElementById('importJSON').onchange = (e)=>{
+    const file = e.target.files[0]; if(!file) return;
+    const reader = new FileReader();
+    reader.onload = async ()=>{
+      try{
+        const incoming = JSON.parse(reader.result);
+        const entries = Object.entries(incoming);
+        for(const [name, playData] of entries){
+          const data = {
+            name, courtType: playData.courtType, framesJson: JSON.stringify(playData.frames || []),
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+          };
+          const existing = Object.entries(playsCache).find(([id,d])=> d.name===name);
+          if(existing) await playsCol.doc(existing[0]).set(data);
+          else await playsCol.add(data);
+        }
+        alert('Jugades importades correctament.');
+      }catch(err){ alert('El fitxer no és un JSON vàlid, o hi ha hagut un error important-lo: '+err.message); }
+    };
+    reader.readAsText(file);
+  };
+
+  playsCol.onSnapshot(snapshot=>{
+    playsCache = {};
+    snapshot.forEach(doc=> playsCache[doc.id] = doc.data());
+    firestoreReady = true;
+    refreshPlayList();
+    if(pendingShareId && playsCache[pendingShareId]){
+      const data = playsCache[pendingShareId];
+      applyPlay(data); currentPlayId = pendingShareId; currentPlayName = data.name;
+      document.getElementById('playName').value = data.name;
+      render(); refreshPlayList();
+      pendingShareId = null;
+    }
+  }, err=>{
+    console.error(err);
+    alert('No s\'ha pogut connectar amb el núvol (Firebase). Comprova la configuració i la connexió a internet.');
+  });
+
+  loadFrame(0);
+  setCourt('half');
+  refreshPlayList();
+  render();
+})();
+</script>
+</body>
+</html>
