@@ -328,6 +328,10 @@ else:
 # ══════════════════════════════════════════════════
 # TABS
 # ══════════════════════════════════════════════════
+t1,t_kp,t2,t3,t4,t_onoff,t5,t6,t_arq,t7,t8,t9 = st.tabs([
+    "🏀 Partit","🌟 Key Performers","👤 Jugadores","⏱ Ritme","⚡ Eficiència","⚖️ On/Off","🔄 Rotacions",
+    "📈 Hist. Jugadores","🎭 Arquetips","🎯 Mapa de Tir","🎬 Vídeo","📚 Històric"
+])
 
 with t1:
     # Marcador
