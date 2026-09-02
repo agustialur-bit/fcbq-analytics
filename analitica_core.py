@@ -274,6 +274,15 @@ div[data-testid="stDataFrame"] div,
 [role="columnheader"] *{
     color:var(--c-text)!important;
 }
+/* El grid del dataframe (st.dataframe) es dibuixa amb <canvas>; els divs contenidors
+   (.dvn-scroller i similars) han de quedar transparents perquè el canvas es vegi —
+   si no, el "background:white" forçat dels expanders els tapa i sembla que no hi hagi res. */
+div[data-testid="stExpander"] div[data-testid="stDataFrame"] div,
+div[data-testid="stDataFrame"] div,
+.dvn-scroller,
+.dvn-underlay{
+    background:transparent!important;
+}
 /* Headers del dataframe */
 div[data-testid="stDataFrame"] th,
 div[data-testid="stDataFrame"] [role="columnheader"]{
