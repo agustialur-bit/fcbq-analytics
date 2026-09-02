@@ -1395,10 +1395,18 @@ with t4:
         met_a_cmp = calc_metriques_partit(df_eq_a_cmp, match_id, nom_a, nom_b)
         met_b_cmp = calc_metriques_partit(df_eq_b_cmp, match_id, nom_b, nom_a)
 
+        net_a_cmp, net_b_cmp = ef_cmp[tid_a_cmp]["net_rtg"], ef_cmp[tid_b_cmp]["net_rtg"]
+        col_na = COLOR_A if net_a_cmp >= 0 else "#dc2626"
+        col_nb = COLOR_B if net_b_cmp >= 0 else "#dc2626"
+        col_net1, col_net2 = st.columns(2)
+        with col_net1:
+            st.markdown(card("Net Rtg", f"{'+' if net_a_cmp>=0 else ''}{net_a_cmp}", nom_a, col_na), unsafe_allow_html=True)
+        with col_net2:
+            st.markdown(card("Net Rtg", f"{'+' if net_b_cmp>=0 else ''}{net_b_cmp}", nom_b, col_nb), unsafe_allow_html=True)
+
         metrics_cmp = [
             ("Off Rtg", ef_cmp[tid_a_cmp]["off_rtg"], ef_cmp[tid_b_cmp]["off_rtg"]),
             ("Def Rtg", ef_cmp[tid_a_cmp]["def_rtg"], ef_cmp[tid_b_cmp]["def_rtg"]),
-            ("Net Rtg", ef_cmp[tid_a_cmp]["net_rtg"], ef_cmp[tid_b_cmp]["net_rtg"]),
             ("TS%", met_a_cmp["TS%"], met_b_cmp["TS%"]),
             ("eFG%", met_a_cmp["eFG%"], met_b_cmp["eFG%"]),
             ("Possessions", met_a_cmp["Possessions"], met_b_cmp["Possessions"]),
