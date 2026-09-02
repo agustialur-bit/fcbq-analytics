@@ -1396,13 +1396,6 @@ with t4:
         met_b_cmp = calc_metriques_partit(df_eq_b_cmp, match_id, nom_b, nom_a)
 
         net_a_cmp, net_b_cmp = ef_cmp[tid_a_cmp]["net_rtg"], ef_cmp[tid_b_cmp]["net_rtg"]
-        col_na = COLOR_A if net_a_cmp >= 0 else "#dc2626"
-        col_nb = COLOR_B if net_b_cmp >= 0 else "#dc2626"
-        col_net1, col_net2 = st.columns(2)
-        with col_net1:
-            st.markdown(card("Net Rtg", f"{'+' if net_a_cmp>=0 else ''}{net_a_cmp}", nom_a, col_na), unsafe_allow_html=True)
-        with col_net2:
-            st.markdown(card("Net Rtg", f"{'+' if net_b_cmp>=0 else ''}{net_b_cmp}", nom_b, col_nb), unsafe_allow_html=True)
 
         metrics_cmp = [
             ("Off Rtg", ef_cmp[tid_a_cmp]["off_rtg"], ef_cmp[tid_b_cmp]["off_rtg"]),
@@ -1428,6 +1421,8 @@ with t4:
             yaxis=dict(title=""),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
         st.plotly_chart(chart_style(fig_cmp, 340, "Comparació d'equips"), use_container_width=True)
+        st.caption(f"Net Rtg (Off−Def, calculat oficialment amb el ritme propi de cada equip): "
+                   f"{nom_a} {'+' if net_a_cmp>=0 else ''}{net_a_cmp} · {nom_b} {'+' if net_b_cmp>=0 else ''}{net_b_cmp}")
     else:
         st.info("Calen dos equips per a la comparació.")
 
