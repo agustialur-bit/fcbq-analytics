@@ -101,6 +101,7 @@ def feb_normalize_to_jugades(data):
     tirs = []  # {jugador, idEquip, x, y, fet}
     num = 0
     score_a = score_b = 0
+    ultim_equip_tir_fallat = None  # per classificar Rebot ofensiu/defensiu (feb.es no ho marca directament)
     for ln in lines:
         action = ln.get("action")
         text = ln.get("text") or ""
@@ -128,6 +129,7 @@ def feb_normalize_to_jugades(data):
             elif "DE 2" in text:
                 accio = "Cistella de 2" if anotat else "Intent fallat de 2"
                 punts = 2 if anotat else 0
+            ultim_equip_tir_fallat = None if anotat else id_team
             pos = ln.get("Position") or ""
             if pos and "|" in pos and jugador:
                 try:
@@ -140,6 +142,7 @@ def feb_normalize_to_jugades(data):
             anotat = "ANOTADO" in text
             accio = "Cistella de 1" if anotat else "Intent fallat de 1"
             punts = 1 if anotat else 0
+            ultim_equip_tir_fallat = None if anotat else id_team
         elif action == "subst":
             if "Entra" in text:
                 accio = "Entra al camp"
@@ -152,7 +155,18 @@ def feb_normalize_to_jugades(data):
                 continue  # "Comienzo del Cuarto" — redundant
         elif action == "timeout":
             accio = "Temps mort"
-        elif action in ("foul", "assist", "recovery", "lose", "blockshot"):
+        elif action == "lose":
+            accio = "Pèrdua"
+        elif action == "rebound":
+            # feb.es no marca ofensiu/defensiu a l'esdeveniment; s'infereix comparant
+            # l'equip del rebot amb l'equip que acaba de fallar el tir immediatament abans
+            # (validat contra els totals RO/RD del box score).
+            if ultim_equip_tir_fallat is not None:
+                accio = "Rebot ofensiu" if id_team == ultim_equip_tir_fallat else "Rebot defensiu"
+                ultim_equip_tir_fallat = None
+            else:
+                accio = "Rebot"
+        elif action in ("foul", "assist", "recovery", "blockshot"):
             accio = text
 
         if accio is None:
@@ -493,7 +507,7 @@ with t_kp:
             col_us if cond else C_LABEL)
 
     with r2c2:
-        ef_kp = calc_eficiencies(df_orig, teams, team_names)
+        ef_kp = calc_eficiencies(df_orig, teams, team_names, poss_mode="full")
         tid_a_kp = teams[0] if teams else None
         tid_b_kp = teams[1] if len(teams) > 1 else None
         net_a_kp = ef_kp.get(tid_a_kp, {}).get("net_rtg") if tid_a_kp else None
@@ -977,11 +991,11 @@ with t4:
     tid_a_cmp = teams[0] if teams else None
     tid_b_cmp = teams[1] if len(teams) > 1 else None
     if tid_a_cmp and tid_b_cmp:
-        ef_cmp = calc_eficiencies(df_orig, teams, team_names)
+        ef_cmp = calc_eficiencies(df_orig, teams, team_names, poss_mode="full")
         df_eq_a_cmp = df_orig[df_orig["idEquip"] == tid_a_cmp]
         df_eq_b_cmp = df_orig[df_orig["idEquip"] == tid_b_cmp]
-        met_a_cmp = calc_metriques_partit(df_eq_a_cmp, match_id, nom_a, nom_b)
-        met_b_cmp = calc_metriques_partit(df_eq_b_cmp, match_id, nom_b, nom_a)
+        met_a_cmp = calc_metriques_partit(df_eq_a_cmp, match_id, nom_a, nom_b, poss_mode="full")
+        met_b_cmp = calc_metriques_partit(df_eq_b_cmp, match_id, nom_b, nom_a, poss_mode="full")
         metrics_cmp = [
             ("Off Rtg", ef_cmp[tid_a_cmp]["off_rtg"], ef_cmp[tid_b_cmp]["off_rtg"]),
             ("Def Rtg", ef_cmp[tid_a_cmp]["def_rtg"], ef_cmp[tid_b_cmp]["def_rtg"]),
@@ -1112,7 +1126,7 @@ with t_onoff:
     st.caption("On/Off Net Rating = diferència de Net Rating (pts/100 poss) quan la jugadora és a pista vs quan no hi és. "
                "⚠️ = poques possessions Off, valor poc fiable.")
     st.markdown("**Eficiències d'equip**")
-    ef2 = calc_eficiencies(df_orig, teams, team_names)
+    ef2 = calc_eficiencies(df_orig, teams, team_names, poss_mode="full")
     col_ea2, col_eb2 = st.columns(2)
     for col_e2, tid2 in [(col_ea2, teams[0] if teams else None), (col_eb2, teams[1] if len(teams)>1 else None)]:
         with col_e2:
@@ -1133,7 +1147,7 @@ with t_onoff:
         jugs_oo2 = sorted([j for j in df_orig[df_orig["idEquip"]==tid_oo2]["jugador"].unique().tolist() if j])
         oo_rows2, ts_rows2 = [], []
         for jug2 in jugs_oo2:
-            oo2 = calc_onoff(df_orig, jug2, tid_oo2, teams)
+            oo2 = calc_onoff(df_orig, jug2, tid_oo2, teams, poss_mode="full")
             if oo2 and oo2.get("diff") is not None:
                 fiable = oo2.get("off_poss", 0) >= 4
                 oo_rows2.append({"Jugadora": jug2, "_diff": oo2["diff"], "_fiable": fiable,
@@ -1198,7 +1212,7 @@ with t_onoff:
             else:
                 res_li = calc_lineup_impact(
                     df_orig, jugs_on_li, jugs_off_li, tid_oo2, teams,
-                    quart_ini_li, quart_fi_li)
+                    quart_ini_li, quart_fi_li, poss_mode="full")
                 if not res_li:
                     st.info("No hi ha prou dades per calcular aquest lineup.")
                 else:
@@ -1249,7 +1263,7 @@ with t_onoff:
         if df_p_agr.empty:
             st.info("Carrega partits per veure l'On/Off Rating agregat.")
         else:
-            res_onoff_agr = calc_onoff_agregat(df_p_agr, min_poss_on_ui, min_poss_off_ui)
+            res_onoff_agr = calc_onoff_agregat(df_p_agr, min_poss_on_ui, min_poss_off_ui, poss_mode="full")
             if not res_onoff_agr:
                 st.info("No hi ha dades suficients per calcular l'On/Off Rating agregat.")
             else:
@@ -1300,7 +1314,7 @@ with t_onoff:
                     "Mínim possessions per segment (amb/sense bloc) per considerar-lo fiable",
                     min_value=0, value=40, step=5, key="min_poss_seg_ctx")
 
-                res_context = calc_context_onoff(df_p_agr, min_poss_seg=min_poss_seg_ui)
+                res_context = calc_context_onoff(df_p_agr, min_poss_seg=min_poss_seg_ui, poss_mode="full")
                 if not res_context:
                     st.info("No hi ha dades suficients per calcular la descomposició de context.")
                 else:

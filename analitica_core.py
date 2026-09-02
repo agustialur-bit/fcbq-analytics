@@ -1043,17 +1043,34 @@ def calc_pm_combinacions(df_orig, mode="quintets"):
     return rows
 
 
-def calc_possessions(df_equip):
-    """Calcula les possessions estimades d'un equip."""
+def calc_possessions(df_equip, poss_mode="approx"):
+    """Calcula les possessions estimades d'un equip.
+
+    poss_mode="approx" (per defecte — mai canvia el comportament existent):
+        FGA + 0.44*FTA. És l'aproximació que ja s'usava, vàlida per a qualsevol
+        font (no requereix dades de pèrdues ni de rebot ofensiu/defensiu).
+
+    poss_mode="full": FGA + 0.44*FTA - OREB + TOV (fórmula estàndard
+        Basketball-Reference/NBA). Només fiable si accio conté els literals
+        "Rebot ofensiu" i "Pèrdua" (avui només els emet el normalitzador de
+        feb.es a app_lf2.py) — amb dades que no els tinguin (FCBQ) els comptadors
+        surten a 0 i el resultat NO ha de fer-se servir. Cal passar-ho
+        explícitament a cada crida; mai s'activa sol.
+    """
     tc_int = int(df_equip["accio"].str.contains(
         "Cistella de 2|Cistella de 3|Intent fallat de 2|Intent fallat de 3|"
         "Tir de 2|Tir de 3|fallat de 2|fallat de 3",
         case=False, na=False).sum())
     tl_int = int(df_equip["accio"].str.contains(
         "Cistella de 1|Intent fallat de 1", case=False, na=False).sum())
-    return tc_int + 0.44 * tl_int
+    base = tc_int + 0.44 * tl_int
+    if poss_mode == "full":
+        oreb = int(df_equip["accio"].str.contains("Rebot ofensiu", case=False, na=False).sum())
+        tov = int(df_equip["accio"].str.contains("Pèrdua", case=False, na=False).sum())
+        return max(base - oreb + tov, 0)
+    return base
 
-def calc_eficiencies(df_orig, teams, team_names):
+def calc_eficiencies(df_orig, teams, team_names, poss_mode="approx"):
     """Calcula eficiència ofensiva i defensiva per equip."""
     result = {}
     for i, tid in enumerate(teams[:2]):
@@ -1062,8 +1079,8 @@ def calc_eficiencies(df_orig, teams, team_names):
         df_riv = df_orig[df_orig["idEquip"] == rival_id] if rival_id else pd.DataFrame()
         pts_of = int(df_eq["punts"].sum())
         pts_def = int(df_riv["punts"].sum()) if not df_riv.empty else 0
-        poss_of  = calc_possessions(df_eq)
-        poss_def = calc_possessions(df_riv) if not df_riv.empty else 1
+        poss_of  = calc_possessions(df_eq, poss_mode)
+        poss_def = calc_possessions(df_riv, poss_mode) if not df_riv.empty else 1
         off_rtg = round(pts_of  / poss_of  * 100, 1) if poss_of  > 0 else 0
         def_rtg = round(pts_def / poss_def * 100, 1) if poss_def > 0 else 0
         net_rtg = round(off_rtg - def_rtg, 1)
@@ -1075,7 +1092,7 @@ def calc_eficiencies(df_orig, teams, team_names):
         }
     return result
 
-def calc_onoff_raw(df_orig, jugadora, equip_id, teams):
+def calc_onoff_raw(df_orig, jugadora, equip_id, teams, poss_mode="approx"):
     """Calcula punts/possessions ON i OFF en brut (sense convertir a ràtio) a partir
     dels intervals reals Entra/Surt d'una jugadora en UN partit. Bloc de construcció
     compartit per calc_onoff() (rating d'un partit) i calc_onoff_agregat() (multi-partit)."""
@@ -1134,17 +1151,17 @@ def calc_onoff_raw(df_orig, jugadora, equip_id, teams):
     df_off_riv= df_t[~mask_on & (df_t["idEquip"]==rival_id)]
 
     return {
-        "pts_on":      int(df_on_eq["punts"].sum()),  "poss_on":      calc_possessions(df_on_eq),
-        "pts_on_riv":  int(df_on_riv["punts"].sum()), "poss_on_riv":  calc_possessions(df_on_riv),
-        "pts_off":     int(df_off_eq["punts"].sum()), "poss_off":     calc_possessions(df_off_eq),
-        "pts_off_riv": int(df_off_riv["punts"].sum()),"poss_off_riv": calc_possessions(df_off_riv),
+        "pts_on":      int(df_on_eq["punts"].sum()),  "poss_on":      calc_possessions(df_on_eq, poss_mode),
+        "pts_on_riv":  int(df_on_riv["punts"].sum()), "poss_on_riv":  calc_possessions(df_on_riv, poss_mode),
+        "pts_off":     int(df_off_eq["punts"].sum()), "poss_off":     calc_possessions(df_off_eq, poss_mode),
+        "pts_off_riv": int(df_off_riv["punts"].sum()),"poss_off_riv": calc_possessions(df_off_riv, poss_mode),
     }
 
-def calc_onoff(df_orig, jugadora, equip_id, teams):
+def calc_onoff(df_orig, jugadora, equip_id, teams, poss_mode="approx"):
     """Calcula On/Off Rating d'una jugadora usant intervals reals (un sol partit)."""
     MIN_POSS = 4  # mínim de possessions per considerar el rating vàlid
 
-    raw = calc_onoff_raw(df_orig, jugadora, equip_id, teams)
+    raw = calc_onoff_raw(df_orig, jugadora, equip_id, teams, poss_mode)
     if raw is None: return None
 
     def rtg(pts, poss, pts_r, poss_r):
@@ -1174,7 +1191,7 @@ def calc_onoff(df_orig, jugadora, equip_id, teams):
         "off_poss": round(raw["poss_off"], 1),
     }
 
-def calc_onoff_agregat(df_partits, min_poss_on=150, min_poss_off=150):
+def calc_onoff_agregat(df_partits, min_poss_on=150, min_poss_off=150, poss_mode="approx"):
     """On/Off Rating agregat de TOTS els partits disponibles, ponderat per possessions:
     suma punts i possessions ON/OFF de tots els partits abans de dividir, en comptes de
     fer la mitjana dels Net Ratings de cada partit per separat (que faria pesar igual un
@@ -1202,7 +1219,7 @@ def calc_onoff_agregat(df_partits, min_poss_on=150, min_poss_off=150):
         for jug in df_m["jugador"].unique():
             if not jug or str(jug) in ("", "nan"): continue
             eq_id = str(df_m[df_m["jugador"]==jug]["idEquip"].iloc[0])
-            raw = calc_onoff_raw(df_m, jug, eq_id, teams_m)
+            raw = calc_onoff_raw(df_m, jug, eq_id, teams_m, poss_mode)
             if raw is None: continue
 
             key = (tn_m.get(eq_id, "?"), jug)
@@ -1296,7 +1313,7 @@ def calc_context_bloc(df_partits, top_n_bloc=3, llindar_concentrat=65):
         })
     return resultats
 
-def calc_onoff_bloc_split(df_orig, jugadora, companys, equip_id, teams):
+def calc_onoff_bloc_split(df_orig, jugadora, companys, equip_id, teams, poss_mode="approx"):
     """Divideix les possessions ON d'una jugadora (UN partit) en dos blocs: 'amb_bloc'
     (almenys una de les companyes donades també és a pista) i 'sense_bloc' (cap de les
     companyes donades és a pista). Reutilitza el patró de microintervals de
@@ -1342,12 +1359,12 @@ def calc_onoff_bloc_split(df_orig, jugadora, companys, equip_id, teams):
         mask = df_t["t_abs"].apply(lambda t: any(ti <= t < tf for ti,tf in intervals))
         df_eq  = df_t[mask & (df_t["idEquip"]==equip_id)]
         df_riv = df_t[mask & (df_t["idEquip"]==rival_id)]
-        return {"pts": int(df_eq["punts"].sum()), "poss": calc_possessions(df_eq),
-                "pts_riv": int(df_riv["punts"].sum()), "poss_riv": calc_possessions(df_riv)}
+        return {"pts": int(df_eq["punts"].sum()), "poss": calc_possessions(df_eq, poss_mode),
+                "pts_riv": int(df_riv["punts"].sum()), "poss_riv": calc_possessions(df_riv, poss_mode)}
 
     return {"amb_bloc": sum_pts_poss(amb_bloc_ivs), "sense_bloc": sum_pts_poss(sense_bloc_ivs)}
 
-def calc_context_onoff(df_partits, min_poss_seg=40):
+def calc_context_onoff(df_partits, min_poss_seg=40, poss_mode="approx"):
     """Combina la companya habitual (calc_context_bloc) amb l'On/Off segmentat amb/sense
     aquest bloc (calc_onoff_bloc_split), acumulat de tots els partits, i deriva un
     indicador de fiabilitat de context (🟢/🟡/🔴/⚪) a partir de com de consistent és el
@@ -1379,7 +1396,7 @@ def calc_context_onoff(df_partits, min_poss_seg=40):
             # idEquip és un identificador intern PER PARTIT (no estable entre partits),
             # cal resoldre'l fresc a cada partit en lloc de reutilitzar-lo de l'agregat.
             eq_id_m = str(df_m[df_m["jugador"]==jug]["idEquip"].iloc[0])
-            split = calc_onoff_bloc_split(df_m, jug, [top_companya], eq_id_m, teams_m)
+            split = calc_onoff_bloc_split(df_m, jug, [top_companya], eq_id_m, teams_m, poss_mode)
             if split is None: continue
             for k in acum_amb:   acum_amb[k]   += split["amb_bloc"][k]
             for k in acum_sense: acum_sense[k] += split["sense_bloc"][k]
@@ -1484,7 +1501,7 @@ def calc_onoff_ts(df_orig, jugadora, equip_id, teams):
         "pts_on": pts_on, "pts_off": pts_off,
     }
 
-def calc_lineup_impact(df_orig, jugadores_on, jugadores_off, equip_id, teams, quart_ini=None, quart_fi=None):
+def calc_lineup_impact(df_orig, jugadores_on, jugadores_off, equip_id, teams, quart_ini=None, quart_fi=None, poss_mode="approx"):
     """Generalitza calc_onoff() a un lineup de diverses jugadores.
     jugadores_on = han d'estar TOTES a pista; jugadores_off = cap d'elles pot ser-hi.
     Reutilitza el patró de microintervals de calc_pm_combinacions()/get_intervals_jugadores_global()."""
@@ -1535,8 +1552,8 @@ def calc_lineup_impact(df_orig, jugadores_on, jugadores_off, equip_id, teams, qu
         mins_tot = round(sum(tf-ti for ti,tf in intervals), 1)
         pts_of  = int(df_eq["punts"].sum())
         pts_def = int(df_riv["punts"].sum())
-        poss_of  = calc_possessions(df_eq)
-        poss_def = calc_possessions(df_riv)
+        poss_of  = calc_possessions(df_eq, poss_mode)
+        poss_def = calc_possessions(df_riv, poss_mode)
         off_rtg = round(pts_of/poss_of*100, 1) if poss_of >= MIN_POSS else None
         def_rtg = round(pts_def/poss_def*100, 1) if poss_def >= MIN_POSS else None
         net_rtg = round(off_rtg - def_rtg, 1) if (off_rtg is not None and def_rtg is not None) else None
@@ -1545,7 +1562,7 @@ def calc_lineup_impact(df_orig, jugadores_on, jugadores_off, equip_id, teams, qu
 
     return {"lineup": bucket_rtg(lineup_intervals), "resta": bucket_rtg(resta_intervals)}
 
-def calc_metriques_partit(df_jug, match_id, nom_equip, nom_rival):
+def calc_metriques_partit(df_jug, match_id, nom_equip, nom_rival, poss_mode="approx"):
     """Calcula totes les mètriques avançades d'un equip en un partit."""
     pts_tot = int(df_jug["punts"].sum())
     pts_2   = int(df_jug["accio"].str.contains("Cistella de 2",case=False,na=False).sum()) * 2
@@ -1561,7 +1578,7 @@ def calc_metriques_partit(df_jug, match_id, nom_equip, nom_rival):
     c2_conv = int(df_jug["accio"].str.contains("Cistella de 2",case=False,na=False).sum())
     c2_int  = c2_conv + int(df_jug["accio"].str.contains("Intent fallat de 2|fallat de 2",case=False,na=False).sum())
 
-    poss     = calc_possessions(df_jug)
+    poss     = calc_possessions(df_jug, poss_mode)
     ts_denom = 2 * (tc_int + 0.44 * tl_int)
     return {
         "Equip":        nom_equip,
