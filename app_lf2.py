@@ -1745,7 +1745,8 @@ with t5:
     # ── 5b. Aportació d'una jugadora amb cada companya (gràfic) ──────────
     st.markdown(sec("🤝 Aportació d'una jugadora amb cada companya"), unsafe_allow_html=True)
     st.caption("+/- per minut de la jugadora seleccionada quan comparteix pista amb cadascuna "
-               "de les companyes amb qui ha jugat.")
+               "de les companyes amb qui ha jugat. El diamant blau sobre cada barra és la mitjana "
+               "pròpia de la companya (tot el partit, no només junta amb la seleccionada).")
 
     if tid_rot and intervals_jug:
         jugs_contrib = sorted([j for j,ivs in intervals_jug.items() if any(ei==tid_rot for _,_,ei in ivs)])
@@ -1791,9 +1792,23 @@ with t5:
                     if rival_contrib:
                         pc_ctb += int(df_j_ctb[df_j_ctb["idEquip"]==rival_contrib]["punts"].sum())
                 pm_ctb = pf_ctb - pc_ctb
+
+                # Mitjana pròpia de la companya (tot el partit, no només junta amb la seleccionada)
+                minuts_comp_total = sum(tf-ti for ti,tf in ivs_comp_ctb)
+                pm_comp_total = None
+                if minuts_comp_total >= 0.5:
+                    pf_comp_tot = pc_comp_tot = 0
+                    for ti,tf in ivs_comp_ctb:
+                        df_j_comp = df_orig_ctb[(df_orig_ctb["t_abs"]>=ti)&(df_orig_ctb["t_abs"]<=tf)]
+                        pf_comp_tot += int(df_j_comp[df_j_comp["idEquip"]==tid_rot]["punts"].sum())
+                        if rival_contrib:
+                            pc_comp_tot += int(df_j_comp[df_j_comp["idEquip"]==rival_contrib]["punts"].sum())
+                    pm_comp_total = round((pf_comp_tot-pc_comp_tot)/minuts_comp_total, 3)
+
                 rows_contrib.append({
                     "Companya": comp, "Min junts": round(minuts_junts_ctb,1),
                     "+/-": pm_ctb, "+/- per min": round(pm_ctb/minuts_junts_ctb,3),
+                    "Mitjana pròpia": pm_comp_total,
                 })
 
             if rows_contrib:
@@ -1811,6 +1826,13 @@ with t5:
                     textposition="outside",
                     customdata=df_contrib["Min junts"],
                     hovertemplate="<b>%{y}</b><br>+/- per min: %{x:+.3f}<br>Min junts: %{customdata:.1f}<extra></extra>"
+                ))
+                fig_contrib.add_trace(go.Scatter(
+                    x=df_contrib["Mitjana pròpia"], y=df_contrib["Companya"],
+                    mode="markers", name="Mitjana pròpia de la companya",
+                    marker=dict(symbol="diamond", size=11, color="#0C447C",
+                                line=dict(width=1.5, color="white")),
+                    hovertemplate="<b>%{y}</b><br>Mitjana pròpia: %{x:+.3f}<extra></extra>"
                 ))
                 fig_contrib.add_vline(x=0, line_dash="solid", line_color="#e2e4e8")
                 if pm_total_ctb is not None:
