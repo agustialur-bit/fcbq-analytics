@@ -1759,6 +1759,19 @@ with t5:
                 if float(r.get("min_num",0)) <= 10 else float(r.get("min_num",0)), axis=1)
 
             ivs_self_ctb = [(ti,tf) for ti,tf,ei in intervals_jug.get(jug_contrib_sel,[]) if ei==tid_rot]
+
+            # +/- per minut TOTAL de la jugadora (tot el partit, no només amb una companya)
+            minuts_total_ctb = sum(tf-ti for ti,tf in ivs_self_ctb)
+            pm_total_ctb = None
+            if minuts_total_ctb >= 0.5:
+                pf_tot_ctb = pc_tot_ctb = 0
+                for ti,tf in ivs_self_ctb:
+                    df_j_tot = df_orig_ctb[(df_orig_ctb["t_abs"]>=ti)&(df_orig_ctb["t_abs"]<=tf)]
+                    pf_tot_ctb += int(df_j_tot[df_j_tot["idEquip"]==tid_rot]["punts"].sum())
+                    if rival_contrib:
+                        pc_tot_ctb += int(df_j_tot[df_j_tot["idEquip"]==rival_contrib]["punts"].sum())
+                pm_total_ctb = round((pf_tot_ctb-pc_tot_ctb)/minuts_total_ctb, 3)
+
             rows_contrib = []
             for comp in jugs_contrib:
                 if comp == jug_contrib_sel: continue
@@ -1784,6 +1797,11 @@ with t5:
                 })
 
             if rows_contrib:
+                if pm_total_ctb is not None:
+                    st.markdown(card(f"{jug_contrib_sel} — +/- per min (tot el partit)",
+                        f"{'+' if pm_total_ctb>=0 else ''}{pm_total_ctb}",
+                        f"{minuts_total_ctb:.1f} min totals", "#374151"), unsafe_allow_html=True)
+
                 df_contrib = pd.DataFrame(rows_contrib).sort_values("+/- per min", ascending=False)
                 colors_contrib = ["#16a34a" if v>=0 else "#dc2626" for v in df_contrib["+/- per min"]]
                 fig_contrib = go.Figure(go.Bar(
@@ -1795,6 +1813,10 @@ with t5:
                     hovertemplate="<b>%{y}</b><br>+/- per min: %{x:+.3f}<br>Min junts: %{customdata:.1f}<extra></extra>"
                 ))
                 fig_contrib.add_vline(x=0, line_dash="solid", line_color="#e2e4e8")
+                if pm_total_ctb is not None:
+                    fig_contrib.add_vline(x=pm_total_ctb, line_dash="dot", line_color="#d97706",
+                        annotation_text=f"Mitjana jugadora: {pm_total_ctb:+.3f}",
+                        annotation_font_size=10, annotation_font_color="#d97706")
                 fig_contrib.update_xaxes(title="+/- per minut junts")
                 st.plotly_chart(chart_style(fig_contrib, max(220, len(df_contrib)*40),
                     f"{jug_contrib_sel} — aportació amb cada companya"), use_container_width=True)
