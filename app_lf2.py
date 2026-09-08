@@ -21,6 +21,7 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "historic_lf2
 COLOR_A, COLOR_B = "#185FA5", "#993C1D"
 
 import analitica_core as core
+import core_four_factors as cff
 from analitica_core import (
     MICKI_CSS, card, sec, chart_style,
     init_db, migrate_db, save_partit, save_stats_jugador, save_shots_zones,
@@ -983,7 +984,33 @@ with t3:
         st.dataframe(pd.DataFrame(shift_rows),use_container_width=True,hide_index=True)
     else:
         st.info(f"No s'han detectat runs de {THRESHOLD}+ punts.")
+    st.markdown(sec("🔥 Clutch"), unsafe_allow_html=True)
+    st.caption("Últims 5 minuts amb marge de 5 punts o menys.")
 
+    clutch = cff.calc_clutch(df_orig, teams, team_names, poss_mode="full")
+    if clutch:
+        st.markdown(card("Finestra clutch", f"{clutch['finestra_min']:.1f} min",
+                          f"{clutch['n_trams']} tram(s)", "#d97706"), unsafe_allow_html=True)
+
+        c1, c2 = st.columns(2)
+        for col, tid_c, color_c in [(c1, teams[0], COLOR_A), (c2, teams[1] if len(teams) > 1 else None, COLOR_B)]:
+            if tid_c is None:
+                continue
+            with col:
+                met_c = clutch["equips"].get(tid_c, {})
+                st.markdown(card(met_c.get("Equip", "?"), met_c.get("Pts", 0),
+                                  f"TS% {met_c.get('TS%', 0)} · Off Rtg {met_c.get('Off Rtg', 0)}",
+                                  color_c), unsafe_allow_html=True)
+
+        st.markdown("**Jugadores en el tram clutch**")
+        df_clutch_jug = pd.DataFrame(clutch["jugadores"])
+        if not df_clutch_jug.empty:
+            st.dataframe(
+                df_clutch_jug[["jugadora", "equip_nom", "minuts", "punts", "TS%", "+/-"]]
+                    .rename(columns={"jugadora": "Jugadora", "equip_nom": "Equip", "minuts": "Min"}),
+                use_container_width=True, hide_index=True)
+    else:
+        st.info("Aquest partit no ha tingut cap tram amb marge ≤5 punts en els últims 5 minuts.")
 
 with t4:
     st.markdown(sec("📊 Comparació d'equips"), unsafe_allow_html=True)
@@ -1123,6 +1150,78 @@ with t4:
                 key="dl_excel_analisi_lf2")
         else:
             st.info("No hi ha partits a la base de dades.")
+    st.markdown(sec("📐 Cuatro Factores (Dean Oliver)"), unsafe_allow_html=True)
+    st.caption("eFG% = tir efectiu · TOV% = pèrdues per possessió · OR%/DR% = rebot ofensiu/defensiu · FT/TCI = tirs lliures per tir de camp")
+
+    ff = cff.calc_four_factors(df_orig, teams, team_names, poss_mode="full")
+    if ff and len(teams) > 1:
+        tid_a_ff, tid_b_ff = teams[0], teams[1]
+        fa_ff, fb_ff = ff[tid_a_ff], ff[tid_b_ff]
+
+        factors = [
+            ("eFG%", fa_ff["eFG%"], fb_ff["eFG%"]),
+            ("TOV%", fa_ff["TOV%"], fb_ff["TOV%"]),
+            ("OR%", fa_ff["OR%"], fb_ff["OR%"]),
+            ("FT/TCI", fa_ff["FT_TCI"], fb_ff["FT_TCI"]),
+        ]
+        labels_ff = [f[0] for f in factors]
+        vals_a_ff = [f[1] for f in factors]
+        vals_b_ff = [f[2] for f in factors]
+
+        fig_ff = go.Figure()
+        fig_ff.add_trace(go.Bar(y=labels_ff, x=vals_a_ff, orientation="h", name=nom_a,
+            marker_color=COLOR_A, text=[f"{v:g}" for v in vals_a_ff], textposition="outside"))
+        fig_ff.add_trace(go.Bar(y=labels_ff, x=[-v for v in vals_b_ff], orientation="h", name=nom_b,
+            marker_color=COLOR_B, text=[f"{v:g}" for v in vals_b_ff], textposition="outside"))
+        fig_ff.update_layout(barmode="overlay",
+            xaxis=dict(showticklabels=False, zeroline=True, zerolinecolor=C_BORDER, zerolinewidth=1.5),
+            yaxis=dict(title=""),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+        st.plotly_chart(chart_style(fig_ff, 260, "Quatre Factors"), use_container_width=True)
+
+        st.markdown("**Lo que produjeron**")
+        c1, c2, c3, c4 = st.columns(4)
+        with c1: st.markdown(card("OER " + nom_a, fa_ff["OER"], "", COLOR_A), unsafe_allow_html=True)
+        with c2: st.markdown(card("DER " + nom_a, fa_ff["DER"], "", "#dc2626"), unsafe_allow_html=True)
+        with c3: st.markdown(card("OER " + nom_b, fb_ff["OER"], "", COLOR_B), unsafe_allow_html=True)
+        with c4: st.markdown(card("DER " + nom_b, fb_ff["DER"], "", "#dc2626"), unsafe_allow_html=True)
+    else:
+        st.info("Calen dos equips per calcular els Quatre Factors.")
+
+
+
+    st.markdown(sec("🧭 Cuándo la tuvieron, y cuánto valió"), unsafe_allow_html=True)
+    st.caption(
+        "Punts per possessió (PPP) segons com va començar: tras canasta, tras robo, "
+        "tras rebote defensivo, o tras pérdida en balón parado."
+    )
+
+    pts_start = cff.calc_pts_by_start(df_orig, teams, team_names)
+    etiquetes = {
+        "after_make": "Tras canasta",
+        "off_steal": "Tras robo",
+        "off_dreb": "Tras rebote defensivo",
+        "off_deadball_tov": "Tras pérdida en balón parado",
+    }
+    if pts_start and len(teams) > 1:
+        tid_a_ps, tid_b_ps = teams[0], teams[1]
+        for clau, etiqueta in etiquetes.items():
+            d_a = pts_start.get(tid_a_ps, {}).get(clau, {})
+            d_b = pts_start.get(tid_b_ps, {}).get(clau, {})
+            c1, c2, c3 = st.columns([1, 2, 1])
+            with c1:
+                st.markdown(card(nom_a, d_a.get("ppp") if d_a.get("ppp") is not None else "—",
+                                  f"{d_a.get('poss',0)} poss.", COLOR_A), unsafe_allow_html=True)
+            with c2:
+                st.markdown(f"<div style='text-align:center;padding-top:22px;color:#6b7280;"
+                            f"font-size:13px'>{etiqueta}</div>", unsafe_allow_html=True)
+            with c3:
+                st.markdown(card(nom_b, d_b.get("ppp") if d_b.get("ppp") is not None else "—",
+                                  f"{d_b.get('poss',0)} poss.", COLOR_B), unsafe_allow_html=True)
+    else:
+        st.info("Calen dos equips per calcular aquesta desagregació.")
+
+
 
 
 with t_onoff:
