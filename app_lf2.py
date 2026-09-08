@@ -29,7 +29,7 @@ from analitica_core import (
     save_timeouts, save_tirs_fcbq, load_jugades_db, load_partits_db,
     load_stats_jugador_db, load_shots_zones_db, load_tirs_fcbq, partit_exists,
     get_teams, get_teams_ordered, score_evo, final_score, estat_marc, analyze_timeouts,
-    get_intervals_jugadores_global, calc_pm_combinacions, calc_possessions,
+    get_intervals_jugadores_global, calc_pm_combinacions, calc_possessions, calc_minuts_reals,
     calc_eficiencies, calc_onoff, calc_onoff_ts, calc_usage_rate,
     calc_win_shares_temporada, calc_metriques_partit, classifica_arquetip_global,
     classifica_zona_tir, calc_onoff_agregat, calc_context_onoff, calc_lineup_impact,
@@ -174,8 +174,25 @@ def feb_normalize_to_jugades(data):
             # d'esdeveniments de recuperació perquè calc_pts_by_start (core_four_factors.py)
             # pugui separar "tras robo" de "tras pérdida en balón parado".
             accio = "Robatori" if "ROBO" in text.upper() else text
-        elif action in ("foul", "assist", "blockshot"):
-            accio = text
+        elif action == "assist":
+            # Confirmat amb un exemple real: "(EQUIP) JUGADORA: ASISTENCIA (Asistencias: N)"
+            accio = "Assistència" if "ASISTENCIA" in text.upper() else text
+        elif action == "blockshot":
+            # Confirmat amb un exemple real: "(EQUIP) JUGADORA: TAPÓN (Tapones: N)"
+            accio = "Tap" if ("TAPON" in text.upper() or "TAPÓN" in text.upper()) else text
+        elif action == "foul":
+            # Confirmat amb un exemple real: el text no diu "COMETIDA"/"RECIBIDA"
+            # com se suposava — diu "Personal (Faltas: X. Faltas de equipo: Y).
+            # Tiros libres: Z", i el jugador identificat és qui LA COMET.
+            txt_up = text.upper()
+            if "PERSONAL" in txt_up:
+                accio = "Falta comesa"
+            elif "TÉCNICA" in txt_up or "TECNICA" in txt_up:
+                accio = "Falta tècnica"
+            elif "ANTIDEPORTIVA" in txt_up:
+                accio = "Falta antiesportiva"
+            else:
+                accio = text
 
         if accio is None:
             continue
@@ -223,24 +240,7 @@ def carrega_partit_feb(match_id):
 
     return df, noms, fa, fb
 
-def esborra_partit_lf2(match_id):
-    """Esborra un partit i totes les seves dades associades (inclosos els tirs,
-    que delete_partit_db() d'analitica_core.py no cobreix)."""
-    con = sqlite3.connect(DB_PATH)
-    for tbl in ["partits", "jugades", "stats_jugador", "shots_zones", "timeouts", "tirs_fcbq"]:
-        con.execute(f"DELETE FROM {tbl} WHERE match_id=?", (match_id,))
-    con.commit()
-    con.close()
 
-
-def esborra_tot_historic_lf2():
-    """Esborra TOTS els partits i dades de historic_lf2.db."""
-    con = sqlite3.connect(DB_PATH)
-    for tbl in ["partits", "jugades", "stats_jugador", "shots_zones", "timeouts", "tirs_fcbq"]:
-        con.execute(f"DELETE FROM {tbl}")
-    con.commit()
-    con.close()
-    
 # ══════════════════════════════════════════════════
 # SIDEBAR
 # ══════════════════════════════════════════════════
@@ -802,6 +802,53 @@ with t2:
             dj2_pts=dj2[dj2["punts"]>0][["quart","temps","accio","marcador","punts","estat"]]
             st.dataframe(dj2_pts.rename(columns={"quart":"Q","temps":"Temps","accio":"Acció",
                 "marcador":"Marc","punts":"Pts","estat":"Estat"}),use_container_width=True,hide_index=True)
+
+    st.markdown(sec("📊 Box Score complet per jugadora"), unsafe_allow_html=True)
+    st.caption(
+        "PTS · T2/T3/TL (convertits/intentats/%) · RO/RD/REB · AS (assistències) · "
+        "BR (robatories) · TAP (taps) · BP (pèrdues) · FC (faltes personals comeses)."
+    )
+    df_box = cff.calc_box_score_jugadores(df_orig, teams, team_names)
+    if not df_box.empty:
+        tab_box_a, tab_box_b = st.tabs([nom_a, nom_b])
+        for tab_box, eq_nom_box in [(tab_box_a, nom_a), (tab_box_b, nom_b)]:
+            with tab_box:
+                df_box_eq = df_box[df_box["Equip"] == eq_nom_box].sort_values("PTS", ascending=False)
+                st.dataframe(df_box_eq.drop(columns=["Equip"]), use_container_width=True, hide_index=True)
+    else:
+        st.info("Sense dades de jugadores per aquest partit.")
+
+    st.markdown(sec("⚡ On/Off avançat per jugadora"), unsafe_allow_html=True)
+    st.caption(
+        "OER/DER/NetRtg quan la jugadora és a pista (on) vs quan no hi és (off), i NET = on−off. "
+        "%REB/%OREB/%DREB = quota de rebot de l'equip mentre ella és a pista."
+    )
+    eq_adv_sel = st.selectbox("Equip", [nom_a, nom_b], key="eq_adv_sel_t2")
+    tid_adv = teams[0] if eq_adv_sel == nom_a else (teams[1] if len(teams) > 1 else None)
+    if tid_adv:
+        jugs_adv = sorted([j for j in df_orig[df_orig["idEquip"]==tid_adv][col_j_imp].unique() if j])
+        minuts_reals_adv = calc_minuts_reals(df_orig)
+        rows_adv = []
+        for jug_adv in jugs_adv:
+            oo_adv = calc_onoff(df_orig, jug_adv, tid_adv, teams, poss_mode="full")
+            if oo_adv is None: continue
+            reb_adv = cff.calc_reb_pct_onoff(df_orig, jug_adv, tid_adv, teams) or {}
+            net_oer = (round(oo_adv["on_off_rtg"]-oo_adv["off_off_rtg"],1)
+                       if oo_adv["on_off_rtg"] is not None and oo_adv["off_off_rtg"] is not None else None)
+            net_der = (round(oo_adv["on_def_rtg"]-oo_adv["off_def_rtg"],1)
+                       if oo_adv["on_def_rtg"] is not None and oo_adv["off_def_rtg"] is not None else None)
+            rows_adv.append({
+                "Jugadora": jug_adv, "MIN": minuts_reals_adv.get(jug_adv, 0),
+                "OER on": oo_adv["on_off_rtg"], "OER off": oo_adv["off_off_rtg"], "NET (OER)": net_oer,
+                "DER on": oo_adv["on_def_rtg"], "DER off": oo_adv["off_def_rtg"], "NET (DER)": net_der,
+                "NetRtg on": oo_adv["on_net_rtg"], "NetRtg off": oo_adv["off_net_rtg"], "NET": oo_adv["diff"],
+                "%REB": reb_adv.get("pct_reb"), "%OREB": reb_adv.get("pct_oreb"), "%DREB": reb_adv.get("pct_dreb"),
+            })
+        if rows_adv:
+            df_adv = pd.DataFrame(rows_adv).sort_values("MIN", ascending=False)
+            st.dataframe(df_adv, use_container_width=True, hide_index=True)
+        else:
+            st.info("No hi ha prou dades per calcular l'On/Off avançat d'aquest equip.")
 
 
 with t3:
@@ -2125,25 +2172,3 @@ with t9:
                 ["jugador","equip","partits","minuts","punts","OWS","DWS","WS","ws_per40","Arquetip"]]
             st.dataframe(df_ws_show.rename(columns={"jugador":"Jugadora","equip":"Equip","partits":"PJ",
                 "minuts":"Min","punts":"Pts","ws_per40":"WS/40"}), use_container_width=True, hide_index=True)
-                    st.markdown(sec("🗑️ Gestionar l'històric"), unsafe_allow_html=True)
-        col_del1, col_del2 = st.columns([2, 1])
-        with col_del1:
-            del_id = st.selectbox("Eliminar un partit concret", df_hist["match_id"].tolist(),
-                format_func=lambda x: f"{df_hist[df_hist['match_id']==x]['nom_a'].values[0]} vs "
-                                       f"{df_hist[df_hist['match_id']==x]['nom_b'].values[0]}",
-                key="del_hist_lf2")
-        with col_del2:
-            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-            if st.button("🗑 Eliminar", key="btn_del_lf2"):
-                esborra_partit_lf2(del_id)
-                st.success("Partit eliminat.")
-                st.rerun()
-
-        with st.expander("⚠️ Esborrar TOT l'històric"):
-            st.caption("Elimina tots els partits, jugadores i estadístiques desades. Aquesta acció no es pot desfer.")
-            confirmar = st.checkbox("Confirmo que vull esborrar tot l'històric", key="confirma_esborrat_total")
-            if st.button("🗑 Esborrar tot", key="btn_esborra_tot", disabled=not confirmar):
-                esborra_tot_historic_lf2()
-                st.success("Històric esborrat.")
-                st.rerun()
-                

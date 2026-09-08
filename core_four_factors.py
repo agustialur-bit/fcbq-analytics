@@ -274,3 +274,88 @@ def calc_pts_by_start(df_orig, teams, team_names):
                 "ppp": round(pts / poss, 2) if poss > 0 else None,
             }
     return resultat
+
+
+# ══════════════════════════════════════════════════
+# BOX SCORE COMPLET I ON/OFF AVANÇAT PER JUGADORA
+# ══════════════════════════════════════════════════
+def calc_box_score_jugadores(df_orig, teams, team_names):
+    """Box score complet per jugadora (mateixa forma que el PDF Lens Stats):
+    PTS, T2C/T2I/T2%, T3C/T3I/T3%, TLC/TLI/TL%, RO, RD, REB, AS, BR, TAP, BP, FC.
+
+    Requereix que accio distingeixi "Assistència", "Tap" i "Falta comesa" —
+    aplica els pegats corresponents a feb_normalize_to_jugades (igual que es
+    va fer amb "Robatori") abans de confiar en les columnes AS/TAP/FC. Si els
+    comptadors surten sempre a 0, verifica els literals reals amb un exemple
+    del play-by-play (com es va fer amb "ROBO").
+    """
+    col_j = "jugador" if "jugador" in df_orig.columns else "jugadora"
+    rows = []
+    for jug in df_orig[col_j].unique():
+        if not jug or str(jug) in ("", "nan"):
+            continue
+        dj = df_orig[df_orig[col_j] == jug]
+        eq_id = dj["idEquip"].iloc[0]
+        eq_nom = team_names.get(eq_id, "?")
+
+        pts = int(dj["punts"].sum())
+        t2c = int(dj["accio"].str.contains("Cistella de 2", case=False, na=False).sum())
+        t2i = t2c + int(dj["accio"].str.contains("Intent fallat de 2", case=False, na=False).sum())
+        t3c = int(dj["accio"].str.contains("Cistella de 3", case=False, na=False).sum())
+        t3i = t3c + int(dj["accio"].str.contains("Intent fallat de 3", case=False, na=False).sum())
+        tlc = int(dj["accio"].str.contains("Cistella de 1", case=False, na=False).sum())
+        tli = tlc + int(dj["accio"].str.contains("Intent fallat de 1", case=False, na=False).sum())
+        ro = int(dj["accio"].str.contains("Rebot ofensiu", case=False, na=False).sum())
+        rd = int(dj["accio"].str.contains("Rebot defensiu", case=False, na=False).sum())
+        asst = int(dj["accio"].str.contains("Assistència", case=False, na=False).sum())
+        br = int(dj["accio"].str.contains("Robatori", case=False, na=False).sum())
+        tap = int(dj["accio"].str.match("Tap$", case=False, na=False).sum())
+        bp = int(dj["accio"].str.contains("Pèrdua", case=False, na=False).sum())
+        fc = int(dj["accio"].str.contains("Falta comesa", case=False, na=False).sum())
+
+        rows.append({
+            "Jugadora": jug, "Equip": eq_nom,
+            "PTS": pts, "T2C": t2c, "T2I": t2i, "T2%": round(t2c / t2i * 100, 1) if t2i else None,
+            "T3C": t3c, "T3I": t3i, "T3%": round(t3c / t3i * 100, 1) if t3i else None,
+            "TLC": tlc, "TLI": tli, "TL%": round(tlc / tli * 100, 1) if tli else None,
+            "RO": ro, "RD": rd, "REB": ro + rd,
+            "AS": asst, "BR": br, "TAP": tap, "BP": bp, "FC": fc,
+        })
+    return pd.DataFrame(rows)
+
+
+def calc_reb_pct_onoff(df_orig, jugadora, equip_id, teams):
+    """%REB, %OREB, %DREB de l'equip mentre la jugadora és a pista (intervals
+    reals Entra/Surt), sobre les ocasions de rebot que van sorgir aleshores."""
+    rival_id = next((t for t in teams if t != equip_id), None)
+    if rival_id is None:
+        return None
+
+    intervals_jug = core.get_intervals_jugadores_global(df_orig)
+    ivs_on = [(ti, tf) for ti, tf, ei in intervals_jug.get(jugadora, []) if str(ei) == str(equip_id)]
+    if not ivs_on:
+        return None
+
+    df_t = df_orig.copy()
+    df_t["t_abs"] = df_t.apply(_t_abs_row, axis=1)
+    mask_on = df_t["t_abs"].apply(lambda t: any(ti <= t < tf for ti, tf in ivs_on))
+    df_on = df_t[mask_on]
+
+    oreb_eq = int(df_on[df_on["idEquip"] == equip_id]["accio"].str.contains(
+        "Rebot ofensiu", case=False, na=False).sum())
+    dreb_eq = int(df_on[df_on["idEquip"] == equip_id]["accio"].str.contains(
+        "Rebot defensiu", case=False, na=False).sum())
+    oreb_riv = int(df_on[df_on["idEquip"] == rival_id]["accio"].str.contains(
+        "Rebot ofensiu", case=False, na=False).sum())
+    dreb_riv = int(df_on[df_on["idEquip"] == rival_id]["accio"].str.contains(
+        "Rebot defensiu", case=False, na=False).sum())
+
+    denom_oreb = oreb_eq + dreb_riv
+    denom_dreb = dreb_eq + oreb_riv
+    denom_reb = oreb_eq + dreb_eq + oreb_riv + dreb_riv
+
+    return {
+        "pct_oreb": round(oreb_eq / denom_oreb * 100, 1) if denom_oreb > 0 else None,
+        "pct_dreb": round(dreb_eq / denom_dreb * 100, 1) if denom_dreb > 0 else None,
+        "pct_reb": round((oreb_eq + dreb_eq) / denom_reb * 100, 1) if denom_reb > 0 else None,
+    }
