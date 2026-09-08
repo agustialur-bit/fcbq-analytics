@@ -1108,9 +1108,9 @@ with t4:
         vals_a_cmp = [m[1] for m in metrics_cmp]
         vals_b_cmp = [m[2] for m in metrics_cmp]
         fig_cmp = go.Figure()
-        fig_cmp.add_trace(go.Bar(y=labels_cmp, x=vals_a_cmp, orientation="h", name=nom_a,
+        fig_cmp.add_trace(go.Bar(y=labels_cmp, x=[-v for v in vals_a_cmp], orientation="h", name=nom_a,
             marker_color=COLOR_A, text=[f"{v:g}" for v in vals_a_cmp], textposition="outside"))
-        fig_cmp.add_trace(go.Bar(y=labels_cmp, x=[-v for v in vals_b_cmp], orientation="h", name=nom_b,
+        fig_cmp.add_trace(go.Bar(y=labels_cmp, x=vals_b_cmp, orientation="h", name=nom_b,
             marker_color=COLOR_B, text=[f"{v:g}" for v in vals_b_cmp], textposition="outside"))
         fig_cmp.update_layout(barmode="overlay",
             xaxis=dict(showticklabels=False, zeroline=True, zerolinecolor=C_BORDER, zerolinewidth=1.5),
@@ -1228,9 +1228,9 @@ with t4:
         vals_b_ff = [f[2] for f in factors]
 
         fig_ff = go.Figure()
-        fig_ff.add_trace(go.Bar(y=labels_ff, x=vals_a_ff, orientation="h", name=nom_a,
+        fig_ff.add_trace(go.Bar(y=labels_ff, x=[-v for v in vals_a_ff], orientation="h", name=nom_a,
             marker_color=COLOR_A, text=[f"{v:g}" for v in vals_a_ff], textposition="outside"))
-        fig_ff.add_trace(go.Bar(y=labels_ff, x=[-v for v in vals_b_ff], orientation="h", name=nom_b,
+        fig_ff.add_trace(go.Bar(y=labels_ff, x=vals_b_ff, orientation="h", name=nom_b,
             marker_color=COLOR_B, text=[f"{v:g}" for v in vals_b_ff], textposition="outside"))
         fig_ff.update_layout(barmode="overlay",
             xaxis=dict(showticklabels=False, zeroline=True, zerolinecolor=C_BORDER, zerolinewidth=1.5),
@@ -2160,6 +2160,18 @@ with t9:
         st.dataframe(df_hist[["match_id","nom_a","nom_b","score_a","score_b","data_consulta"]].rename(
             columns={"match_id":"ID","nom_a":"Local","nom_b":"Visitant","score_a":"Pts A","score_b":"Pts B",
                      "data_consulta":"Carregat"}), use_container_width=True, hide_index=True)
+
+        st.markdown(sec("📊 Equip — acumulat de temporada"), unsafe_allow_html=True)
+        st.caption(
+            "Sumat de tots els partits carregats (no és mitjana de percentatges per partit): "
+            "%2, %3, %TL, eFG%, pèrdues/partit, %Rebots, possessions/partit, OffRtg, DefRtg, NetRtg."
+        )
+        df_season = cff.calc_team_season_summary(df_hist)
+        if not df_season.empty:
+            st.dataframe(df_season.sort_values("NetRtg", ascending=False),
+                use_container_width=True, hide_index=True)
+        else:
+            st.info("No hi ha prou dades per calcular l'acumulat de temporada.")
 
         st.markdown(sec("🏆 Win Shares de temporada"), unsafe_allow_html=True)
         if len(df_hist) < 2:

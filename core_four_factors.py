@@ -359,3 +359,86 @@ def calc_reb_pct_onoff(df_orig, jugadora, equip_id, teams):
         "pct_dreb": round(dreb_eq / denom_dreb * 100, 1) if denom_dreb > 0 else None,
         "pct_reb": round((oreb_eq + dreb_eq) / denom_reb * 100, 1) if denom_reb > 0 else None,
     }
+
+
+# ══════════════════════════════════════════════════
+# ACUMULAT DE TEMPORADA PER EQUIP
+# ══════════════════════════════════════════════════
+def calc_team_season_summary(df_partits):
+    """Acumulat de temporada per equip (agregat de tots els partits carregats,
+    sumant encerts/intents/possessions abans de dividir — no fa mitjana de
+    percentatges per partit). Clau d'agregació = NOM d'equip, no idEquip
+    (que és un identificador intern per partit, no estable entre partits).
+    Retorna un DataFrame: Equip, Partits, %2, %3, %TL, eFG%, Pèrdues/partit,
+    %Rebots, Possessions/partit, OffRtg, DefRtg, NetRtg.
+    """
+    if df_partits.empty:
+        return pd.DataFrame()
+
+    acum = {}
+    for _, p in df_partits.iterrows():
+        df_m = core.load_jugades_db(p["match_id"])
+        if df_m.empty:
+            continue
+        teams_m = core.get_teams_ordered(df_m)
+        if len(teams_m) < 2:
+            continue
+        tn_m = {str(teams_m[0]): p["nom_a"], str(teams_m[1]): p["nom_b"]}
+
+        for i, tid in enumerate(teams_m[:2]):
+            rival_id = teams_m[1 - i]
+            df_eq = df_m[df_m["idEquip"].astype(str) == str(tid)]
+            df_riv = df_m[df_m["idEquip"].astype(str) == str(rival_id)]
+            nom_eq = tn_m.get(str(tid), "?")
+
+            fgm2 = int(df_eq["accio"].str.contains("Cistella de 2", case=False, na=False).sum())
+            fga2 = fgm2 + int(df_eq["accio"].str.contains("Intent fallat de 2", case=False, na=False).sum())
+            fgm3 = int(df_eq["accio"].str.contains("Cistella de 3", case=False, na=False).sum())
+            fga3 = fgm3 + int(df_eq["accio"].str.contains("Intent fallat de 3", case=False, na=False).sum())
+            ftm = int(df_eq["accio"].str.contains("Cistella de 1", case=False, na=False).sum())
+            fta = ftm + int(df_eq["accio"].str.contains("Intent fallat de 1", case=False, na=False).sum())
+            tov = int(df_eq["accio"].str.contains("Pèrdua", case=False, na=False).sum())
+            oreb = int(df_eq["accio"].str.contains("Rebot ofensiu", case=False, na=False).sum())
+            dreb = int(df_eq["accio"].str.contains("Rebot defensiu", case=False, na=False).sum())
+            oreb_riv = int(df_riv["accio"].str.contains("Rebot ofensiu", case=False, na=False).sum())
+            dreb_riv = int(df_riv["accio"].str.contains("Rebot defensiu", case=False, na=False).sum())
+            pts = int(df_eq["punts"].sum())
+            pts_riv = int(df_riv["punts"].sum())
+            poss = core.calc_possessions(df_eq, poss_mode="full")
+            poss_riv = core.calc_possessions(df_riv, poss_mode="full")
+
+            a = acum.setdefault(nom_eq, dict(partits=0, fgm2=0, fga2=0, fgm3=0, fga3=0, ftm=0, fta=0,
+                                              tov=0, oreb=0, dreb=0, oreb_riv=0, dreb_riv=0,
+                                              pts=0, pts_riv=0, poss=0.0, poss_riv=0.0))
+            a["partits"] += 1
+            a["fgm2"] += fgm2; a["fga2"] += fga2
+            a["fgm3"] += fgm3; a["fga3"] += fga3
+            a["ftm"] += ftm; a["fta"] += fta
+            a["tov"] += tov
+            a["oreb"] += oreb; a["dreb"] += dreb
+            a["oreb_riv"] += oreb_riv; a["dreb_riv"] += dreb_riv
+            a["pts"] += pts; a["pts_riv"] += pts_riv
+            a["poss"] += poss; a["poss_riv"] += poss_riv
+
+    rows = []
+    for nom_eq, a in acum.items():
+        partits = a["partits"] or 1
+        fga_tot = a["fga2"] + a["fga3"]
+        fgm_tot = a["fgm2"] + a["fgm3"]
+        efg = round((fgm_tot + 0.5 * a["fgm3"]) / fga_tot * 100, 1) if fga_tot > 0 else None
+        denom_reb = a["oreb"] + a["dreb"] + a["oreb_riv"] + a["dreb_riv"]
+        off_rtg = round(a["pts"] / a["poss"] * 100, 1) if a["poss"] > 0 else None
+        def_rtg = round(a["pts_riv"] / a["poss_riv"] * 100, 1) if a["poss_riv"] > 0 else None
+        rows.append({
+            "Equip": nom_eq, "Partits": a["partits"],
+            "%2": round(a["fgm2"] / a["fga2"] * 100, 1) if a["fga2"] > 0 else None,
+            "%3": round(a["fgm3"] / a["fga3"] * 100, 1) if a["fga3"] > 0 else None,
+            "%TL": round(a["ftm"] / a["fta"] * 100, 1) if a["fta"] > 0 else None,
+            "eFG%": efg,
+            "Pèrdues/partit": round(a["tov"] / partits, 1),
+            "%Rebots": round((a["oreb"] + a["dreb"]) / denom_reb * 100, 1) if denom_reb > 0 else None,
+            "Possessions/partit": round(a["poss"] / partits, 1),
+            "OffRtg": off_rtg, "DefRtg": def_rtg,
+            "NetRtg": round(off_rtg - def_rtg, 1) if (off_rtg is not None and def_rtg is not None) else None,
+        })
+    return pd.DataFrame(rows)
