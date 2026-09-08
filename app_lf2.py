@@ -241,6 +241,25 @@ def carrega_partit_feb(match_id):
     return df, noms, fa, fb
 
 
+def esborra_partit_lf2(match_id):
+    """Esborra un partit i totes les seves dades associades (inclosos els tirs,
+    que delete_partit_db() d'analitica_core.py no cobreix)."""
+    con = sqlite3.connect(DB_PATH)
+    for tbl in ["partits", "jugades", "stats_jugador", "shots_zones", "timeouts", "tirs_fcbq"]:
+        con.execute(f"DELETE FROM {tbl} WHERE match_id=?", (match_id,))
+    con.commit()
+    con.close()
+
+
+def esborra_tot_historic_lf2():
+    """Esborra TOTS els partits i dades de historic_lf2.db."""
+    con = sqlite3.connect(DB_PATH)
+    for tbl in ["partits", "jugades", "stats_jugador", "shots_zones", "timeouts", "tirs_fcbq"]:
+        con.execute(f"DELETE FROM {tbl}")
+    con.commit()
+    con.close()
+
+
 # ══════════════════════════════════════════════════
 # SIDEBAR
 # ══════════════════════════════════════════════════
@@ -852,24 +871,6 @@ with t2:
 
 
 with t3:
-    st.markdown(sec("Temps entre cistelles"), unsafe_allow_html=True)
-    df_cist2=df_orig[df_orig["punts"]>0].sort_values("num").copy()
-    for tid,tnom,tc in [(teams[0] if teams else None,nom_a,COLOR_A),
-                        (teams[1] if len(teams)>1 else None,nom_b,COLOR_B)]:
-        if tid is None: continue
-        dc=df_cist2[df_cist2["idEquip"]==tid].copy()
-        if len(dc)<2: continue
-        dc["seg_entre"]=((dc["min_num"].shift(-1)-dc["min_num"])*60).abs()
-        dc=dc.dropna(subset=["seg_entre"]); dc=dc[dc["seg_entre"]<600]
-        mit=dc["seg_entre"].mean(); med=dc["seg_entre"].median()
-        c1,c2,c3=st.columns(3)
-        with c1: st.markdown(card(f"{tnom} — Mitjana",f"{mit:.0f}s","",tc),unsafe_allow_html=True)
-        with c2: st.markdown(card("Mediana",f"{med:.0f}s","",tc),unsafe_allow_html=True)
-        with c3: st.markdown(card("Cistelles",len(dc),"",tc),unsafe_allow_html=True)
-        fig_t=px.histogram(dc,x="seg_entre",nbins=20,color_discrete_sequence=[tc],
-            labels={"seg_entre":"Segons"})
-        st.plotly_chart(chart_style(fig_t,200,f"{tnom} — temps entre cistelles"),use_container_width=True)
-
     st.markdown(sec("Ritme de puntuació (pts/min)"), unsafe_allow_html=True)
     ritme_rows=[]
     for q in sorted(df_orig["quart"].unique()):
@@ -882,33 +883,6 @@ with t3:
         fig_r=px.line(df_ritme,x="Quart",y="Pts/min",color="Equip",
             color_discrete_map={nom_a:COLOR_A,nom_b:COLOR_B},markers=True)
         st.plotly_chart(chart_style(fig_r,260,"Ritme per quart"),use_container_width=True)
-
-    st.markdown(sec("⏸ Temps morts — qui anota després?"), unsafe_allow_html=True)
-    st.caption("Primera cistella de l'equip que demana el temps mort, i quant triga a anotar-la.")
-    to_data = analyze_timeouts(df_orig, team_names)
-    if not to_data:
-        st.info("No s'han detectat temps morts en aquest partit.")
-    else:
-        df_to = pd.DataFrame(to_data)
-        c1,c2,c3,c4 = st.columns(4)
-        total_to = len(df_to)
-        anotats = df_to["va_anotar"].sum()
-        efectivitat = round(anotats/total_to*100) if total_to>0 else 0
-        seg_mitjana = df_to[df_to["va_anotar"]==1]["segons_resposta"].mean()
-        with c1: st.markdown(card("Temps morts",total_to,"total","#374151"),unsafe_allow_html=True)
-        with c2: st.markdown(card("Anoten després",int(anotats),"cistella","#16a34a"),unsafe_allow_html=True)
-        with c3: st.markdown(card("Efectivitat",f"{efectivitat}%","","#185FA5"),unsafe_allow_html=True)
-        with c4: st.markdown(card("Seg. fins cistella",f"{seg_mitjana:.0f}s" if not pd.isna(seg_mitjana) else "—","mitjana","#d97706"),unsafe_allow_html=True)
-        df_to_show = df_to.copy()
-        df_to_show["Q"] = df_to_show["quart"]
-        df_to_show["Equip"] = df_to_show["equip_nom"]
-        df_to_show["Anota?"] = df_to_show["va_anotar"].map({1:"✅ Sí", 0:"❌ No"})
-        df_to_show["Jugadora"] = df_to_show["jugadora"]
-        df_to_show["Acció"] = df_to_show["accio"]
-        df_to_show["Seg."] = df_to_show["segons_resposta"].apply(lambda x: f"{x:.0f}s" if x and not pd.isna(x) else "—")
-        df_to_show["≤24s?"] = df_to_show.get("dins_24s", pd.Series([0]*len(df_to_show))).map({1:"✅ Sí", 0:"❌ No"})
-        st.dataframe(df_to_show[["Q","Equip","Anota?","≤24s?","Jugadora","Acció","Seg."]],
-            use_container_width=True, hide_index=True)
 
     st.markdown(sec("📊 Rendiment per quart"), unsafe_allow_html=True)
     st.caption("Off Rtg = pts/100 poss · TS% = pts/(2×(TC_int+0.44×TL_int))×100 · Ritme = poss/min (quarts de 10 min)")
@@ -1209,7 +1183,7 @@ with t4:
             fig_rot.update_yaxes(title="+/- per minut")
             st.plotly_chart(chart_style(fig_rot, 260, f"{eq_nom_rot} — ROT {rot_val}/10 (ρ={rho_rot:+.3f})"), use_container_width=True)
 
-    st.markdown(sec("📐 Cuatro Factores (Dean Oliver)"), unsafe_allow_html=True)
+    st.markdown(sec("📐 Quatre Factors (Dean Oliver)"), unsafe_allow_html=True)
     st.caption("eFG% = tir efectiu · TOV% = pèrdues per possessió · OR%/DR% = rebot ofensiu/defensiu · FT/TCI = tirs lliures per tir de camp")
 
     ff = cff.calc_four_factors(df_orig, teams, team_names, poss_mode="full")
@@ -1238,7 +1212,7 @@ with t4:
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
         st.plotly_chart(chart_style(fig_ff, 260, "Quatre Factors"), use_container_width=True)
 
-        st.markdown("**Lo que produjeron**")
+        st.markdown("**El que van produir**")
         c1, c2, c3, c4 = st.columns(4)
         with c1: st.markdown(card("OER " + nom_a, fa_ff["OER"], "", COLOR_A), unsafe_allow_html=True)
         with c2: st.markdown(card("DER " + nom_a, fa_ff["DER"], "", "#dc2626"), unsafe_allow_html=True)
@@ -1249,18 +1223,18 @@ with t4:
 
 
 
-    st.markdown(sec("🧭 Cuándo la tuvieron, y cuánto valió"), unsafe_allow_html=True)
+    st.markdown(sec("🧭 Quant val cada acció"), unsafe_allow_html=True)
     st.caption(
-        "Punts per possessió (PPP) segons com va començar: tras canasta, tras robo, "
-        "tras rebote defensivo, o tras pérdida en balón parado."
+        "Punts per possessió (PPP) segons com va començar: després de cistella, després de robatori, "
+        "després de rebot defensiu, o després de pèrdua en pilota aturada."
     )
 
     pts_start = cff.calc_pts_by_start(df_orig, teams, team_names)
     etiquetes = {
-        "after_make": "Tras canasta",
-        "off_steal": "Tras robo",
-        "off_dreb": "Tras rebote defensivo",
-        "off_deadball_tov": "Tras pérdida en balón parado",
+        "after_make": "Després de cistella",
+        "off_steal": "Després de robatori",
+        "off_dreb": "Després de rebot defensiu",
+        "off_deadball_tov": "Després de pèrdua en pilota aturada",
     }
     if pts_start and len(teams) > 1:
         tid_a_ps, tid_b_ps = teams[0], teams[1]
@@ -2172,6 +2146,28 @@ with t9:
                 use_container_width=True, hide_index=True)
         else:
             st.info("No hi ha prou dades per calcular l'acumulat de temporada.")
+
+        st.markdown(sec("🗑️ Gestionar l'històric"), unsafe_allow_html=True)
+        col_del1, col_del2 = st.columns([2, 1])
+        with col_del1:
+            del_id = st.selectbox("Eliminar un partit concret", df_hist["match_id"].tolist(),
+                format_func=lambda x: f"{df_hist[df_hist['match_id']==x]['nom_a'].values[0]} vs "
+                                       f"{df_hist[df_hist['match_id']==x]['nom_b'].values[0]}",
+                key="del_hist_lf2")
+        with col_del2:
+            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+            if st.button("🗑 Eliminar", key="btn_del_lf2"):
+                esborra_partit_lf2(del_id)
+                st.success("Partit eliminat.")
+                st.rerun()
+
+        with st.expander("⚠️ Esborrar TOT l'històric"):
+            st.caption("Elimina tots els partits, jugadores i estadístiques desades. Aquesta acció no es pot desfer.")
+            confirmar = st.checkbox("Confirmo que vull esborrar tot l'històric", key="confirma_esborrat_total")
+            if st.button("🗑 Esborrar tot", key="btn_esborra_tot", disabled=not confirmar):
+                esborra_tot_historic_lf2()
+                st.success("Històric esborrat.")
+                st.rerun()
 
         st.markdown(sec("🏆 Win Shares de temporada"), unsafe_allow_html=True)
         if len(df_hist) < 2:
