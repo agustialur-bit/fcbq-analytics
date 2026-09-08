@@ -223,7 +223,24 @@ def carrega_partit_feb(match_id):
 
     return df, noms, fa, fb
 
+def esborra_partit_lf2(match_id):
+    """Esborra un partit i totes les seves dades associades (inclosos els tirs,
+    que delete_partit_db() d'analitica_core.py no cobreix)."""
+    con = sqlite3.connect(DB_PATH)
+    for tbl in ["partits", "jugades", "stats_jugador", "shots_zones", "timeouts", "tirs_fcbq"]:
+        con.execute(f"DELETE FROM {tbl} WHERE match_id=?", (match_id,))
+    con.commit()
+    con.close()
 
+
+def esborra_tot_historic_lf2():
+    """Esborra TOTS els partits i dades de historic_lf2.db."""
+    con = sqlite3.connect(DB_PATH)
+    for tbl in ["partits", "jugades", "stats_jugador", "shots_zones", "timeouts", "tirs_fcbq"]:
+        con.execute(f"DELETE FROM {tbl}")
+    con.commit()
+    con.close()
+    
 # ══════════════════════════════════════════════════
 # SIDEBAR
 # ══════════════════════════════════════════════════
@@ -2108,3 +2125,25 @@ with t9:
                 ["jugador","equip","partits","minuts","punts","OWS","DWS","WS","ws_per40","Arquetip"]]
             st.dataframe(df_ws_show.rename(columns={"jugador":"Jugadora","equip":"Equip","partits":"PJ",
                 "minuts":"Min","punts":"Pts","ws_per40":"WS/40"}), use_container_width=True, hide_index=True)
+                    st.markdown(sec("🗑️ Gestionar l'històric"), unsafe_allow_html=True)
+        col_del1, col_del2 = st.columns([2, 1])
+        with col_del1:
+            del_id = st.selectbox("Eliminar un partit concret", df_hist["match_id"].tolist(),
+                format_func=lambda x: f"{df_hist[df_hist['match_id']==x]['nom_a'].values[0]} vs "
+                                       f"{df_hist[df_hist['match_id']==x]['nom_b'].values[0]}",
+                key="del_hist_lf2")
+        with col_del2:
+            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+            if st.button("🗑 Eliminar", key="btn_del_lf2"):
+                esborra_partit_lf2(del_id)
+                st.success("Partit eliminat.")
+                st.rerun()
+
+        with st.expander("⚠️ Esborrar TOT l'històric"):
+            st.caption("Elimina tots els partits, jugadores i estadístiques desades. Aquesta acció no es pot desfer.")
+            confirmar = st.checkbox("Confirmo que vull esborrar tot l'històric", key="confirma_esborrat_total")
+            if st.button("🗑 Esborrar tot", key="btn_esborra_tot", disabled=not confirmar):
+                esborra_tot_historic_lf2()
+                st.success("Històric esborrat.")
+                st.rerun()
+                
