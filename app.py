@@ -97,9 +97,17 @@ migrate_db()
 # FETCH
 # ══════════════════════════════════════════════════
 def extract_match_id(text):
+    text = text.strip()
+    # Format nou de basquetcatala.cat (des de la temporada 2026-27): UUID amb guions
+    # Ex: https://www.basquetcatala.cat/estadistica/partit/61b4b2db-9e91-456a-8f7a-b841b2dad323
+    m = re.search(r"/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})(?:\?|$)", text)
+    if m: return m.group(1)
+    if re.match(r"^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$", text):
+        return text
+    # Format antic: ObjectId de 24 caràcters hexadecimals
     m = re.search(r"/([a-f0-9]{24})(?:\?|$)", text)
     if m: return m.group(1)
-    if re.match(r"^[a-f0-9]{24}$", text.strip()): return text.strip()
+    if re.match(r"^[a-f0-9]{24}$", text): return text
     return None
 
 def fetch_and_parse(match_id):
@@ -208,23 +216,28 @@ with st.sidebar:
             linies = [l.strip() for l in urls_multi.strip().split("\n") if l.strip()]
             ok = 0; errors = []
             progress = st.progress(0)
+            noms_guardats_multi = load_noms_equips()
             for i, linia in enumerate(linies):
-                # Extreu l'ID de la URL si cal
-                mid_multi = linia.split("/")[-1].strip() if "/" in linia else linia.strip()
-                mid_multi = mid_multi.split("?")[0].strip()
+                mid_multi = extract_match_id(linia) or linia.strip()
                 try:
-                    df_m, teams_m, team_names_m = fetch_and_parse(mid_multi)
+                    if partit_exists(mid_multi):
+                        ok += 1  # ja el tenim desat
+                        progress.progress((i+1)/len(linies))
+                        continue
+                    df_m = fetch_and_parse(mid_multi)
                     if df_m is not None and not df_m.empty:
-                        ts_m = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        save_jugades(mid_multi, ts_m, df_m)
-                        save_stats_jugador(mid_multi, ts_m, df_m, teams_m, team_names_m)
-                        save_shots_zones(mid_multi, ts_m, df_m, teams_m)
-                        save_timeouts(mid_multi, ts_m, df_m, teams_m)
-                        n_a = team_names_m.get(teams_m[0],"?") if teams_m else "?"
-                        n_b = team_names_m.get(teams_m[1],"?") if len(teams_m)>1 else "?"
-                        sa = int(df_m[df_m["idEquip"]==teams_m[0]]["punts"].sum()) if teams_m else 0
-                        sb = int(df_m[df_m["idEquip"]==teams_m[1]]["punts"].sum()) if len(teams_m)>1 else 0
-                        save_partit(mid_multi, ts_m, n_a, n_b, sa, sb)
+                        teams_m = get_teams_ordered(df_m)
+                        noms_m = {}
+                        for j, tid_m in enumerate(teams_m[:2]):
+                            noms_m[tid_m] = noms_guardats_multi.get(tid_m, f"Equip {chr(65+j)}")
+                        id_a_m = teams_m[0] if teams_m else ""
+                        id_b_m = teams_m[1] if len(teams_m)>1 else ""
+                        sdf_m = score_evo(df_m); sa, sb = final_score(sdf_m)
+                        ts_m = datetime.now().strftime("%Y-%m-%d %H:%M")
+                        save_partit(mid_multi, df_m, noms_m.get(id_a_m,"A"), noms_m.get(id_b_m,"B"), id_a_m, id_b_m, sa, sb)
+                        save_stats_jugador(mid_multi, ts_m, df_m, teams_m, noms_m)
+                        save_shots_zones(mid_multi, ts_m, df_m, noms_m)
+                        save_timeouts(mid_multi, ts_m, df_m, noms_m)
                         ok += 1
                     else:
                         errors.append(f"No trobat: {mid_multi[:20]}")
