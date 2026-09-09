@@ -21,13 +21,15 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "historic_lf2
 COLOR_A, COLOR_B = "#185FA5", "#993C1D"
 
 import analitica_core as core
+import core_four_factors as cff
+import pdf_export as pdfx
 from analitica_core import (
     MICKI_CSS, card, sec, chart_style,
     init_db, migrate_db, save_partit, save_stats_jugador, save_shots_zones,
     save_timeouts, save_tirs_fcbq, load_jugades_db, load_partits_db,
     load_stats_jugador_db, load_shots_zones_db, load_tirs_fcbq, partit_exists,
     get_teams, get_teams_ordered, score_evo, final_score, estat_marc, analyze_timeouts,
-    get_intervals_jugadores_global, calc_pm_combinacions, calc_possessions,
+    get_intervals_jugadores_global, calc_pm_combinacions, calc_possessions, calc_minuts_reals,
     calc_eficiencies, calc_onoff, calc_onoff_ts, calc_usage_rate,
     calc_win_shares_temporada, calc_metriques_partit, classifica_arquetip_global,
     classifica_zona_tir, calc_onoff_agregat, calc_context_onoff, calc_lineup_impact,
@@ -166,8 +168,31 @@ def feb_normalize_to_jugades(data):
                 ultim_equip_tir_fallat = None
             else:
                 accio = "Rebot"
-        elif action in ("foul", "assist", "recovery", "blockshot"):
-            accio = text
+        elif action == "recovery":
+            # feb.es marca explícitament els robatoris amb "ROBO" dins el text
+            # (p.ex. "(EQUIP) JUGADORA: ROBO (Robos: 3)"). Distingim-ho de la resta
+            # d'esdeveniments de recuperació perquè calc_pts_by_start (core_four_factors.py)
+            # pugui separar "tras robo" de "tras pérdida en balón parado".
+            accio = "Robatori" if "ROBO" in text.upper() else text
+        elif action == "assist":
+            # Confirmat amb un exemple real: "(EQUIP) JUGADORA: ASISTENCIA (Asistencias: N)"
+            accio = "Assistència" if "ASISTENCIA" in text.upper() else text
+        elif action == "blockshot":
+            # Confirmat amb un exemple real: "(EQUIP) JUGADORA: TAPÓN (Tapones: N)"
+            accio = "Tap" if ("TAPON" in text.upper() or "TAPÓN" in text.upper()) else text
+        elif action == "foul":
+            # Confirmat amb un exemple real: el text no diu "COMETIDA"/"RECIBIDA"
+            # com se suposava — diu "Personal (Faltas: X. Faltas de equipo: Y).
+            # Tiros libres: Z", i el jugador identificat és qui LA COMET.
+            txt_up = text.upper()
+            if "PERSONAL" in txt_up:
+                accio = "Falta comesa"
+            elif "TÉCNICA" in txt_up or "TECNICA" in txt_up:
+                accio = "Falta tècnica"
+            elif "ANTIDEPORTIVA" in txt_up:
+                accio = "Falta antiesportiva"
+            else:
+                accio = text
 
         if accio is None:
             continue
@@ -214,6 +239,25 @@ def carrega_partit_feb(match_id):
     save_tirs_fcbq(match_id, ts, nom_a, nom_b, tirs_a, tirs_b)
 
     return df, noms, fa, fb
+
+
+def esborra_partit_lf2(match_id):
+    """Esborra un partit i totes les seves dades associades (inclosos els tirs,
+    que delete_partit_db() d'analitica_core.py no cobreix)."""
+    con = sqlite3.connect(DB_PATH)
+    for tbl in ["partits", "jugades", "stats_jugador", "shots_zones", "timeouts", "tirs_fcbq"]:
+        con.execute(f"DELETE FROM {tbl} WHERE match_id=?", (match_id,))
+    con.commit()
+    con.close()
+
+
+def esborra_tot_historic_lf2():
+    """Esborra TOTS els partits i dades de historic_lf2.db."""
+    con = sqlite3.connect(DB_PATH)
+    for tbl in ["partits", "jugades", "stats_jugador", "shots_zones", "timeouts", "tirs_fcbq"]:
+        con.execute(f"DELETE FROM {tbl}")
+    con.commit()
+    con.close()
 
 
 # ══════════════════════════════════════════════════
@@ -298,9 +342,9 @@ else:
 # ══════════════════════════════════════════════════
 # TABS — Fase 1
 # ══════════════════════════════════════════════════
-t1, t_kp, t2, t3, t4, t_onoff, t5, t6, t_arq, t7, t9 = st.tabs([
+t1, t_kp, t2, t3, t4, t_onoff, t5, t6, t_desc, t7, t9 = st.tabs([
     "🏀 Partit", "🌟 Key Performers", "👤 Jugadores", "⏱ Ritme", "⚡ Eficiència", "⚖️ On/Off",
-    "🔄 Rotacions", "📈 Hist. Jugadores", "🎭 Arquetips", "🎯 Mapa de Tir", "📚 Històric"
+    "🔄 Rotacions", "📈 Hist. Jugadores", "📥 Descarregables", "🎯 Mapa de Tir", "📚 Històric"
 ])
 
 with t1:
@@ -778,26 +822,55 @@ with t2:
             st.dataframe(dj2_pts.rename(columns={"quart":"Q","temps":"Temps","accio":"Acció",
                 "marcador":"Marc","punts":"Pts","estat":"Estat"}),use_container_width=True,hide_index=True)
 
+    st.markdown(sec("📊 Box Score complet per jugadora"), unsafe_allow_html=True)
+    st.caption(
+        "PTS · T2/T3/TL (convertits/intentats/%) · RO/RD/REB · AS (assistències) · "
+        "BR (robatories) · TAP (taps) · BP (pèrdues) · FC (faltes personals comeses)."
+    )
+    df_box = cff.calc_box_score_jugadores(df_orig, teams, team_names)
+    if not df_box.empty:
+        tab_box_a, tab_box_b = st.tabs([nom_a, nom_b])
+        for tab_box, eq_nom_box in [(tab_box_a, nom_a), (tab_box_b, nom_b)]:
+            with tab_box:
+                df_box_eq = df_box[df_box["Equip"] == eq_nom_box].sort_values("PTS", ascending=False)
+                st.dataframe(df_box_eq.drop(columns=["Equip"]), use_container_width=True, hide_index=True)
+    else:
+        st.info("Sense dades de jugadores per aquest partit.")
+
+    st.markdown(sec("⚡ On/Off avançat per jugadora"), unsafe_allow_html=True)
+    st.caption(
+        "OER/DER/NetRtg quan la jugadora és a pista (on) vs quan no hi és (off), i NET = on−off. "
+        "%REB/%OREB/%DREB = quota de rebot de l'equip mentre ella és a pista."
+    )
+    eq_adv_sel = st.selectbox("Equip", [nom_a, nom_b], key="eq_adv_sel_t2")
+    tid_adv = teams[0] if eq_adv_sel == nom_a else (teams[1] if len(teams) > 1 else None)
+    if tid_adv:
+        jugs_adv = sorted([j for j in df_orig[df_orig["idEquip"]==tid_adv][col_j_imp].unique() if j])
+        minuts_reals_adv = calc_minuts_reals(df_orig)
+        rows_adv = []
+        for jug_adv in jugs_adv:
+            oo_adv = calc_onoff(df_orig, jug_adv, tid_adv, teams, poss_mode="full")
+            if oo_adv is None: continue
+            reb_adv = cff.calc_reb_pct_onoff(df_orig, jug_adv, tid_adv, teams) or {}
+            net_oer = (round(oo_adv["on_off_rtg"]-oo_adv["off_off_rtg"],1)
+                       if oo_adv["on_off_rtg"] is not None and oo_adv["off_off_rtg"] is not None else None)
+            net_der = (round(oo_adv["on_def_rtg"]-oo_adv["off_def_rtg"],1)
+                       if oo_adv["on_def_rtg"] is not None and oo_adv["off_def_rtg"] is not None else None)
+            rows_adv.append({
+                "Jugadora": jug_adv, "MIN": minuts_reals_adv.get(jug_adv, 0),
+                "OER on": oo_adv["on_off_rtg"], "OER off": oo_adv["off_off_rtg"], "NET (OER)": net_oer,
+                "DER on": oo_adv["on_def_rtg"], "DER off": oo_adv["off_def_rtg"], "NET (DER)": net_der,
+                "NetRtg on": oo_adv["on_net_rtg"], "NetRtg off": oo_adv["off_net_rtg"], "NET": oo_adv["diff"],
+                "%REB": reb_adv.get("pct_reb"), "%OREB": reb_adv.get("pct_oreb"), "%DREB": reb_adv.get("pct_dreb"),
+            })
+        if rows_adv:
+            df_adv = pd.DataFrame(rows_adv).sort_values("MIN", ascending=False)
+            st.dataframe(df_adv, use_container_width=True, hide_index=True)
+        else:
+            st.info("No hi ha prou dades per calcular l'On/Off avançat d'aquest equip.")
+
 
 with t3:
-    st.markdown(sec("Temps entre cistelles"), unsafe_allow_html=True)
-    df_cist2=df_orig[df_orig["punts"]>0].sort_values("num").copy()
-    for tid,tnom,tc in [(teams[0] if teams else None,nom_a,COLOR_A),
-                        (teams[1] if len(teams)>1 else None,nom_b,COLOR_B)]:
-        if tid is None: continue
-        dc=df_cist2[df_cist2["idEquip"]==tid].copy()
-        if len(dc)<2: continue
-        dc["seg_entre"]=((dc["min_num"].shift(-1)-dc["min_num"])*60).abs()
-        dc=dc.dropna(subset=["seg_entre"]); dc=dc[dc["seg_entre"]<600]
-        mit=dc["seg_entre"].mean(); med=dc["seg_entre"].median()
-        c1,c2,c3=st.columns(3)
-        with c1: st.markdown(card(f"{tnom} — Mitjana",f"{mit:.0f}s","",tc),unsafe_allow_html=True)
-        with c2: st.markdown(card("Mediana",f"{med:.0f}s","",tc),unsafe_allow_html=True)
-        with c3: st.markdown(card("Cistelles",len(dc),"",tc),unsafe_allow_html=True)
-        fig_t=px.histogram(dc,x="seg_entre",nbins=20,color_discrete_sequence=[tc],
-            labels={"seg_entre":"Segons"})
-        st.plotly_chart(chart_style(fig_t,200,f"{tnom} — temps entre cistelles"),use_container_width=True)
-
     st.markdown(sec("Ritme de puntuació (pts/min)"), unsafe_allow_html=True)
     ritme_rows=[]
     for q in sorted(df_orig["quart"].unique()):
@@ -810,33 +883,6 @@ with t3:
         fig_r=px.line(df_ritme,x="Quart",y="Pts/min",color="Equip",
             color_discrete_map={nom_a:COLOR_A,nom_b:COLOR_B},markers=True)
         st.plotly_chart(chart_style(fig_r,260,"Ritme per quart"),use_container_width=True)
-
-    st.markdown(sec("⏸ Temps morts — qui anota després?"), unsafe_allow_html=True)
-    st.caption("Primera cistella de l'equip que demana el temps mort, i quant triga a anotar-la.")
-    to_data = analyze_timeouts(df_orig, team_names)
-    if not to_data:
-        st.info("No s'han detectat temps morts en aquest partit.")
-    else:
-        df_to = pd.DataFrame(to_data)
-        c1,c2,c3,c4 = st.columns(4)
-        total_to = len(df_to)
-        anotats = df_to["va_anotar"].sum()
-        efectivitat = round(anotats/total_to*100) if total_to>0 else 0
-        seg_mitjana = df_to[df_to["va_anotar"]==1]["segons_resposta"].mean()
-        with c1: st.markdown(card("Temps morts",total_to,"total","#374151"),unsafe_allow_html=True)
-        with c2: st.markdown(card("Anoten després",int(anotats),"cistella","#16a34a"),unsafe_allow_html=True)
-        with c3: st.markdown(card("Efectivitat",f"{efectivitat}%","","#185FA5"),unsafe_allow_html=True)
-        with c4: st.markdown(card("Seg. fins cistella",f"{seg_mitjana:.0f}s" if not pd.isna(seg_mitjana) else "—","mitjana","#d97706"),unsafe_allow_html=True)
-        df_to_show = df_to.copy()
-        df_to_show["Q"] = df_to_show["quart"]
-        df_to_show["Equip"] = df_to_show["equip_nom"]
-        df_to_show["Anota?"] = df_to_show["va_anotar"].map({1:"✅ Sí", 0:"❌ No"})
-        df_to_show["Jugadora"] = df_to_show["jugadora"]
-        df_to_show["Acció"] = df_to_show["accio"]
-        df_to_show["Seg."] = df_to_show["segons_resposta"].apply(lambda x: f"{x:.0f}s" if x and not pd.isna(x) else "—")
-        df_to_show["≤24s?"] = df_to_show.get("dins_24s", pd.Series([0]*len(df_to_show))).map({1:"✅ Sí", 0:"❌ No"})
-        st.dataframe(df_to_show[["Q","Equip","Anota?","≤24s?","Jugadora","Acció","Seg."]],
-            use_container_width=True, hide_index=True)
 
     st.markdown(sec("📊 Rendiment per quart"), unsafe_allow_html=True)
     st.caption("Off Rtg = pts/100 poss · TS% = pts/(2×(TC_int+0.44×TL_int))×100 · Ritme = poss/min (quarts de 10 min)")
@@ -983,7 +1029,33 @@ with t3:
         st.dataframe(pd.DataFrame(shift_rows),use_container_width=True,hide_index=True)
     else:
         st.info(f"No s'han detectat runs de {THRESHOLD}+ punts.")
+    st.markdown(sec("🔥 Clutch"), unsafe_allow_html=True)
+    st.caption("Últims 5 minuts amb marge de 5 punts o menys.")
 
+    clutch = cff.calc_clutch(df_orig, teams, team_names, poss_mode="full")
+    if clutch:
+        st.markdown(card("Finestra clutch", f"{clutch['finestra_min']:.1f} min",
+                          f"{clutch['n_trams']} tram(s)", "#d97706"), unsafe_allow_html=True)
+
+        c1, c2 = st.columns(2)
+        for col, tid_c, color_c in [(c1, teams[0], COLOR_A), (c2, teams[1] if len(teams) > 1 else None, COLOR_B)]:
+            if tid_c is None:
+                continue
+            with col:
+                met_c = clutch["equips"].get(tid_c, {})
+                st.markdown(card(met_c.get("Equip", "?"), met_c.get("Pts", 0),
+                                  f"TS% {met_c.get('TS%', 0)} · Off Rtg {met_c.get('Off Rtg', 0)}",
+                                  color_c), unsafe_allow_html=True)
+
+        st.markdown("**Jugadores en el tram clutch**")
+        df_clutch_jug = pd.DataFrame(clutch["jugadores"])
+        if not df_clutch_jug.empty:
+            st.dataframe(
+                df_clutch_jug[["jugadora", "equip_nom", "minuts", "punts", "TS%", "+/-"]]
+                    .rename(columns={"jugadora": "Jugadora", "equip_nom": "Equip", "minuts": "Min"}),
+                use_container_width=True, hide_index=True)
+    else:
+        st.info("Aquest partit no ha tingut cap tram amb marge ≤5 punts en els últims 5 minuts.")
 
 with t4:
     st.markdown(sec("📊 Comparació d'equips"), unsafe_allow_html=True)
@@ -1010,9 +1082,9 @@ with t4:
         vals_a_cmp = [m[1] for m in metrics_cmp]
         vals_b_cmp = [m[2] for m in metrics_cmp]
         fig_cmp = go.Figure()
-        fig_cmp.add_trace(go.Bar(y=labels_cmp, x=vals_a_cmp, orientation="h", name=nom_a,
+        fig_cmp.add_trace(go.Bar(y=labels_cmp, x=[-v for v in vals_a_cmp], orientation="h", name=nom_a,
             marker_color=COLOR_A, text=[f"{v:g}" for v in vals_a_cmp], textposition="outside"))
-        fig_cmp.add_trace(go.Bar(y=labels_cmp, x=[-v for v in vals_b_cmp], orientation="h", name=nom_b,
+        fig_cmp.add_trace(go.Bar(y=labels_cmp, x=vals_b_cmp, orientation="h", name=nom_b,
             marker_color=COLOR_B, text=[f"{v:g}" for v in vals_b_cmp], textposition="outside"))
         fig_cmp.update_layout(barmode="overlay",
             xaxis=dict(showticklabels=False, zeroline=True, zerolinecolor=C_BORDER, zerolinewidth=1.5),
@@ -1111,18 +1183,78 @@ with t4:
             fig_rot.update_yaxes(title="+/- per minut")
             st.plotly_chart(chart_style(fig_rot, 260, f"{eq_nom_rot} — ROT {rot_val}/10 (ρ={rho_rot:+.3f})"), use_container_width=True)
 
-    st.markdown(sec("Exporta a Excel"), unsafe_allow_html=True)
-    st.caption("Excel amb totes les mètriques avançades de tots els partits de la base de dades.")
-    if st.button("⬇ Descarregar Excel d'anàlisi complet", key="btn_excel_analisi_lf2"):
-        excel_data = genera_excel_analisi()
-        if excel_data:
-            st.download_button(
-                label="📥 Clic per descarregar", data=excel_data,
-                file_name=f"analitica_lf2_analisi_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="dl_excel_analisi_lf2")
-        else:
-            st.info("No hi ha partits a la base de dades.")
+    st.markdown(sec("📐 Quatre Factors (Dean Oliver)"), unsafe_allow_html=True)
+    st.caption("eFG% = tir efectiu · TOV% = pèrdues per possessió · OR%/DR% = rebot ofensiu/defensiu · FT/TCI = tirs lliures per tir de camp")
+
+    ff = cff.calc_four_factors(df_orig, teams, team_names, poss_mode="full")
+    if ff and len(teams) > 1:
+        tid_a_ff, tid_b_ff = teams[0], teams[1]
+        fa_ff, fb_ff = ff[tid_a_ff], ff[tid_b_ff]
+
+        factors = [
+            ("eFG%", fa_ff["eFG%"], fb_ff["eFG%"]),
+            ("TOV%", fa_ff["TOV%"], fb_ff["TOV%"]),
+            ("OR%", fa_ff["OR%"], fb_ff["OR%"]),
+            ("FT/TCI", fa_ff["FT_TCI"], fb_ff["FT_TCI"]),
+        ]
+        labels_ff = [f[0] for f in factors]
+        vals_a_ff = [f[1] for f in factors]
+        vals_b_ff = [f[2] for f in factors]
+
+        fig_ff = go.Figure()
+        fig_ff.add_trace(go.Bar(y=labels_ff, x=[-v for v in vals_a_ff], orientation="h", name=nom_a,
+            marker_color=COLOR_A, text=[f"{v:g}" for v in vals_a_ff], textposition="outside"))
+        fig_ff.add_trace(go.Bar(y=labels_ff, x=vals_b_ff, orientation="h", name=nom_b,
+            marker_color=COLOR_B, text=[f"{v:g}" for v in vals_b_ff], textposition="outside"))
+        fig_ff.update_layout(barmode="overlay",
+            xaxis=dict(showticklabels=False, zeroline=True, zerolinecolor=C_BORDER, zerolinewidth=1.5),
+            yaxis=dict(title=""),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+        st.plotly_chart(chart_style(fig_ff, 260, "Quatre Factors"), use_container_width=True)
+
+        st.markdown("**El que van produir**")
+        c1, c2, c3, c4 = st.columns(4)
+        with c1: st.markdown(card("OER " + nom_a, fa_ff["OER"], "", COLOR_A), unsafe_allow_html=True)
+        with c2: st.markdown(card("DER " + nom_a, fa_ff["DER"], "", "#dc2626"), unsafe_allow_html=True)
+        with c3: st.markdown(card("OER " + nom_b, fb_ff["OER"], "", COLOR_B), unsafe_allow_html=True)
+        with c4: st.markdown(card("DER " + nom_b, fb_ff["DER"], "", "#dc2626"), unsafe_allow_html=True)
+    else:
+        st.info("Calen dos equips per calcular els Quatre Factors.")
+
+
+
+    st.markdown(sec("🧭 Quant val cada acció"), unsafe_allow_html=True)
+    st.caption(
+        "Punts per possessió (PPP) segons com va començar: després de cistella, després de robatori, "
+        "després de rebot defensiu, o després de pèrdua en pilota aturada."
+    )
+
+    pts_start = cff.calc_pts_by_start(df_orig, teams, team_names)
+    etiquetes = {
+        "after_make": "Després de cistella",
+        "off_steal": "Després de robatori",
+        "off_dreb": "Després de rebot defensiu",
+        "off_deadball_tov": "Després de pèrdua en pilota aturada",
+    }
+    if pts_start and len(teams) > 1:
+        tid_a_ps, tid_b_ps = teams[0], teams[1]
+        for clau, etiqueta in etiquetes.items():
+            d_a = pts_start.get(tid_a_ps, {}).get(clau, {})
+            d_b = pts_start.get(tid_b_ps, {}).get(clau, {})
+            c1, c2, c3 = st.columns([1, 2, 1])
+            with c1:
+                st.markdown(card(nom_a, d_a.get("ppp") if d_a.get("ppp") is not None else "—",
+                                  f"{d_a.get('poss',0)} poss.", COLOR_A), unsafe_allow_html=True)
+            with c2:
+                st.markdown(f"<div style='text-align:center;padding-top:22px;color:#6b7280;"
+                            f"font-size:13px'>{etiqueta}</div>", unsafe_allow_html=True)
+            with c3:
+                st.markdown(card(nom_b, d_b.get("ppp") if d_b.get("ppp") is not None else "—",
+                                  f"{d_b.get('poss',0)} poss.", COLOR_B), unsafe_allow_html=True)
+    else:
+        st.info("Calen dos equips per calcular aquesta desagregació.")
+
+
 
 
 with t_onoff:
@@ -1610,6 +1742,110 @@ with t5:
                     "", col_p), unsafe_allow_html=True)
                 st.caption(f"Trams juntes: {', '.join([f'{i:.0f}–{f:.0f} min' for i,f in juntes])}")
 
+    # ── 5b. Aportació d'una jugadora amb cada companya (gràfic) ──────────
+    st.markdown(sec("🤝 Aportació d'una jugadora amb cada companya"), unsafe_allow_html=True)
+    st.caption("+/- per minut de la jugadora seleccionada quan comparteix pista amb cadascuna "
+               "de les companyes amb qui ha jugat. El diamant blau sobre cada barra és la mitjana "
+               "pròpia de la companya (tot el partit, no només junta amb la seleccionada).")
+
+    if tid_rot and intervals_jug:
+        jugs_contrib = sorted([j for j,ivs in intervals_jug.items() if any(ei==tid_rot for _,_,ei in ivs)])
+        jug_contrib_sel = st.selectbox("Jugadora", jugs_contrib, key="jug_contrib_sel")
+
+        if jug_contrib_sel:
+            rival_contrib = teams[1] if tid_rot == teams[0] else (teams[0] if teams else None)
+            df_orig_ctb = df_orig.copy()
+            df_orig_ctb["t_abs"] = df_orig_ctb.apply(
+                lambda r: (int(r["quart"])-1)*10 + (10 - float(r["min_num"]))
+                if float(r.get("min_num",0)) <= 10 else float(r.get("min_num",0)), axis=1)
+
+            ivs_self_ctb = [(ti,tf) for ti,tf,ei in intervals_jug.get(jug_contrib_sel,[]) if ei==tid_rot]
+
+            # +/- per minut TOTAL de la jugadora (tot el partit, no només amb una companya)
+            minuts_total_ctb = sum(tf-ti for ti,tf in ivs_self_ctb)
+            pm_total_ctb = None
+            if minuts_total_ctb >= 0.5:
+                pf_tot_ctb = pc_tot_ctb = 0
+                for ti,tf in ivs_self_ctb:
+                    df_j_tot = df_orig_ctb[(df_orig_ctb["t_abs"]>=ti)&(df_orig_ctb["t_abs"]<=tf)]
+                    pf_tot_ctb += int(df_j_tot[df_j_tot["idEquip"]==tid_rot]["punts"].sum())
+                    if rival_contrib:
+                        pc_tot_ctb += int(df_j_tot[df_j_tot["idEquip"]==rival_contrib]["punts"].sum())
+                pm_total_ctb = round((pf_tot_ctb-pc_tot_ctb)/minuts_total_ctb, 3)
+
+            rows_contrib = []
+            for comp in jugs_contrib:
+                if comp == jug_contrib_sel: continue
+                ivs_comp_ctb = [(ti,tf) for ti,tf,ei in intervals_jug.get(comp,[]) if ei==tid_rot]
+                juntes_ctb = []
+                for a1,a2 in ivs_self_ctb:
+                    for b1,b2 in ivs_comp_ctb:
+                        ini=max(a1,b1); fi=min(a2,b2)
+                        if fi > ini: juntes_ctb.append((ini,fi))
+                if not juntes_ctb: continue
+                minuts_junts_ctb = sum(f-i for i,f in juntes_ctb)
+                if minuts_junts_ctb < 0.5: continue
+                pf_ctb = pc_ctb = 0
+                for ti,tf in juntes_ctb:
+                    df_j_ctb = df_orig_ctb[(df_orig_ctb["t_abs"]>=ti)&(df_orig_ctb["t_abs"]<=tf)]
+                    pf_ctb += int(df_j_ctb[df_j_ctb["idEquip"]==tid_rot]["punts"].sum())
+                    if rival_contrib:
+                        pc_ctb += int(df_j_ctb[df_j_ctb["idEquip"]==rival_contrib]["punts"].sum())
+                pm_ctb = pf_ctb - pc_ctb
+
+                # Mitjana pròpia de la companya (tot el partit, no només junta amb la seleccionada)
+                minuts_comp_total = sum(tf-ti for ti,tf in ivs_comp_ctb)
+                pm_comp_total = None
+                if minuts_comp_total >= 0.5:
+                    pf_comp_tot = pc_comp_tot = 0
+                    for ti,tf in ivs_comp_ctb:
+                        df_j_comp = df_orig_ctb[(df_orig_ctb["t_abs"]>=ti)&(df_orig_ctb["t_abs"]<=tf)]
+                        pf_comp_tot += int(df_j_comp[df_j_comp["idEquip"]==tid_rot]["punts"].sum())
+                        if rival_contrib:
+                            pc_comp_tot += int(df_j_comp[df_j_comp["idEquip"]==rival_contrib]["punts"].sum())
+                    pm_comp_total = round((pf_comp_tot-pc_comp_tot)/minuts_comp_total, 3)
+
+                rows_contrib.append({
+                    "Companya": comp, "Min junts": round(minuts_junts_ctb,1),
+                    "+/-": pm_ctb, "+/- per min": round(pm_ctb/minuts_junts_ctb,3),
+                    "Mitjana pròpia": pm_comp_total,
+                })
+
+            if rows_contrib:
+                if pm_total_ctb is not None:
+                    st.markdown(card(f"{jug_contrib_sel} — +/- per min (tot el partit)",
+                        f"{'+' if pm_total_ctb>=0 else ''}{pm_total_ctb}",
+                        f"{minuts_total_ctb:.1f} min totals", "#374151"), unsafe_allow_html=True)
+
+                df_contrib = pd.DataFrame(rows_contrib).sort_values("+/- per min", ascending=False)
+                colors_contrib = ["#16a34a" if v>=0 else "#dc2626" for v in df_contrib["+/- per min"]]
+                fig_contrib = go.Figure(go.Bar(
+                    y=df_contrib["Companya"], x=df_contrib["+/- per min"], orientation='h',
+                    marker_color=colors_contrib,
+                    text=[f"{'+'if v>=0 else ''}{v:.3f}" for v in df_contrib["+/- per min"]],
+                    textposition="outside",
+                    customdata=df_contrib["Min junts"],
+                    hovertemplate="<b>%{y}</b><br>+/- per min: %{x:+.3f}<br>Min junts: %{customdata:.1f}<extra></extra>"
+                ))
+                fig_contrib.add_trace(go.Scatter(
+                    x=df_contrib["Mitjana pròpia"], y=df_contrib["Companya"],
+                    mode="markers", name="Mitjana pròpia de la companya",
+                    marker=dict(symbol="diamond", size=11, color="#0C447C",
+                                line=dict(width=1.5, color="white")),
+                    hovertemplate="<b>%{y}</b><br>Mitjana pròpia: %{x:+.3f}<extra></extra>"
+                ))
+                fig_contrib.add_vline(x=0, line_dash="solid", line_color="#e2e4e8")
+                if pm_total_ctb is not None:
+                    fig_contrib.add_vline(x=pm_total_ctb, line_dash="dot", line_color="#d97706",
+                        annotation_text=f"Mitjana jugadora: {pm_total_ctb:+.3f}",
+                        annotation_font_size=10, annotation_font_color="#d97706")
+                fig_contrib.update_xaxes(title="+/- per minut junts")
+                st.plotly_chart(chart_style(fig_contrib, max(220, len(df_contrib)*40),
+                    f"{jug_contrib_sel} — aportació amb cada companya"), use_container_width=True)
+                st.dataframe(df_contrib, use_container_width=True, hide_index=True)
+            else:
+                st.info(f"{jug_contrib_sel} no ha compartit prou minuts amb cap companya per calcular-ho.")
+
     # ── 6. +/- per quintet (bonus) ─────────────────────────────────────────
     st.markdown(sec("+/- per quintet"), unsafe_allow_html=True)
     quintets = calc_pm_combinacions(df_orig, mode="quintets")
@@ -1869,123 +2105,68 @@ with t7:
                        "de mig camp de la FCBQ (classifica_zona_tir no és compatible tal qual). Pendent de calibrar.")
 
 
-with t_arq:
-    st.markdown(sec("🎭 Arquetips de jugadora"), unsafe_allow_html=True)
-    st.caption("Classificació simplificada de l'estil de cada jugadora a partir del seu Usage% i distribució de punts (2pts/3pts/TL), acumulat de tota la temporada.")
-    df_sj_arq = load_stats_jugador_db()
-    if df_sj_arq.empty or len(df_sj_arq) < 5:
-        st.info("Carrega més partits per generar arquetips fiables (mínim recomanat: 3-5 partits).")
-    else:
-        col_j_arq = "jugador" if "jugador" in df_sj_arq.columns else "jugadora"
-        agg_arq = df_sj_arq.groupby(col_j_arq).agg(
-            equip=("equip_nom","first"),
-            punts=("punts","sum"),
-            c2=("cistelles_2","sum"),
-            c3=("cistelles_3","sum"),
-            tl=("tirs_lliures","sum"),
-            minuts=("minuts","sum") if "minuts" in df_sj_arq.columns else ("punts","count"),
-            partits=("match_id","nunique"),
-            usage=("usage_rate","mean") if "usage_rate" in df_sj_arq.columns else ("punts","mean"),
-            impacte=("impacte","sum")
-        ).reset_index()
-        agg_arq["pts2"] = agg_arq["c2"]*2
-        agg_arq["pts3"] = agg_arq["c3"]*3
-        agg_arq["ptstl"] = agg_arq["tl"]
-        agg_arq["pts_tot"] = agg_arq["pts2"]+agg_arq["pts3"]+agg_arq["ptstl"]
-        agg_arq["p2_pct"] = (agg_arq["pts2"]/agg_arq["pts_tot"].replace(0,1)*100).round(1)
-        agg_arq["p3_pct"] = (agg_arq["pts3"]/agg_arq["pts_tot"].replace(0,1)*100).round(1)
-        agg_arq["ptl_pct"] = (agg_arq["ptstl"]/agg_arq["pts_tot"].replace(0,1)*100).round(1)
-        agg_arq["usage_pct"] = agg_arq["usage"].round(1) if "usage_rate" in df_sj_arq.columns else 0
-        agg_arq["min_p"] = (agg_arq["minuts"]/agg_arq["partits"].replace(0,1)).round(1)
-        agg_arq["Arquetip"] = agg_arq.apply(
-            lambda r: classifica_arquetip_global(r["usage_pct"], r["p2_pct"], r["p3_pct"], r["ptl_pct"], r["min_p"]),
-            axis=1)
-        df_show_arq = agg_arq.rename(columns={col_j_arq:"jugador"})[
-            ["jugador","equip","partits","min_p","usage_pct","p2_pct","p3_pct","ptl_pct","Arquetip"]]
-        df_show_arq.columns = ["Jugadora","Equip","Partits","Min/P","Usage%","%Pts2","%Pts3","%PtsTL","Arquetip"]
-        df_show_arq = df_show_arq.sort_values("Usage%", ascending=False)
-        st.dataframe(df_show_arq, use_container_width=True, hide_index=True)
+with t_desc:
+    st.markdown(sec("📄 Informes en PDF"), unsafe_allow_html=True)
+    st.caption("Genera un PDF amb Quatre Factors, PPP per tipus d'inici de possessió i Clutch.")
 
-        st.markdown(sec("🔍 Anàlisi d'ecosistema — amb quins arquetips rendeix millor?"), unsafe_allow_html=True)
-        st.caption("Creua els quintets/parelles ja calculats amb els arquetips per veure quines combinacions d'estils funcionen millor juntes.")
+    col_pdf1, col_pdf2 = st.columns(2)
+    with col_pdf1:
+        st.markdown("**Últim partit carregat**")
+        st.caption(f"{nom_a} {fa} – {fb} {nom_b}")
+        if st.button("⬇ Generar PDF del partit", key="btn_pdf_partit"):
+            pdf_bytes = pdfx.genera_pdf_partit(df_orig, teams, team_names, match_id, nom_a, nom_b, fa, fb)
+            st.download_button(
+                label="📥 Clic per descarregar",
+                data=pdf_bytes,
+                file_name=f"informe_{match_id}.pdf",
+                mime="application/pdf",
+                key="dl_pdf_partit")
 
-        jug_eco = st.selectbox("Jugadora a analitzar", df_show_arq["Jugadora"].tolist(), key="jug_eco_arq")
-
-        if jug_eco:
-            arquetip_jug = df_show_arq[df_show_arq["Jugadora"]==jug_eco]["Arquetip"].values[0]
-
-            st.markdown(f'<div style="font-size:13px;font-weight:600;color:#185FA5;margin-bottom:8px">'
-                       f'{jug_eco} — <span style="color:#0C447C">{arquetip_jug}</span></div>', unsafe_allow_html=True)
-
-            ecosistema_rows = []
-            df_pr_eco = load_partits_db()
-
-            for _,p_eco in df_pr_eco.iterrows():
-                mid_eco = p_eco['match_id']
-                df_m_eco = load_jugades_db(mid_eco)
-                if df_m_eco.empty: continue
-                col_j_m = "jugador" if "jugador" in df_m_eco.columns else "jugadora"
-                df_m_eco["jugador"] = df_m_eco[col_j_m].fillna("")
-                if jug_eco not in df_m_eco["jugador"].values: continue
-
-                rows_par_eco = calc_pm_combinacions(df_m_eco, mode="parelles")
-                for r_par_eco in rows_par_eco:
-                    if jug_eco in r_par_eco["combinacio"]:
-                        altra = [j for j in r_par_eco["combinacio"] if j != jug_eco]
-                        if not altra: continue
-                        altra_jug = altra[0]
-                        ecosistema_rows.append({
-                            "company": altra_jug, "minuts": r_par_eco["minuts"],
-                            "pf": r_par_eco["pf"], "pc": r_par_eco["pc"]
-                        })
-
-            if ecosistema_rows:
-                df_eco = pd.DataFrame(ecosistema_rows)
-                eco_acum = df_eco.groupby("company").agg(
-                    minuts=("minuts","sum"), pf=("pf","sum"), pc=("pc","sum")
-                ).reset_index()
-                eco_acum["pm"] = eco_acum["pf"]-eco_acum["pc"]
-                eco_acum["pm_min"] = (eco_acum["pm"]/eco_acum["minuts"].replace(0,1)).round(3)
-
-                arq_map = dict(zip(df_show_arq["Jugadora"], df_show_arq["Arquetip"]))
-                eco_acum["Arquetip company"] = eco_acum["company"].map(arq_map).fillna("—")
-
-                eco_per_arq = eco_acum.groupby("Arquetip company").agg(
-                    minuts=("minuts","sum"), pf=("pf","sum"), pc=("pc","sum")
-                ).reset_index()
-                eco_per_arq["pm"] = eco_per_arq["pf"]-eco_per_arq["pc"]
-                eco_per_arq["pm_min"] = (eco_per_arq["pm"]/eco_per_arq["minuts"].replace(0,1)).round(3)
-                eco_per_arq = eco_per_arq[eco_per_arq["minuts"]>=2].sort_values("pm_min", ascending=False)
-
-                if not eco_per_arq.empty:
-                    colors_eco = ["#16a34a" if v>=0 else "#dc2626" for v in eco_per_arq["pm_min"]]
-                    fig_eco = go.Figure()
-                    fig_eco.add_trace(go.Bar(
-                        y=eco_per_arq["Arquetip company"], x=eco_per_arq["pm_min"], orientation='h',
-                        marker_color=colors_eco,
-                        text=[f"{'+'if v>=0 else ''}{v:.3f}" for v in eco_per_arq["pm_min"]],
-                        textposition="outside", customdata=eco_per_arq["minuts"],
-                        hovertemplate="<b>%{y}</b><br>+/- per min: %{x:+.3f}<br>Minuts junts: %{customdata:.1f}<extra></extra>"
-                    ))
-                    fig_eco.add_vline(x=0, line_dash="solid", line_color="#e2e4e8")
-                    fig_eco.update_xaxes(title="+/- per minut quan juguen junts")
-                    st.plotly_chart(chart_style(fig_eco, max(250, len(eco_per_arq)*40),
-                        f"{jug_eco} — rendiment segons l'arquetip del company"), use_container_width=True)
-
-                    millor_arq = eco_per_arq.iloc[0]
-                    pitjor_arq = eco_per_arq.iloc[-1]
-                    st.info(f"📊 **{jug_eco}** rendeix millor amb perfils **{millor_arq['Arquetip company']}** "
-                            f"({millor_arq['pm_min']:+.3f}/min, {millor_arq['minuts']:.0f} min junts) i pitjor amb "
-                            f"**{pitjor_arq['Arquetip company']}** ({pitjor_arq['pm_min']:+.3f}/min, {pitjor_arq['minuts']:.0f} min junts).")
-
-                    with st.expander("Veure detall per companya individual"):
-                        eco_detall = eco_acum[["company","Arquetip company","minuts","pm","pm_min"]].sort_values("pm_min", ascending=False)
-                        eco_detall.columns = ["Companya","Arquetip","Min junts","+/-","+/- per min"]
-                        st.dataframe(eco_detall, use_container_width=True, hide_index=True)
-                else:
-                    st.info("No hi ha prou minuts compartits amb altres jugadores per fer l'anàlisi.")
+    with col_pdf2:
+        st.markdown("**Tota la temporada**")
+        df_hist_desc = load_partits_db()
+        st.caption(f"{len(df_hist_desc)} partits carregats")
+        if st.button("⬇ Generar PDF de temporada", key="btn_pdf_temporada"):
+            pdf_temp_bytes = pdfx.genera_pdf_temporada()
+            if pdf_temp_bytes:
+                st.download_button(
+                    label="📥 Clic per descarregar",
+                    data=pdf_temp_bytes,
+                    file_name=f"informe_temporada_{datetime.now().strftime('%Y%m%d')}.pdf",
+                    mime="application/pdf",
+                    key="dl_pdf_temporada")
             else:
-                st.info("No hi ha dades suficients de parelles per a aquesta jugadora.")
+                st.info("No hi ha partits a la base de dades.")
+
+    st.markdown(sec("📊 Informes en Excel"), unsafe_allow_html=True)
+    st.caption("Excel amb totes les mètriques avançades (moltes pestanyes) o el resum estàndard de temporada.")
+
+    col_xl1, col_xl2 = st.columns(2)
+    with col_xl1:
+        st.markdown("**Anàlisi complet**")
+        if st.button("⬇ Generar Excel d'anàlisi complet", key="btn_excel_analisi_lf2"):
+            excel_data = genera_excel_analisi()
+            if excel_data:
+                st.download_button(
+                    label="📥 Clic per descarregar", data=excel_data,
+                    file_name=f"analitica_lf2_analisi_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="dl_excel_analisi_lf2")
+            else:
+                st.info("No hi ha partits a la base de dades.")
+
+    with col_xl2:
+        st.markdown("**Resum de temporada**")
+        if st.button("⬇ Generar Excel de temporada", key="btn_excel_temp_lf2"):
+            excel_temp_data = genera_excel_temporada()
+            if excel_temp_data:
+                st.download_button(
+                    label="📥 Clic per descarregar", data=excel_temp_data,
+                    file_name=f"analitica_lf2_temporada_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="dl_excel_temp_lf2")
+            else:
+                st.info("No hi ha partits a la base de dades.")
 
 
 with t9:
@@ -1998,6 +2179,40 @@ with t9:
             columns={"match_id":"ID","nom_a":"Local","nom_b":"Visitant","score_a":"Pts A","score_b":"Pts B",
                      "data_consulta":"Carregat"}), use_container_width=True, hide_index=True)
 
+        st.markdown(sec("📊 Equip — acumulat de temporada"), unsafe_allow_html=True)
+        st.caption(
+            "Sumat de tots els partits carregats (no és mitjana de percentatges per partit): "
+            "%2, %3, %TL, eFG%, pèrdues/partit, %Rebots, possessions/partit, OffRtg, DefRtg, NetRtg."
+        )
+        df_season = cff.calc_team_season_summary(df_hist)
+        if not df_season.empty:
+            st.dataframe(df_season.sort_values("NetRtg", ascending=False),
+                use_container_width=True, hide_index=True)
+        else:
+            st.info("No hi ha prou dades per calcular l'acumulat de temporada.")
+
+        st.markdown(sec("🗑️ Gestionar l'històric"), unsafe_allow_html=True)
+        col_del1, col_del2 = st.columns([2, 1])
+        with col_del1:
+            del_id = st.selectbox("Eliminar un partit concret", df_hist["match_id"].tolist(),
+                format_func=lambda x: f"{df_hist[df_hist['match_id']==x]['nom_a'].values[0]} vs "
+                                       f"{df_hist[df_hist['match_id']==x]['nom_b'].values[0]}",
+                key="del_hist_lf2")
+        with col_del2:
+            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+            if st.button("🗑 Eliminar", key="btn_del_lf2"):
+                esborra_partit_lf2(del_id)
+                st.success("Partit eliminat.")
+                st.rerun()
+
+        with st.expander("⚠️ Esborrar TOT l'històric"):
+            st.caption("Elimina tots els partits, jugadores i estadístiques desades. Aquesta acció no es pot desfer.")
+            confirmar = st.checkbox("Confirmo que vull esborrar tot l'històric", key="confirma_esborrat_total")
+            if st.button("🗑 Esborrar tot", key="btn_esborra_tot", disabled=not confirmar):
+                esborra_tot_historic_lf2()
+                st.success("Històric esborrat.")
+                st.rerun()
+
         st.markdown(sec("🏆 Win Shares de temporada"), unsafe_allow_html=True)
         if len(df_hist) < 2:
             st.caption("Calen almenys 2 partits carregats per a una referència de lliga mínimament fiable.")
@@ -2009,15 +2224,3 @@ with t9:
                 ["jugador","equip","partits","minuts","punts","OWS","DWS","WS","ws_per40","Arquetip"]]
             st.dataframe(df_ws_show.rename(columns={"jugador":"Jugadora","equip":"Equip","partits":"PJ",
                 "minuts":"Min","punts":"Pts","ws_per40":"WS/40"}), use_container_width=True, hide_index=True)
-
-        st.markdown(sec("Exporta la temporada a Excel"), unsafe_allow_html=True)
-        if st.button("⬇ Descarregar Excel de temporada", key="btn_excel_temp_lf2"):
-            excel_temp_data = genera_excel_temporada()
-            if excel_temp_data:
-                st.download_button(
-                    label="📥 Clic per descarregar", data=excel_temp_data,
-                    file_name=f"analitica_lf2_temporada_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="dl_excel_temp_lf2")
-            else:
-                st.info("No hi ha partits a la base de dades.")

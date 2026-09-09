@@ -210,7 +210,7 @@ with st.sidebar:
     with st.expander("📋 Carregar múltiples partits", expanded=False):
         st.caption("Enganxa una URL o ID per línia. S'intentaran carregar tots.")
         urls_multi = st.text_area("URLs / IDs (un per línia)", height=120,
-                                   placeholder="69ec95d4339c3d0001f523a1\n6a1c25041cc34c000132763e\nhttps://www.basquetcatala.cat/...")
+                                   placeholder="e8b20041-39ef-44a1-8fee-69fdeb0b0702\nhttps://www.basquetcatala.cat/estadistica/partit/...")
         carregar_multi = st.button("⬇ Carregar tots", use_container_width=True, key="btn_multi")
         if carregar_multi and urls_multi.strip():
             linies = [l.strip() for l in urls_multi.strip().split("\n") if l.strip()]
@@ -318,7 +318,7 @@ if st.session_state.df is None:
         <div style="font-size:64px">🏀</div>
         <h1 style="font-size:38px;font-weight:600;color:#1a1c22;margin:16px 0 8px">Analítica</h1>
         <p style="color:#6b7280;font-size:15px">Enganxa la URL o l'ID d'un partit al panell esquerre i prem Carregar.</p>
-        <p style="color:#d1d5db;font-size:12px;margin-top:32px">Exemple: 69ec95d4339c3d0001f523a1</p>
+        <p style="color:#d1d5db;font-size:12px;margin-top:32px">Exemple: e8b20041-39ef-44a1-8fee-69fdeb0b0702</p>
     </div>""", unsafe_allow_html=True)
     st.stop()
 
