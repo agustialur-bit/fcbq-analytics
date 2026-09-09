@@ -9,8 +9,12 @@ from datetime import datetime
 st.set_page_config(page_title="Analítica", page_icon="🏀", layout="wide", initial_sidebar_state="expanded")
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "historic.db")
-API_BASE = "https://msstats.optimalwayconsulting.com/v1/fcbq/getJsonWithMatchMoves/{match_id}?currentSeason=true"
-WEB_BASE = "https://www.basquetcatala.cat/estadistiques/2025/{match_id}"
+# NOU (2026): la FCBQ va canviar l'API. L'ID de partit ara és un UUID (no un
+# hexadecimal de 24 car.), i getJsonWithMatchMoves ja no existeix — se separa
+# en dos endpoints nous (stats + pbp). Vegeu extract_match_id/fetch_and_parse.
+STATS_URL = "https://msstats.optimalwayconsulting.com/v1/fcbq/matches/{match_id}/stats?currentSeason=true"
+PBP_URL = "https://msstats.optimalwayconsulting.com/v1/fcbq/matches/{match_id}/pbp?currentSeason=true"
+WEB_BASE = "https://www.basquetcatala.cat/estadistica/partit/{match_id}"
 COLOR_A, COLOR_B = "#185FA5", "#993C1D"
 
 import analitica_core as core
@@ -97,87 +101,148 @@ migrate_db()
 # FETCH
 # ══════════════════════════════════════════════════
 def extract_match_id(text):
-    m = re.search(r"/([a-f0-9]{24})(?:\?|$)", text)
+    """Extreu l'UUID del partit d'una URL de basquetcatala.cat/estadistica/partit/{uuid}
+    (format nou des de 2026; abans era un hexadecimal de 24 caràcters)."""
+    m = re.search(r"/partit/([0-9a-fA-F-]{36})", text)
     if m: return m.group(1)
-    if re.match(r"^[a-f0-9]{24}$", text.strip()): return text.strip()
+    if re.match(r"^[0-9a-fA-F-]{36}$", text.strip()): return text.strip()
     return None
 
+_PUNTS_PER_CODE = {"D1": 1, "D2": 2, "D3": 3}
+_ACCIO_MADE = {"D1": "Cistella de 1", "D2": "Cistella de 2", "D3": "Cistella de 3"}
+
+def _fetch_json_new(url, match_id):
+    req = urllib.request.Request(url.format(match_id=match_id), headers={
+        "User-Agent": "Mozilla/5.0", "Accept": "application/json",
+        "Referer": f"https://www.basquetcatala.cat/estadistica/partit/{match_id}"})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return json.loads(resp.read())
+
+def _detecta_equips_new(data_stats, events):
+    """Noms d'equip del boxscore (period=0, totals) + quin teamUuid és 'local'
+    segons quin fa pujar localScore als esdeveniments D1/D2/D3 (mètode robust:
+    no cal que el boxscore exposi l'uuid de l'equip explícitament)."""
+    boxscore = data_stats.get("boxscore", [])
+    totals = next((b for b in boxscore if b.get("period") == 0), boxscore[0] if boxscore else {})
+    nom_local = totals.get("local", {}).get("name", "Local")
+    nom_visitor = totals.get("visitor", {}).get("name", "Visitant")
+    id_local, id_visitor = None, None
+    prev_local, prev_visitor = 0, 0
+    for ev in events:
+        if ev.get("eventTypeCode") not in ("D1", "D2", "D3"): continue
+        cur_local = ev.get("localScore", prev_local)
+        cur_visitor = ev.get("visitorScore", prev_visitor)
+        if cur_local > prev_local and id_local is None: id_local = ev.get("teamUuid")
+        if cur_visitor > prev_visitor and id_visitor is None: id_visitor = ev.get("teamUuid")
+        prev_local, prev_visitor = cur_local, cur_visitor
+        if id_local and id_visitor: break
+    return nom_local, nom_visitor, id_local, id_visitor
+
 def fetch_and_parse(match_id):
-    # Prova amb currentSeason=true i sense (per compatibilitat entre temporades)
-    urls_a_provar = [
-        API_BASE.format(match_id=match_id),
-        API_BASE.format(match_id=match_id).replace("currentSeason=true","currentSeason=false"),
-        f"https://msstats.optimalwayconsulting.com/v1/fcbq/getJsonWithMatchMoves/{match_id}",
-    ]
-    # Referers possibles — prova tots dos formats de URL
-    referers = [
-        f"https://www.basquetcatala.cat/competicions-anteriors/resultat/estadistiques/2025/{match_id}",
-        f"https://www.basquetcatala.cat/estadistiques/2025/{match_id}",
-        f"https://www.basquetcatala.cat/estadistiques/2024/{match_id}",
-        f"https://www.basquetcatala.cat/",
-    ]
-    data = None
-    for url in urls_a_provar:
-        for referer in referers:
-            try:
-                req = urllib.request.Request(url, headers={
-                    "User-Agent":"Mozilla/5.0","Accept":"application/json",
-                    "Referer": referer})
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    data = json.loads(resp.read())
-                if data: break
-            except: continue
-        if data: break
-    if not data: raise Exception("No s'ha pogut obtenir dades de l'API")
+    """Descarrega i normalitza un partit amb la nova API de la FCBQ (2026).
 
-    if isinstance(data, list): data = {"moves": data}
-    raw = data.get("moves") or data.get("matchMoves") or data.get("playByPlay") or []
-    if not raw:
-        for v in data.values():
-            if isinstance(v,list) and len(v)>3: raw=v; break
+    Combina dos endpoints:
+      - .../stats  -> noms d'equip (boxscore period=0) i shotChart (tirs de
+        camp amb x/y/type/made/dorsal, sense hora exacta)
+      - .../pbp    -> play-by-play amb hora exacta: períodes, substitucions,
+        temps morts, cistelles CONVERTIDES (D1=TL,D2=2pts,D3=3pts) i faltes.
 
-    # Detecta els noms de camps reals del primer element
-    camp_equip = "idTeam"
-    camp_jugador = "actorName"
-    camp_accio = "move"
-    camp_dorsal = "actorShirtNumber"
-    camp_score = "score"
-    camp_period = "period"
-    if raw and isinstance(raw[0], dict):
-        primer = raw[0]
-        # Camp equip
-        for c in ["idTeam","teamId","id_team","idEquip","equipId","team_id","idequip"]:
-            if c in primer: camp_equip = c; break
-        # Camp jugador
-        for c in ["actorName","playerName","jugador","actor_name","name","player"]:
-            if c in primer: camp_jugador = c; break
-        # Camp acció
-        for c in ["move","action","accio","moveText","actionText","description"]:
-            if c in primer: camp_accio = c; break
-        # Camp dorsal
-        for c in ["actorShirtNumber","shirtNumber","dorsal","shirt_number","number"]:
-            if c in primer: camp_dorsal = c; break
-        # Camp marcador
-        for c in ["score","marcador","scoreText","currentScore"]:
-            if c in primer: camp_score = c; break
-        # Camp periode
-        for c in ["period","quart","quarter","cuarto"]:
-            if c in primer: camp_period = c; break
+    LIMITACIONS CONEGUDES (a verificar amb partits reals):
+      - No hi ha esdeveniments de rebot, pèrdua, robatori, assistència ni tap
+        al pbp. Aquestes columnes sortiran a 0 fins que no es trobi una altra
+        font (potser el boxscore per jugadora, encara per revisar).
+      - El shotChart sembla cobrir només tirs de camp (2/3). No s'hi han vist
+        tirs lliures fallats, així que TL% pot sortir incomplet (només compta
+        els convertits, via D1).
+
+    Retorna un DataFrame amb df.attrs["nom_local"]/["nom_visitor"] afegits.
+    """
+    data_stats = _fetch_json_new(STATS_URL, match_id)
+    data_pbp = _fetch_json_new(PBP_URL, match_id)
+    events = data_pbp.get("playByPlay", [])
+    if not events:
+        raise Exception("Aquest partit no té jugades (pbp buit)")
+
+    nom_local, nom_visitor, id_local, id_visitor = _detecta_equips_new(data_stats, events)
+    if not id_local or not id_visitor:
+        raise Exception("No s'ha pogut determinar quin equip és local/visitant a partir del pbp.")
 
     rows = []
-    for i,play in enumerate(raw):
-        if not isinstance(play,dict): continue
-        mn=play.get("min",""); sc=play.get("sec","")
-        temps=f"{int(mn):02d}:{int(sc):02d}" if mn!="" and sc!="" else str(mn)
-        move=play.get(camp_accio,"")
-        punts=3 if "Cistella de 3" in move else (2 if "Cistella de 2" in move else (1 if ("Cistella de 1" in move or "Tir lliure convertit" in move) else 0))
-        rows.append({"num":i+1,"quart":play.get(camp_period,""),"temps":temps,
-            "min_num":float(mn)+float(sc)/60 if mn!="" else 0,
-            "idEquip":str(play.get(camp_equip,"")),"dorsal":play.get(camp_dorsal,""),
-            "jugador":play.get(camp_jugador,""),"accio":move,
-            "marcador":play.get(camp_score,""),"punts":punts,
-            "teamAction":play.get("teamAction",False)})
-    return pd.DataFrame(rows)
+    num = 0
+    score_a = score_b = 0
+    for ev in events:
+        code = ev.get("eventTypeCode")
+        if code in ("INIPER", "FINPER"):
+            continue
+        period = ev.get("period", 1)
+        minute = ev.get("minute", 0) or 0
+        second = ev.get("second", 0) or 0
+        min_num = float(minute) + float(second) / 60
+        team_uuid = ev.get("teamUuid") or ""
+        dorsal = ev.get("dorsal", "")
+        jugador = ev.get("actorName", "")
+
+        accio = None
+        punts = 0
+        if code == "IN":
+            accio = "Entra al camp"
+        elif code == "OUT":
+            accio = "Surt del camp"
+        elif code == "TM":
+            accio = "Temps mort"
+        elif code in ("D1", "D2", "D3"):
+            accio = _ACCIO_MADE[code]
+            punts = _PUNTS_PER_CODE[code]
+        elif code == "F1":
+            accio = "Falta comesa"
+        else:
+            # "P" (intent, gestionat via shotChart), "P1"/"P2" (detall del
+            # tipus de falta, ja comptat via F1) — no generem fila pròpia.
+            continue
+
+        if team_uuid == id_local:
+            score_a += punts
+        elif team_uuid == id_visitor:
+            score_b += punts
+
+        num += 1
+        rows.append({
+            "num": num, "quart": period, "temps": f"{minute}:{second:02d}",
+            "min_num": min_num, "idEquip": team_uuid, "dorsal": dorsal, "jugador": jugador,
+            "accio": accio, "marcador": f"{score_a}-{score_b}", "punts": punts,
+            "teamAction": False,
+        })
+
+    # Intents FALLATS de tir de camp: el pbp no distingeix 2 vs 3 quan es
+    # falla, així que es reconstrueixen des del shotChart (que sí que ho fa).
+    # No tenen hora exacta (només 'period'), així que no afecten minuts ni
+    # rotacions (que depenen només de IN/OUT) — només els comptadors %2/%3.
+    shot_chart = data_stats.get("shotChart", {})
+    for costat, id_equip in [("local", id_local), ("visitor", id_visitor)]:
+        for tir in shot_chart.get(costat, []):
+            if tir.get("made"):
+                continue  # les fetes ja venen del pbp (D2/D3), amb hora exacta
+            tipus = tir.get("type", "")
+            if tipus == "T2":
+                accio_m = "Intent fallat de 2"
+            elif tipus == "T3":
+                accio_m = "Intent fallat de 3"
+            else:
+                continue
+            num += 1
+            rows.append({
+                "num": num, "quart": tir.get("period", 1), "temps": "", "min_num": 0.0,
+                "idEquip": id_equip, "dorsal": tir.get("dorsal", ""),
+                "jugador": tir.get("actorName", ""), "accio": accio_m,
+                "marcador": "", "punts": 0, "teamAction": False,
+            })
+
+    df = pd.DataFrame(rows)
+    df.attrs["nom_local"] = nom_local
+    df.attrs["nom_visitor"] = nom_visitor
+    df.attrs["id_local"] = id_local
+    df.attrs["id_visitor"] = id_visitor
+    return df
 
 # ══════════════════════════════════════════════════
 # HELPERS
@@ -202,29 +267,39 @@ with st.sidebar:
     with st.expander("📋 Carregar múltiples partits", expanded=False):
         st.caption("Enganxa una URL o ID per línia. S'intentaran carregar tots.")
         urls_multi = st.text_area("URLs / IDs (un per línia)", height=120,
-                                   placeholder="69ec95d4339c3d0001f523a1\n6a1c25041cc34c000132763e\nhttps://www.basquetcatala.cat/...")
+                                   placeholder="e8b20041-39ef-44a1-8fee-69fdeb0b0702\nhttps://www.basquetcatala.cat/estadistica/partit/...")
         carregar_multi = st.button("⬇ Carregar tots", use_container_width=True, key="btn_multi")
         if carregar_multi and urls_multi.strip():
             linies = [l.strip() for l in urls_multi.strip().split("\n") if l.strip()]
             ok = 0; errors = []
             progress = st.progress(0)
             for i, linia in enumerate(linies):
-                # Extreu l'ID de la URL si cal
-                mid_multi = linia.split("/")[-1].strip() if "/" in linia else linia.strip()
-                mid_multi = mid_multi.split("?")[0].strip()
+                mid_multi = extract_match_id(linia) or linia.strip()
                 try:
-                    df_m, teams_m, team_names_m = fetch_and_parse(mid_multi)
+                    df_m = fetch_and_parse(mid_multi)
                     if df_m is not None and not df_m.empty:
-                        ts_m = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        save_jugades(mid_multi, ts_m, df_m)
-                        save_stats_jugador(mid_multi, ts_m, df_m, teams_m, team_names_m)
-                        save_shots_zones(mid_multi, ts_m, df_m, teams_m)
-                        save_timeouts(mid_multi, ts_m, df_m, teams_m)
+                        teams_m = get_teams_ordered(df_m)
+                        noms_guardats_m = load_noms_equips()
+                        autos_m = [df_m.attrs.get("nom_local", ""), df_m.attrs.get("nom_visitor", "")]
+                        team_names_m = {}
+                        for j, tid_m in enumerate(teams_m[:2]):
+                            nom_auto_m = autos_m[j] if j < len(autos_m) else ""
+                            if nom_auto_m:
+                                save_nom_equip(tid_m, nom_auto_m); team_names_m[tid_m] = nom_auto_m
+                            elif tid_m in noms_guardats_m:
+                                team_names_m[tid_m] = noms_guardats_m[tid_m]
+                            else:
+                                team_names_m[tid_m] = f"Equip {chr(65+j)}"
                         n_a = team_names_m.get(teams_m[0],"?") if teams_m else "?"
                         n_b = team_names_m.get(teams_m[1],"?") if len(teams_m)>1 else "?"
-                        sa = int(df_m[df_m["idEquip"]==teams_m[0]]["punts"].sum()) if teams_m else 0
-                        sb = int(df_m[df_m["idEquip"]==teams_m[1]]["punts"].sum()) if len(teams_m)>1 else 0
-                        save_partit(mid_multi, ts_m, n_a, n_b, sa, sb)
+                        id_a_m = teams_m[0] if teams_m else ""
+                        id_b_m = teams_m[1] if len(teams_m)>1 else ""
+                        sdf_m = score_evo(df_m); sa, sb = final_score(sdf_m)
+                        ts_m = datetime.now().strftime("%Y-%m-%d %H:%M")
+                        save_partit(mid_multi, df_m, n_a, n_b, id_a_m, id_b_m, sa, sb)
+                        save_stats_jugador(mid_multi, ts_m, df_m, teams_m, team_names_m)
+                        save_shots_zones(mid_multi, ts_m, df_m, team_names_m)
+                        save_timeouts(mid_multi, ts_m, df_m, team_names_m)
                         ok += 1
                     else:
                         errors.append(f"No trobat: {mid_multi[:20]}")
@@ -273,15 +348,20 @@ if carregar and url_input:
                 df = fetch_and_parse(mid)
                 teams_tmp = get_teams_ordered(df)
                 noms_guardats = load_noms_equips()
-                def get_nom(i, tid, input_nom):
+                # Prioritat: input manual > detectat automàticament (nou) > guardat > "Equip X"
+                autos_tmp = [df.attrs.get("nom_local", ""), df.attrs.get("nom_visitor", "")]
+                def get_nom(i, tid, input_nom, nom_auto=""):
                     if input_nom and input_nom.strip():
                         save_nom_equip(tid, input_nom.strip()); return input_nom.strip()
+                    if nom_auto:
+                        save_nom_equip(tid, nom_auto); return nom_auto
                     if tid in noms_guardats: return noms_guardats[tid]
                     return f"Equip {chr(65+i)}"
                 noms = {}
                 inputs = [nom_equip_1, nom_equip_2]
                 for i,tid in enumerate(teams_tmp[:2]):
-                    noms[tid] = get_nom(i, tid, inputs[i] if i<len(inputs) else "")
+                    noms[tid] = get_nom(i, tid, inputs[i] if i<len(inputs) else "",
+                                         autos_tmp[i] if i<len(autos_tmp) else "")
                 id_a = teams_tmp[0] if teams_tmp else ""
                 id_b = teams_tmp[1] if len(teams_tmp)>1 else ""
                 sdf = score_evo(df); fa,fb = final_score(sdf)
@@ -305,7 +385,7 @@ if st.session_state.df is None:
         <div style="font-size:64px">🏀</div>
         <h1 style="font-size:38px;font-weight:600;color:#1a1c22;margin:16px 0 8px">Analítica</h1>
         <p style="color:#6b7280;font-size:15px">Enganxa la URL o l'ID d'un partit al panell esquerre i prem Carregar.</p>
-        <p style="color:#d1d5db;font-size:12px;margin-top:32px">Exemple: 69ec95d4339c3d0001f523a1</p>
+        <p style="color:#d1d5db;font-size:12px;margin-top:32px">Exemple: e8b20041-39ef-44a1-8fee-69fdeb0b0702</p>
     </div>""", unsafe_allow_html=True)
     st.stop()
 
