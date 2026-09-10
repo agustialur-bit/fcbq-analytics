@@ -2107,14 +2107,13 @@ with t7:
 
 with t_desc:
     st.markdown(sec("📄 Informes en PDF"), unsafe_allow_html=True)
-    st.caption("Genera un PDF amb Comparació d'equips, Quatre Factors, PPP per tipus d'inici de "
-               "possessió, Box Score complet, Impacte en pista, On/Off Rating, ROT, Parelles, "
-               "Quintets i Clutch.")
 
     col_pdf1, col_pdf2 = st.columns(2)
     with col_pdf1:
         st.markdown("**Últim partit carregat**")
         st.caption(f"{nom_a} {fa} – {fb} {nom_b}")
+        st.caption("Comparació d'equips, Quatre Factors, PPP per tipus d'inici de possessió, "
+                   "Box Score complet, Impacte en pista, On/Off Rating, ROT, Parelles, Quintets i Clutch.")
         if st.button("⬇ Generar PDF del partit", key="btn_pdf_partit"):
             pdf_bytes = pdfx.genera_pdf_partit(df_orig, teams, team_names, match_id, nom_a, nom_b, fa, fb)
             st.download_button(
@@ -2128,6 +2127,8 @@ with t_desc:
         st.markdown("**Tota la temporada**")
         df_hist_desc = load_partits_db()
         st.caption(f"{len(df_hist_desc)} partits carregats")
+        st.caption("Equips (Quatre Factors + TS/eFG/Rtg), Rànquing amb TS%/eFG%, Win Shares, "
+                   "On/Off Rating agregat i Usage% vs Pts/40min.")
         if st.button("⬇ Generar PDF de temporada", key="btn_pdf_temporada"):
             pdf_temp_bytes = pdfx.genera_pdf_temporada()
             if pdf_temp_bytes:

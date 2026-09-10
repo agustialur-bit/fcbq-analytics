@@ -9,6 +9,7 @@ més avall), només maqueta el que ja existeix en un PDF descarregable.
 import io
 from datetime import datetime
 
+import pandas as pd
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
@@ -70,7 +71,7 @@ def _tbl(data, widths, font_size=9):
 
 
 def _na(v, fmt=None):
-    if v is None:
+    if v is None or (isinstance(v, float) and pd.isna(v)):
         return "—"
     return format(v, fmt) if fmt else v
 
@@ -175,6 +176,106 @@ def _fmt_pm(v):
     if v is None:
         return "—"
     return f"{'+' if v >= 0 else ''}{v}"
+
+
+# ══════════════════════════════════════════════════
+# Agregacions per al PDF de temporada
+# ══════════════════════════════════════════════════
+
+def _team_season_four_factors(df_partits):
+    """Quatre Factors (Dean Oliver) + TS%/eFG%/OffRtg/DefRtg/NetRtg acumulats
+    de temporada per equip — mateixes fórmules que calc_four_factors() (un sol
+    partit), sumant encerts/intents/possessions de tots els partits abans de
+    dividir (no mitjana de percentatges per partit). Clau d'agregació = NOM
+    d'equip, no idEquip (intern i no estable entre partits)."""
+    if df_partits.empty:
+        return pd.DataFrame()
+
+    acum = {}
+    for _, p in df_partits.iterrows():
+        df_m = core.load_jugades_db(p["match_id"])
+        if df_m.empty:
+            continue
+        teams_m = core.get_teams_ordered(df_m)
+        if len(teams_m) < 2:
+            continue
+        tn_m = {str(teams_m[0]): p["nom_a"], str(teams_m[1]): p["nom_b"]}
+
+        for i, tid in enumerate(teams_m[:2]):
+            rival_id = teams_m[1 - i]
+            df_eq = df_m[df_m["idEquip"].astype(str) == str(tid)]
+            df_riv = df_m[df_m["idEquip"].astype(str) == str(rival_id)]
+            nom_eq = tn_m.get(str(tid), "?")
+
+            fgm2 = int(df_eq["accio"].str.contains("Cistella de 2", case=False, na=False).sum())
+            fga2 = fgm2 + int(df_eq["accio"].str.contains("Intent fallat de 2", case=False, na=False).sum())
+            fgm3 = int(df_eq["accio"].str.contains("Cistella de 3", case=False, na=False).sum())
+            fga3 = fgm3 + int(df_eq["accio"].str.contains("Intent fallat de 3", case=False, na=False).sum())
+            ftm = int(df_eq["accio"].str.contains("Cistella de 1", case=False, na=False).sum())
+            fta = ftm + int(df_eq["accio"].str.contains("Intent fallat de 1", case=False, na=False).sum())
+            tov = int(df_eq["accio"].str.contains("Pèrdua", case=False, na=False).sum())
+            oreb = int(df_eq["accio"].str.contains("Rebot ofensiu", case=False, na=False).sum())
+            dreb = int(df_eq["accio"].str.contains("Rebot defensiu", case=False, na=False).sum())
+            oreb_riv = int(df_riv["accio"].str.contains("Rebot ofensiu", case=False, na=False).sum())
+            dreb_riv = int(df_riv["accio"].str.contains("Rebot defensiu", case=False, na=False).sum())
+            pts = int(df_eq["punts"].sum())
+            pts_riv = int(df_riv["punts"].sum())
+            poss = core.calc_possessions(df_eq, poss_mode="full")
+            poss_riv = core.calc_possessions(df_riv, poss_mode="full")
+
+            a = acum.setdefault(nom_eq, dict(partits=0, fgm2=0, fga2=0, fgm3=0, fga3=0, ftm=0, fta=0,
+                                              tov=0, oreb=0, dreb=0, oreb_riv=0, dreb_riv=0,
+                                              pts=0, pts_riv=0, poss=0.0, poss_riv=0.0))
+            a["partits"] += 1
+            a["fgm2"] += fgm2; a["fga2"] += fga2
+            a["fgm3"] += fgm3; a["fga3"] += fga3
+            a["ftm"] += ftm; a["fta"] += fta
+            a["tov"] += tov
+            a["oreb"] += oreb; a["dreb"] += dreb
+            a["oreb_riv"] += oreb_riv; a["dreb_riv"] += dreb_riv
+            a["pts"] += pts; a["pts_riv"] += pts_riv
+            a["poss"] += poss; a["poss_riv"] += poss_riv
+
+    rows = []
+    for nom_eq, a in acum.items():
+        fga_tot = a["fga2"] + a["fga3"]
+        fgm_tot = a["fgm2"] + a["fgm3"]
+        efg = round((fgm_tot + 0.5 * a["fgm3"]) / fga_tot * 100, 1) if fga_tot > 0 else None
+        ts = round(a["pts"] / (2 * (fga_tot + 0.44 * a["fta"])) * 100, 1) if (fga_tot or a["fta"]) else None
+        plays = fga_tot + 0.44 * a["fta"] + a["tov"]
+        tov_pct = round(a["tov"] / plays * 100, 1) if plays > 0 else None
+        or_pct = round(a["oreb"] / (a["oreb"] + a["dreb_riv"]) * 100, 1) if (a["oreb"] + a["dreb_riv"]) > 0 else None
+        dr_pct = round(a["dreb"] / (a["dreb"] + a["oreb_riv"]) * 100, 1) if (a["dreb"] + a["oreb_riv"]) > 0 else None
+        ft_tci = round(a["fta"] / fga_tot, 2) if fga_tot > 0 else None
+        off_rtg = round(a["pts"] / a["poss"] * 100, 1) if a["poss"] > 0 else None
+        def_rtg = round(a["pts_riv"] / a["poss_riv"] * 100, 1) if a["poss_riv"] > 0 else None
+        net_rtg = round(off_rtg - def_rtg, 1) if (off_rtg is not None and def_rtg is not None) else None
+        rows.append({
+            "Equip": nom_eq, "Partits": a["partits"], "TS%": ts, "eFG%": efg, "TOV%": tov_pct,
+            "OR%": or_pct, "DR%": dr_pct, "FT/TCI": ft_tci,
+            "OffRtg": off_rtg, "DefRtg": def_rtg, "NetRtg": net_rtg,
+        })
+    return pd.DataFrame(rows)
+
+
+def _ranking_ts_efg(df_sz):
+    """TS%/eFG% acumulats per jugadora a partir de shots_zones (té encerts I
+    intents; stats_jugador només té encerts, no permet calcular-los)."""
+    cols = ["jugador", "equip_nom", "TS%", "eFG%"]
+    if df_sz.empty:
+        return pd.DataFrame(columns=cols)
+    agg = df_sz[df_sz["jugador"] != "__equip__"].groupby(["jugador", "equip_nom"]).agg(
+        v1m=("val1_made", "sum"), v1x=("val1_miss", "sum"),
+        v2m=("val2_made", "sum"), v2x=("val2_miss", "sum"),
+        v3m=("val3_made", "sum"), v3x=("val3_miss", "sum"),
+    ).reset_index()
+    fga = agg["v2m"] + agg["v2x"] + agg["v3m"] + agg["v3x"]
+    fta = agg["v1m"] + agg["v1x"]
+    pts = agg["v1m"] + 2 * agg["v2m"] + 3 * agg["v3m"]
+    denom_ts = 2 * (fga + 0.44 * fta)
+    agg["TS%"] = (pts / denom_ts.replace(0, float("nan")) * 100).round(1)
+    agg["eFG%"] = ((agg["v2m"] + 1.5 * agg["v3m"]) / fga.replace(0, float("nan")) * 100).round(1)
+    return agg[cols]
 
 
 def genera_pdf_partit(df_orig, teams, team_names, match_id, nom_a, nom_b, fa, fb):
@@ -411,19 +512,102 @@ def genera_pdf_temporada():
     t.setStyle(_taula_estil())
     elems.append(t)
 
+    # ── Equips — acumulat de temporada (Quatre Factors + TS/eFG/Rtg) ───────
+    df_teams_season = _team_season_four_factors(df_p)
+    if not df_teams_season.empty:
+        elems.append(Paragraph("Equips — acumulat de temporada", SUBTITOL))
+        elems.append(Paragraph(
+            "Suma de tots els partits carregats abans de dividir (no mitjana de percentatges per "
+            "partit). TOV% = pèrdues per possessió · OR%/DR% = rebot ofensiu/defensiu · "
+            "FT/TCI = tirs lliures per tir de camp.", NORMAL))
+        elems.append(Spacer(1, 4))
+        data = [["Equip", "PJ", "TS%", "eFG%", "TOV%", "OR%", "DR%", "FT/TCI", "OffRtg", "DefRtg", "NetRtg"]]
+        for _, r in df_teams_season.sort_values("NetRtg", ascending=False).iterrows():
+            data.append([_bp(r["Equip"]), r["Partits"], _na(r["TS%"]), _na(r["eFG%"]), _na(r["TOV%"]),
+                         _na(r["OR%"]), _na(r["DR%"]), _na(r["FT/TCI"]),
+                         _na(r["OffRtg"]), _na(r["DefRtg"]), _fmt_pm(r["NetRtg"])])
+        elems.append(_tbl(data, [38*mm, 9*mm, 11*mm, 11*mm, 12*mm, 11*mm, 11*mm, 12*mm, 12*mm, 12*mm, 12*mm],
+                           font_size=7))
+        elems.append(PageBreak())
+
+    # ── Rànquing de jugadores (complet, amb TS%/eFG%) ───────────────────────
     df_sj = core.load_stats_jugador_db()
+    df_sz = core.load_shots_zones_db()
     if not df_sj.empty:
-        elems.append(Paragraph("Rànquing de jugadores (top 20 per punts totals)", SUBTITOL))
+        elems.append(Paragraph("Rànquing de jugadores (top 30 per punts totals)", SUBTITOL))
         agg = df_sj.groupby(["jugador", "equip_nom"]).agg(
             Partits=("match_id", "nunique"), Punts=("punts", "sum"),
             C2=("cistelles_2", "sum"), C3=("cistelles_3", "sum"), TL=("tirs_lliures", "sum"),
-        ).reset_index().sort_values("Punts", ascending=False).head(20)
-        data = [["Jugadora", "Equip", "PJ", "Pts", "C2", "C3", "TL"]]
+        ).reset_index().sort_values("Punts", ascending=False).head(30)
+        df_ts_efg = _ranking_ts_efg(df_sz)
+        agg = agg.merge(df_ts_efg, on=["jugador", "equip_nom"], how="left")
+        data = [["Jugadora", "Equip", "PJ", "Pts", "C2", "C3", "TL", "TS%", "eFG%"]]
         for _, r in agg.iterrows():
-            data.append([r["jugador"], r["equip_nom"], r["Partits"], r["Punts"], r["C2"], r["C3"], r["TL"]])
-        t = Table(data, colWidths=[45 * mm, 35 * mm, 12 * mm, 15 * mm, 12 * mm, 12 * mm, 12 * mm])
-        t.setStyle(_taula_estil())
-        elems.append(t)
+            data.append([_bp(r["jugador"]), _bp(r["equip_nom"]), r["Partits"], r["Punts"], r["C2"], r["C3"], r["TL"],
+                         _na(r.get("TS%")), _na(r.get("eFG%"))])
+        elems.append(_tbl(data, [34*mm, 34*mm, 9*mm, 11*mm, 9*mm, 9*mm, 9*mm, 11*mm, 11*mm], font_size=8))
+        elems.append(PageBreak())
+
+    # ── Win Shares de temporada ──────────────────────────────────────────────
+    df_ws = core.calc_win_shares_temporada()
+    if not df_ws.empty:
+        elems.append(Paragraph("Win Shares de temporada", SUBTITOL))
+        data = [["Jugadora", "Equip", "PJ", "Min", "Pts", "OWS", "DWS", "WS", "WS/40", "Arquetip"]]
+        for _, r in df_ws.sort_values("WS", ascending=False).iterrows():
+            data.append([_bp(r["jugador"]), _bp(r["equip"]), r["partits"], r["minuts"], r["punts"],
+                         r["OWS"], r["DWS"], r["WS"], r["ws_per40"], _bp(r["Arquetip"])])
+        elems.append(_tbl(data, [26*mm, 30*mm, 8*mm, 10*mm, 10*mm, 10*mm, 10*mm, 10*mm, 11*mm, 25*mm],
+                           font_size=7))
+        elems.append(Spacer(1, 8))
+
+    # ── On/Off Rating agregat ────────────────────────────────────────────────
+    res_onoff_agr = core.calc_onoff_agregat(df_p, min_poss_on=150, min_poss_off=150, poss_mode="full")
+    if res_onoff_agr:
+        df_onoff_agr = pd.DataFrame(res_onoff_agr)
+        df_onoff_agr = df_onoff_agr[df_onoff_agr["onoff_agregat"].notna()].sort_values(
+            "onoff_agregat", ascending=False)
+        if not df_onoff_agr.empty:
+            elems.append(Paragraph("On/Off Rating agregat", SUBTITOL))
+            elems.append(Paragraph(
+                "Suma punts i possessions ON/OFF de tots els partits abans de dividir. "
+                "Fiable = mínim 150 possessions ON i 150 OFF.", NORMAL))
+            elems.append(Spacer(1, 4))
+            data = [["Jugadora", "Equip", "Partits", "Poss ON", "Poss OFF", "NetRtg ON", "NetRtg OFF",
+                     "On/Off", "Fiable"]]
+            for _, r in df_onoff_agr.iterrows():
+                data.append([_bp(r["jugadora"]), _bp(r["equip_nom"]), r["partits"], r["poss_on"], r["poss_off"],
+                             _na(r["net_on"]), _na(r["net_off"]), _fmt_pm(r["onoff_agregat"]),
+                             "Sí" if r["fiable"] else "No"])
+            elems.append(_tbl(data, [30*mm, 30*mm, 12*mm, 14*mm, 14*mm, 15*mm, 15*mm, 12*mm, 12*mm],
+                               font_size=7))
+            elems.append(PageBreak())
+
+    # ── Usage% vs Pts/40min ──────────────────────────────────────────────────
+    if not df_sj.empty:
+        col_j_p40 = "jugador" if "jugador" in df_sj.columns else "jugadora"
+        rows_p40 = []
+        for (jug, eq_nom), grp in df_sj.groupby([col_j_p40, "equip_nom"]):
+            min_tot = grp["minuts"].sum() if "minuts" in grp.columns else 0
+            if min_tot < 5:
+                continue
+            pts_tot = grp["punts"].sum()
+            usage = grp["usage_rate"].mean() if "usage_rate" in grp.columns else 0
+            rows_p40.append({
+                "Jugadora": jug, "Equip": eq_nom, "Partits": grp["match_id"].nunique(),
+                "Min tot": round(min_tot, 1), "Pts tot": int(pts_tot),
+                "Usage%": round(usage, 1), "Pts/40min": round(pts_tot / min_tot * 40, 1),
+            })
+        if rows_p40:
+            elems.append(Paragraph("Usage% vs Pts/40min", SUBTITOL))
+            elems.append(Paragraph(
+                "Volum ofensiu (Usage%) vs productivitat anotadora normalitzada a 40 minuts, "
+                "acumulat de tota la temporada.", NORMAL))
+            elems.append(Spacer(1, 4))
+            data = [["Jugadora", "Equip", "Partits", "Min tot", "Pts tot", "Usage%", "Pts/40min"]]
+            for r in sorted(rows_p40, key=lambda r: -r["Pts/40min"]):
+                data.append([_bp(r["Jugadora"]), _bp(r["Equip"]), r["Partits"], r["Min tot"], r["Pts tot"],
+                             f"{r['Usage%']}%", r["Pts/40min"]])
+            elems.append(_tbl(data, [34*mm, 34*mm, 13*mm, 16*mm, 16*mm, 16*mm, 18*mm], font_size=8))
 
     doc.build(elems)
     buf.seek(0)
