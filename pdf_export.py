@@ -178,6 +178,78 @@ def _fmt_pm(v):
     return f"{'+' if v >= 0 else ''}{v}"
 
 
+def _color_pm(val, vmax):
+    """Verd-blanc-vermell interpolat segons +/- (mateixa paleta que el Mapa
+    de calor +/- per parelles en pantalla: #16a34a verd / #dc2626 vermell)."""
+    if val is None or not vmax:
+        return colors.HexColor("#f9fafb")
+    t = max(-1.0, min(1.0, val / vmax))
+    if t >= 0:
+        r = 1 - t * (1 - 0.086); g = 1 - t * (1 - 0.639); b = 1 - t * (1 - 0.290)
+    else:
+        t = -t
+        r = 1 - t * (1 - 0.863); g = 1 - t * (1 - 0.149); b = 1 - t * (1 - 0.149)
+    return colors.Color(r, g, b)
+
+
+def _heatmap_parelles_elems(parelles, intervals, eq_id, eq_nom):
+    """Graella NxN acolorida (verd=l'equip guanya, vermell=perd) amb el +/-
+    conjunt de cada parella de jugadores de l'equip quan han jugat juntes.
+    Reaprofita calc_pm_combinacions(mode='parelles') — mateixa font de dades
+    que la taula 'Parelles' i que el Mapa de calor +/- per parelles en pantalla."""
+    jugs = sorted({j for j, ivs in intervals.items() if any(str(ei) == str(eq_id) for _, _, ei in ivs)})
+    n = len(jugs)
+    if n < 2:
+        return []
+
+    pm_map = {}
+    for p in parelles:
+        if str(p["equip"]) == str(eq_id):
+            pm_map[tuple(sorted(p["combinacio"]))] = p["pm"]
+
+    matrix = [[None] * n for _ in range(n)]
+    for i in range(n):
+        matrix[i][i] = 0
+        for j in range(i + 1, n):
+            v = pm_map.get(tuple(sorted((jugs[i], jugs[j]))))
+            matrix[i][j] = v
+            matrix[j][i] = v
+
+    vmax = max([abs(v) for row in matrix for v in row if v is not None] or [1]) or 1
+    noms_curts = [j.split()[-1] if len(j.split()) > 1 else j for j in jugs]
+
+    data = [[""] + [_hp(nc) for nc in noms_curts]]
+    style_cmds = [
+        ("BACKGROUND", (0, 0), (-1, 0), BLAU_FOSC),
+        ("BACKGROUND", (0, 0), (0, -1), BLAU_FOSC),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.white),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("FONTSIZE", (0, 0), (-1, -1), 6.5),
+    ]
+    for i in range(n):
+        row = [_hp(noms_curts[i])]
+        for j in range(n):
+            v = matrix[i][j]
+            row.append("" if v is None else _fmt_pm(v))
+            if i == j:
+                bg = colors.HexColor("#e5e7eb")
+            else:
+                bg = _color_pm(v, vmax)
+            style_cmds.append(("BACKGROUND", (j + 1, i + 1), (j + 1, i + 1), bg))
+            style_cmds.append(("TEXTCOLOR", (j + 1, i + 1), (j + 1, i + 1), colors.white))
+        data.append(row)
+
+    col_w = min(14 * mm, 140 * mm / (n + 1))
+    t = Table(data, colWidths=[20 * mm] + [col_w] * n, rowHeights=5.5 * mm)
+    t.setStyle(TableStyle(style_cmds))
+    return [
+        Paragraph(eq_nom, ParagraphStyle(f"EqLabelHM_{eq_id}", parent=NORMAL, textColor=BLAU_FOSC,
+                                          fontSize=10, spaceBefore=6, spaceAfter=3)),
+        t, Spacer(1, 6),
+    ]
+
+
 # ══════════════════════════════════════════════════
 # Agregacions per al PDF de temporada
 # ══════════════════════════════════════════════════
@@ -434,6 +506,15 @@ def genera_pdf_partit(df_orig, teams, team_names, match_id, nom_a, nom_b, fa, fb
         # ── Parelles (+/-) ────────────────────────────────────────────────
         parelles = core.calc_pm_combinacions(df_orig, mode="parelles")
         if parelles:
+            intervals_hm = core.get_intervals_jugadores_global(df_orig)
+            elems.append(Paragraph("Mapa de calor +/- per parelles", SUBTITOL))
+            elems.append(Paragraph(
+                "Color de cada casella = +/- conjunt de la parella quan han jugat juntes "
+                "(verd = l'equip guanya, vermell = perd). Gris = no han coincidit en pista.", NORMAL))
+            elems.append(Spacer(1, 2))
+            for eq_id, eq_nom in [(tid_a, nom_a), (tid_b, nom_b)]:
+                elems.extend(_heatmap_parelles_elems(parelles, intervals_hm, eq_id, eq_nom))
+
             elems.append(Paragraph("Parelles — +/- per minut junts", SUBTITOL))
             elems.append(Spacer(1, 2))
             for eq_id, eq_nom in [(tid_a, nom_a), (tid_b, nom_b)]:
