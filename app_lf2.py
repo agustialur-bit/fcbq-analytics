@@ -2107,7 +2107,9 @@ with t7:
 
 with t_desc:
     st.markdown(sec("📄 Informes en PDF"), unsafe_allow_html=True)
-    st.caption("Genera un PDF amb Quatre Factors, PPP per tipus d'inici de possessió i Clutch.")
+    st.caption("Genera un PDF amb Comparació d'equips, Quatre Factors, PPP per tipus d'inici de "
+               "possessió, Box Score complet, Impacte en pista, On/Off Rating, ROT, Parelles, "
+               "Quintets i Clutch.")
 
     col_pdf1, col_pdf2 = st.columns(2)
     with col_pdf1:
