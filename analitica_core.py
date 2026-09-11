@@ -475,7 +475,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS tirs_fcbq (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         match_id TEXT, data_consulta TEXT,
-        equip_nom TEXT, x REAL, y REAL, fet INTEGER
+        equip_nom TEXT, x REAL, y REAL, fet INTEGER, jugador TEXT
     );
     """)
     con.commit(); con.close()
@@ -495,6 +495,11 @@ def migrate_db():
         pass
     try:
         con.execute("ALTER TABLE timeouts ADD COLUMN dins_24s INTEGER DEFAULT 0")
+        con.commit()
+    except Exception:
+        pass
+    try:
+        con.execute("ALTER TABLE tirs_fcbq ADD COLUMN jugador TEXT")
         con.commit()
     except Exception:
         pass
@@ -742,10 +747,13 @@ def save_tirs_fcbq(match_id, data_consulta, equip_local, equip_visitant, tirs_lo
     con_t.execute("DELETE FROM tirs_fcbq WHERE match_id=?", (match_id,))
     rows = []
     for t in tirs_local:
-        rows.append((match_id, data_consulta, equip_local, float(t['x']), float(t['y']), 1 if t.get('fet') else 0))
+        rows.append((match_id, data_consulta, equip_local, float(t['x']), float(t['y']),
+                     1 if t.get('fet') else 0, t.get('jugador') or None))
     for t in tirs_visit:
-        rows.append((match_id, data_consulta, equip_visitant, float(t['x']), float(t['y']), 1 if t.get('fet') else 0))
-    con_t.executemany("INSERT INTO tirs_fcbq (match_id,data_consulta,equip_nom,x,y,fet) VALUES (?,?,?,?,?,?)", rows)
+        rows.append((match_id, data_consulta, equip_visitant, float(t['x']), float(t['y']),
+                     1 if t.get('fet') else 0, t.get('jugador') or None))
+    con_t.executemany(
+        "INSERT INTO tirs_fcbq (match_id,data_consulta,equip_nom,x,y,fet,jugador) VALUES (?,?,?,?,?,?,?)", rows)
     con_t.commit(); con_t.close()
 
 def load_jugades_db(match_id):

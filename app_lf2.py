@@ -2121,10 +2121,18 @@ with t7:
         st.info("Sense dades de tir per aquest partit.")
     else:
         eq_tir = st.selectbox("Equip", [nom_a, nom_b], key="eq_tir_lf2")
-        dt = df_tirs[df_tirs["equip_nom"]==eq_tir]
-        if dt.empty:
+        dt_eq = df_tirs[df_tirs["equip_nom"]==eq_tir]
+        if dt_eq.empty:
             st.info("Sense tirs per aquest equip.")
         else:
+            dt_eq = dt_eq.copy()
+            dt_eq["jugador"] = dt_eq["jugador"].fillna("").replace("", "Sense identificar")
+            sense_id = (dt_eq["jugador"] == "Sense identificar").all()
+
+            jugadores_tir = sorted(j for j in dt_eq["jugador"].unique() if j != "Sense identificar")
+            jug_sel = st.selectbox("Jugadora", ["Totes"] + jugadores_tir, key="jug_tir_lf2")
+            dt = dt_eq if jug_sel == "Totes" else dt_eq[dt_eq["jugador"] == jug_sel]
+
             dt = dt.copy()
             dt["Resultat"] = dt["fet"].map({1:"Encertat", 0:"Fallat"})
             # feb.es dona coordenades 0-100 de pista sencera (cistelles a x≈0 i x≈100,
@@ -2140,6 +2148,7 @@ with t7:
             for fet, color, nom in [(1, "#16a34a", "Encertat"), (0, "#dc2626", "Fallat")]:
                 d_f = dt[dt["fet"]==fet]
                 fig_shot.add_trace(go.Scatter(x=d_f["x_m"], y=d_f["y_m"], mode="markers", name=nom,
+                    text=d_f["jugador"], hovertemplate="%{text}<extra>" + nom + "</extra>",
                     marker=dict(size=9, color=color, opacity=0.8, line=dict(width=1, color="white"))))
             fig_shot.update_layout(
                 shapes=_mig_camp_shapes(),
@@ -2153,6 +2162,18 @@ with t7:
 
             tot = len(dt); fets = int(dt["fet"].sum())
             st.markdown(card("Tirs totals", tot, f"{fets} encertats ({round(fets/tot*100,1) if tot else 0}%)", COLOR_A if eq_tir==nom_a else COLOR_B), unsafe_allow_html=True)
+
+            if jug_sel == "Totes" and not sense_id:
+                st.markdown("**Per jugadora**")
+                resum_tir = dt_eq.groupby("jugador").agg(Tirs=("fet","size"), Encerts=("fet","sum")).reset_index()
+                resum_tir["%"] = (resum_tir["Encerts"] / resum_tir["Tirs"] * 100).round(1)
+                resum_tir = resum_tir.rename(columns={"jugador":"Jugadora"}).sort_values("Tirs", ascending=False)
+                st.dataframe(resum_tir, use_container_width=True, hide_index=True)
+
+            if sense_id:
+                st.caption("ℹ️ Aquest partit es va carregar abans d'identificar la jugadora de cada tir "
+                           "(pas afegit posteriorment) — torna a carregar el partit des de feb.es per "
+                           "recuperar-ho.")
             st.caption("⚠️ Classificació automàtica per zones (pintada/mig/triple) encara no disponible per "
                        "feb.es: el dibuix de la pista és només visual, de moment.")
 
