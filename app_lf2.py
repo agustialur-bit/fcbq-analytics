@@ -7,6 +7,7 @@ analitica_core.py, però amb BD pròpia (historic_lf2.db) i la seva pròpia inge
 """
 import re
 import os
+import math
 import sqlite3
 import requests
 import streamlit as st
@@ -2072,9 +2073,49 @@ with t6:
                 st.dataframe(df_p40_show, use_container_width=True, hide_index=True)
 
 
+def _arc_path_m(cx, cy, r, a0, a1, n=48):
+    """Path SVG (M...L...) per un arc de radi r centrat a (cx,cy), de l'angle a0 a
+    l'a1 (radians). S'usa per dibuixar cercles/arcs de la pista amb segments de
+    recta (evita dependre del suport d'arcs 'A' de Plotly)."""
+    pts = [(cx + r * math.cos(a0 + (a1 - a0) * i / (n - 1)),
+            cy + r * math.sin(a0 + (a1 - a0) * i / (n - 1))) for i in range(n)]
+    return "M " + " L ".join(f"{x:.3f},{y:.3f}" for x, y in pts)
+
+
+def _mig_camp_shapes():
+    """Línies d'un mig camp FIBA (28m x 15m real, aquí 0-14m de llarg des del mig
+    camp fins la línia de fons, 0-15m d'ample) perquè el mapa de tir tingui un
+    dibuix de pista de referència darrere els punts."""
+    LINE = dict(color="#cbd5e1", width=1.5)
+    bx, by = 12.425, 7.5  # centre de la cistella (1.575 m de la línia de fons)
+    shapes = [
+        dict(type="rect", x0=0, y0=0, x1=14, y1=15, line=LINE, layer="below"),
+        dict(type="rect", x0=8.2, y0=by - 2.45, x1=14, y1=by + 2.45, line=LINE, layer="below"),
+        dict(type="path", path=_arc_path_m(8.2, by, 1.8, 0, 2 * math.pi), line=LINE, layer="below"),
+        dict(type="circle", x0=bx - 0.225, y0=by - 0.225, x1=bx + 0.225, y1=by + 0.225,
+             line=dict(color="#f97316", width=2), layer="below"),
+        dict(type="line", x0=12.8, y0=by - 0.9, x1=12.8, y1=by + 0.9, line=LINE, layer="below"),
+        dict(type="path", path=_arc_path_m(bx, by, 1.25, -math.pi / 2, -3 * math.pi / 2), line=LINE, layer="below"),
+        dict(type="line", x0=14, y0=by - 1.25, x1=bx, y1=by - 1.25, line=LINE, layer="below"),
+        dict(type="line", x0=14, y0=by + 1.25, x1=bx, y1=by + 1.25, line=LINE, layer="below"),
+    ]
+    R3, corner_y = 6.75, 0.9
+    dx_c = math.sqrt(max(R3 ** 2 - (by - corner_y) ** 2, 0))
+    theta_low = math.atan2(-(by - corner_y), dx_c)
+    theta_high = math.atan2(by - corner_y, dx_c) - 2 * math.pi
+    shapes += [
+        dict(type="path", path=_arc_path_m(bx, by, R3, theta_low, theta_high), line=LINE, layer="below"),
+        dict(type="line", x0=14, y0=corner_y, x1=bx + dx_c, y1=corner_y, line=LINE, layer="below"),
+        dict(type="line", x0=14, y0=15 - corner_y, x1=bx + dx_c, y1=15 - corner_y, line=LINE, layer="below"),
+    ]
+    return shapes
+
+
 with t7:
     st.markdown(sec("🎯 Mapa de tir"), unsafe_allow_html=True)
-    st.caption("Coordenades extretes automàticament del play-by-play de feb.es.")
+    st.caption("Coordenades extretes automàticament del play-by-play de feb.es, "
+               "normalitzades a una sola cistella (feb.es dona coordenades de pista sencera; "
+               "cada equip tira a totes dues cistelles segons el període).")
     df_tirs = load_tirs_fcbq(match_id=match_id)
     if df_tirs.empty:
         st.info("Sense dades de tir per aquest partit.")
@@ -2086,23 +2127,34 @@ with t7:
         else:
             dt = dt.copy()
             dt["Resultat"] = dt["fet"].map({1:"Encertat", 0:"Fallat"})
+            # feb.es dona coordenades 0-100 de pista sencera (cistelles a x≈0 i x≈100,
+            # y≈50 = centre d'ample) — es reflecteix la meitat x<50 cap a l'altra
+            # perquè tots els tirs del partit caiguin sobre una única cistella.
+            mirall = dt["x"] < 50
+            dt.loc[mirall, "x"] = 100 - dt.loc[mirall, "x"]
+            # Conversió a metres (pista FIBA 28m x 15m) per dibuixar-hi un mig camp real.
+            dt["x_m"] = (dt["x"] - 50) / 50 * 14.0
+            dt["y_m"] = dt["y"] / 100 * 15.0
+
             fig_shot = go.Figure()
             for fet, color, nom in [(1, "#16a34a", "Encertat"), (0, "#dc2626", "Fallat")]:
                 d_f = dt[dt["fet"]==fet]
-                fig_shot.add_trace(go.Scatter(x=d_f["x"], y=d_f["y"], mode="markers", name=nom,
-                    marker=dict(size=9, color=color, opacity=0.75, line=dict(width=1, color="white"))))
-            fig_shot.update_layout(xaxis=dict(range=[0,100], showgrid=False, zeroline=False, visible=False),
-                yaxis=dict(range=[0,100], showgrid=False, zeroline=False, visible=False, scaleanchor="x"),
-                paper_bgcolor="#fff", plot_bgcolor="#f9fafb", height=420,
+                fig_shot.add_trace(go.Scatter(x=d_f["x_m"], y=d_f["y_m"], mode="markers", name=nom,
+                    marker=dict(size=9, color=color, opacity=0.8, line=dict(width=1, color="white"))))
+            fig_shot.update_layout(
+                shapes=_mig_camp_shapes(),
+                xaxis=dict(range=[-0.5, 15], showgrid=False, zeroline=False, visible=False),
+                yaxis=dict(range=[-0.5, 15.5], showgrid=False, zeroline=False, visible=False,
+                           scaleanchor="x", scaleratio=1),
+                paper_bgcolor="#fff", plot_bgcolor="#f9fafb", height=480,
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                 margin=dict(l=0,r=0,t=30,b=0))
             st.plotly_chart(fig_shot, use_container_width=True)
 
             tot = len(dt); fets = int(dt["fet"].sum())
             st.markdown(card("Tirs totals", tot, f"{fets} encertats ({round(fets/tot*100,1) if tot else 0}%)", COLOR_A if eq_tir==nom_a else COLOR_B), unsafe_allow_html=True)
-            st.caption("⚠️ Classificació per zones (pintada/mig/triple) encara no disponible per feb.es: "
-                       "les coordenades de feb.es semblen fer servir un sistema de pista sencera diferent del "
-                       "de mig camp de la FCBQ (classifica_zona_tir no és compatible tal qual). Pendent de calibrar.")
+            st.caption("⚠️ Classificació automàtica per zones (pintada/mig/triple) encara no disponible per "
+                       "feb.es: el dibuix de la pista és només visual, de moment.")
 
 
 with t_desc:
