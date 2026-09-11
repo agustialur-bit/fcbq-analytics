@@ -273,6 +273,9 @@ with st.sidebar:
     st.markdown('<div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#9ca3af;margin-bottom:6px">Partit</div>', unsafe_allow_html=True)
     url_input = st.text_input("", placeholder="URL o ID del partit (feb.es)", label_visibility="collapsed")
     carregar = st.button("⬇ Carregar partit", use_container_width=True)
+    forcar_recarrega = st.checkbox("🔄 Torna a descarregar de feb.es",
+        help="Si el partit ja estava desat, sobreescriu les dades amb una descàrrega "
+             "nova de feb.es (útil si es van desar abans d'una millora de l'aplicació).")
     st.caption("Ex: https://www.feb.es/competiciones/partido/2477341")
     st.markdown("---")
     st.markdown('<div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#9ca3af;margin-bottom:6px">Filtres play-by-play</div>', unsafe_allow_html=True)
@@ -289,7 +292,7 @@ if carregar and url_input:
     mid = extract_feb_match_id(url_input)
     if not mid:
         st.error("ID no vàlid. Enganxa la URL sencera del partit a feb.es.")
-    elif partit_exists(mid):
+    elif partit_exists(mid) and not forcar_recarrega:
         st.session_state.df = load_jugades_db(mid)
         st.session_state.match_id = mid
         df_part = load_partits_db()
@@ -2143,12 +2146,14 @@ with t7:
             # Conversió a metres (pista FIBA 28m x 15m) per dibuixar-hi un mig camp real.
             dt["x_m"] = (dt["x"] - 50) / 50 * 14.0
             dt["y_m"] = dt["y"] / 100 * 15.0
+            dt["Zona"] = dt.apply(lambda r: core.classifica_zona_tir_feb(r["x_m"], r["y_m"]), axis=1)
 
             fig_shot = go.Figure()
             for fet, color, nom in [(1, "#16a34a", "Encertat"), (0, "#dc2626", "Fallat")]:
                 d_f = dt[dt["fet"]==fet]
+                text_hover = d_f["jugador"] + " — " + d_f["Zona"]
                 fig_shot.add_trace(go.Scatter(x=d_f["x_m"], y=d_f["y_m"], mode="markers", name=nom,
-                    text=d_f["jugador"], hovertemplate="%{text}<extra>" + nom + "</extra>",
+                    text=text_hover, hovertemplate="%{text}<extra>" + nom + "</extra>",
                     marker=dict(size=9, color=color, opacity=0.8, line=dict(width=1, color="white"))))
             fig_shot.update_layout(
                 shapes=_mig_camp_shapes(),
@@ -2163,19 +2168,30 @@ with t7:
             tot = len(dt); fets = int(dt["fet"].sum())
             st.markdown(card("Tirs totals", tot, f"{fets} encertats ({round(fets/tot*100,1) if tot else 0}%)", COLOR_A if eq_tir==nom_a else COLOR_B), unsafe_allow_html=True)
 
-            if jug_sel == "Totes" and not sense_id:
-                st.markdown("**Per jugadora**")
-                resum_tir = dt_eq.groupby("jugador").agg(Tirs=("fet","size"), Encerts=("fet","sum")).reset_index()
-                resum_tir["%"] = (resum_tir["Encerts"] / resum_tir["Tirs"] * 100).round(1)
-                resum_tir = resum_tir.rename(columns={"jugador":"Jugadora"}).sort_values("Tirs", ascending=False)
-                st.dataframe(resum_tir, use_container_width=True, hide_index=True)
+            col_zt1, col_zt2 = st.columns(2)
+            with col_zt1:
+                if jug_sel == "Totes" and not sense_id:
+                    st.markdown("**Per jugadora**")
+                    resum_tir = dt_eq.groupby("jugador").agg(Tirs=("fet","size"), Encerts=("fet","sum")).reset_index()
+                    resum_tir["%"] = (resum_tir["Encerts"] / resum_tir["Tirs"] * 100).round(1)
+                    resum_tir = resum_tir.rename(columns={"jugador":"Jugadora"}).sort_values("Tirs", ascending=False)
+                    st.dataframe(resum_tir, use_container_width=True, hide_index=True)
+            with col_zt2:
+                st.markdown("**Per zona**")
+                ordre_zones = ["🎯 Zona pintada", "📍 Mig esquerra", "📍 Mig centre", "📍 Mig dreta",
+                               "🏹 Triple esquerra", "🏹 Triple centre", "🏹 Triple dreta"]
+                resum_zona = dt.groupby("Zona").agg(Tirs=("fet","size"), Encerts=("fet","sum")).reset_index()
+                resum_zona["%"] = (resum_zona["Encerts"] / resum_zona["Tirs"] * 100).round(1)
+                resum_zona["_ordre"] = resum_zona["Zona"].apply(
+                    lambda z: ordre_zones.index(z) if z in ordre_zones else 99)
+                resum_zona = resum_zona.sort_values("_ordre").drop(columns="_ordre")
+                st.dataframe(resum_zona, use_container_width=True, hide_index=True)
+            st.caption("Esquerra/dreta = des del punt de vista de la jugadora que tira, mirant a cistella.")
 
             if sense_id:
                 st.caption("ℹ️ Aquest partit es va carregar abans d'identificar la jugadora de cada tir "
-                           "(pas afegit posteriorment) — torna a carregar el partit des de feb.es per "
-                           "recuperar-ho.")
-            st.caption("⚠️ Classificació automàtica per zones (pintada/mig/triple) encara no disponible per "
-                       "feb.es: el dibuix de la pista és només visual, de moment.")
+                           "(pas afegit posteriorment) — marca '🔄 Torna a descarregar de feb.es' al panell "
+                           "esquerre i torna a prémer Carregar partit per recuperar-ho.")
 
 
 with t_desc:

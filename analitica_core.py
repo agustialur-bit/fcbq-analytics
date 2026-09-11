@@ -1668,6 +1668,21 @@ def classifica_zona_tir(x_raw, y_raw):
         elif x_raw > 62: return "📍 Mig dreta"
         else: return "📍 Mig centre"
 
+def classifica_zona_tir_feb(x_m, y_m):
+    """Classifica un tir en una de les mateixes 7 zones que classifica_zona_tir()
+    (FCBQ), a partir de coordenades en metres ja normalitzades a una única
+    cistella (feb.es, pista FIBA 28x15m, cistella a x=12.425/y=7.5 — mateixa
+    geometria que dibuixa _mig_camp_shapes() a app_lf2.py). Esquerra/dreta és
+    des del punt de vista de la jugadora que tira, mirant a cistella."""
+    bx, by = 12.425, 7.5
+    dy = y_m - by
+    r = ((x_m - bx) ** 2 + dy ** 2) ** 0.5
+    if x_m >= 8.2 and abs(dy) <= 2.45:
+        return "🎯 Zona pintada"
+    banda = "centre" if abs(dy) <= 2.45 else ("esquerra" if dy > 0 else "dreta")
+    prefix = "🏹 Triple" if r >= 6.75 else "📍 Mig"
+    return f"{prefix} {banda}"
+
 TC_INT_PAT = "Cistella de 2|Cistella de 3|Intent fallat de 2|Intent fallat de 3|fallat de 2|fallat de 3"
 TL_INT_PAT = "Cistella de 1|Intent fallat de 1|Tir lliure convertit|Tir lliure fallat"
 
