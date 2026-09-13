@@ -15,6 +15,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+from reportlab.graphics.shapes import Drawing, Rect, String, Line, PolyLine
 
 from scipy import stats as sp_stats
 
@@ -250,6 +251,105 @@ def _heatmap_parelles_elems(parelles, intervals, eq_id, eq_nom):
     ]
 
 
+def _rotacions_drawing(df_orig, teams, eq_id, eq_nom):
+    """Gràfic de rotacions (Gantt): una barra per tram de joc de cada jugadora,
+    amb el parcial ±de l'equip superposat com a línia discontínua — mateix
+    gràfic que 'Gràfic de rotacions — qui juga cada minut' en pantalla,
+    redibuixat amb reportlab.graphics (Plotly no es pot incrustar al PDF)."""
+    intervals = core.get_intervals_jugadores_global(df_orig)
+    jugs_eq = {j: ivs for j, ivs in intervals.items() if any(str(ei) == str(eq_id) for _, _, ei in ivs)}
+    if not jugs_eq:
+        return None
+    jugs_sorted = sorted(jugs_eq.items(), key=lambda x: min(i[0] for i in x[1]))
+    n = len(jugs_sorted)
+
+    MINS_TOTAL = max(float(df_orig["quart"].max()) * 10 if not df_orig.empty else 40, 40)
+
+    sdf = core.score_evo(df_orig)
+    t_pts, diff = [], []
+    if not sdf.empty:
+        sdf = sdf.copy()
+        sdf["t_min"] = sdf.apply(_t_abs, axis=1)
+        parcial_eq = sdf["scoreA"] if str(eq_id) == str(teams[0]) else sdf["scoreB"]
+        parcial_riv = sdf["scoreB"] if str(eq_id) == str(teams[0]) else sdf["scoreA"]
+        diff = (parcial_eq - parcial_riv).tolist()
+        t_pts = sdf["t_min"].tolist()
+
+    LABEL_W, PLOT_W, RIGHT_M = 36 * mm, 105 * mm, 14 * mm
+    ROW_H, TOP_M, BOT_M = 5.6 * mm, 5 * mm, 12 * mm
+    W = LABEL_W + PLOT_W + RIGHT_M
+    H = TOP_M + n * ROW_H + BOT_M
+
+    d = Drawing(W, H)
+
+    def x_of(t):
+        return LABEL_W + (min(t, MINS_TOTAL) / MINS_TOTAL) * PLOT_W
+
+    def row_top(i):
+        return H - TOP_M - i * ROW_H
+
+    GRIS = colors.HexColor("#9ca3af")
+    GRIS_CLAR2 = colors.HexColor("#e2e4e8")
+    FOSC = colors.HexColor("#374151")
+
+    for q in range(1, 5):
+        xq = x_of(q * 10)
+        if q < 4:
+            d.add(Line(xq, BOT_M, xq, H - TOP_M, strokeColor=GRIS_CLAR2, strokeDashArray=[2, 2], strokeWidth=0.6))
+            d.add(String(xq, H - TOP_M + 1.5, f"Fi Q{q}", fontSize=6, fillColor=GRIS, textAnchor="middle"))
+        else:
+            d.add(String(xq, H - TOP_M + 1.5, f"Fi Q{q}", fontSize=6, fillColor=GRIS, textAnchor="end"))
+
+    for i, (jug, ivs) in enumerate(jugs_sorted):
+        ytop = row_top(i)
+        d.add(String(LABEL_W - 3, ytop - ROW_H * 0.65, jug, fontSize=6.3, fillColor=FOSC, textAnchor="end"))
+        for (t_ini, t_fi, ei) in ivs:
+            if str(ei) != str(eq_id):
+                continue
+            x0, x1 = x_of(t_ini), x_of(t_fi)
+            d.add(Rect(x0, ytop - ROW_H + 1, max(x1 - x0, 0.5), ROW_H - 2,
+                        fillColor=BLAU, strokeColor=colors.white, strokeWidth=0.4))
+
+    tick = 0
+    while tick <= MINS_TOTAL + 0.01:
+        xt = x_of(tick)
+        d.add(Line(xt, BOT_M, xt, BOT_M - 1.5, strokeColor=GRIS, strokeWidth=0.5))
+        d.add(String(xt, BOT_M - 8, str(int(tick)), fontSize=6, fillColor=GRIS, textAnchor="middle"))
+        tick += 10
+    d.add(String(LABEL_W + PLOT_W / 2, 2, "Minut de joc", fontSize=6.5, fillColor=FOSC, textAnchor="middle"))
+
+    if diff:
+        dmin, dmax = min(diff), max(diff)
+        if dmin == dmax:
+            dmin -= 1
+            dmax += 1
+        pad = (dmax - dmin) * 0.08
+        dmin -= pad
+        dmax += pad
+        plot_bottom, plot_top = BOT_M, H - TOP_M
+
+        def y_of_diff(v):
+            return plot_bottom + (v - dmin) / (dmax - dmin) * (plot_top - plot_bottom)
+
+        pts = []
+        for t, v in zip(t_pts, diff):
+            pts += [x_of(t), y_of_diff(v)]
+        if len(pts) >= 4:
+            d.add(PolyLine(pts, strokeColor=FOSC, strokeWidth=1, strokeDashArray=[2, 2]))
+
+        y0 = y_of_diff(0)
+        if plot_bottom <= y0 <= plot_top:
+            d.add(Line(LABEL_W, y0, LABEL_W + PLOT_W, y0, strokeColor=GRIS_CLAR2, strokeWidth=0.5))
+
+        for val in sorted({round(dmin + pad), 0, round(dmax - pad)}):
+            if dmin <= val <= dmax:
+                d.add(String(LABEL_W + PLOT_W + 3, y_of_diff(val) - 2, f"{val:+d}" if val else "0",
+                              fontSize=6, fillColor=GRIS))
+        d.add(String(LABEL_W + PLOT_W + 3, H - TOP_M - 7, "Parcial ±", fontSize=6, fillColor=FOSC))
+
+    return d
+
+
 # ══════════════════════════════════════════════════
 # Agregacions per al PDF de temporada
 # ══════════════════════════════════════════════════
@@ -396,10 +496,10 @@ def genera_pdf_partit(df_orig, teams, team_names, match_id, nom_a, nom_b, fa, fb
 
         pts_start = cff.calc_pts_by_start(df_orig, teams, team_names)
         if pts_start:
-            elems.append(Paragraph("Cuándo la tuvieron, y cuánto valió (PPP)", SUBTITOL))
+            elems.append(Paragraph("Quan l'han tinguda, i quant ha valgut (PPP)", SUBTITOL))
             etiquetes = {
-                "after_make": "Tras canasta", "off_steal": "Tras robo",
-                "off_dreb": "Tras rebote defensivo", "off_deadball_tov": "Tras pérdida balón parado",
+                "after_make": "Després de cistella", "off_steal": "Després de robatori",
+                "off_dreb": "Després de rebot defensiu", "off_deadball_tov": "Després de pèrdua a pilota aturada",
             }
             data = [[_hp("Tipus"), _hp(f"{nom_a} PPP"), _hp(f"{nom_a} Poss."),
                      _hp(f"{nom_b} PPP"), _hp(f"{nom_b} Poss.")]]
@@ -502,6 +602,21 @@ def genera_pdf_partit(df_orig, teams, team_names, match_id, nom_a, nom_b, fa, fb
             elems.append(_tbl(data, [50*mm, 20*mm, 28*mm, 22*mm, 22*mm]))
         else:
             elems.append(Paragraph("Calen almenys 3 jugadores amb minuts jugats a cada equip.", NORMAL))
+
+        # ── Gràfic de rotacions ──────────────────────────────────────────
+        elems.append(PageBreak())
+        elems.append(Paragraph("Gràfic de rotacions — qui juga cada minut", SUBTITOL))
+        elems.append(Paragraph(
+            "Cada barra és un tram de joc d'una jugadora. La línia discontínua és el parcial ± de l'equip.", NORMAL))
+        elems.append(Spacer(1, 4))
+        for eq_id, eq_nom in [(tid_a, nom_a), (tid_b, nom_b)]:
+            d_rot = _rotacions_drawing(df_orig, teams, eq_id, eq_nom)
+            if d_rot is None:
+                continue
+            elems.append(Paragraph(eq_nom, ParagraphStyle(f"EqLabelRot_{eq_id}", parent=NORMAL, textColor=BLAU_FOSC,
+                                                             fontSize=10, spaceBefore=6, spaceAfter=3)))
+            elems.append(d_rot)
+            elems.append(Spacer(1, 6))
 
         # ── Parelles (+/-) ────────────────────────────────────────────────
         parelles = core.calc_pm_combinacions(df_orig, mode="parelles")
