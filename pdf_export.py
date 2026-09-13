@@ -386,6 +386,7 @@ def _team_season_four_factors(df_partits):
             ftm = int(df_eq["accio"].str.contains("Cistella de 1", case=False, na=False).sum())
             fta = ftm + int(df_eq["accio"].str.contains("Intent fallat de 1", case=False, na=False).sum())
             tov = int(df_eq["accio"].str.contains("Pèrdua", case=False, na=False).sum())
+            ast = int(df_eq["accio"].str.contains("Assistència", case=False, na=False).sum())
             oreb = int(df_eq["accio"].str.contains("Rebot ofensiu", case=False, na=False).sum())
             dreb = int(df_eq["accio"].str.contains("Rebot defensiu", case=False, na=False).sum())
             oreb_riv = int(df_riv["accio"].str.contains("Rebot ofensiu", case=False, na=False).sum())
@@ -396,13 +397,13 @@ def _team_season_four_factors(df_partits):
             poss_riv = core.calc_possessions(df_riv, poss_mode="full")
 
             a = acum.setdefault(nom_eq, dict(partits=0, fgm2=0, fga2=0, fgm3=0, fga3=0, ftm=0, fta=0,
-                                              tov=0, oreb=0, dreb=0, oreb_riv=0, dreb_riv=0,
+                                              tov=0, ast=0, oreb=0, dreb=0, oreb_riv=0, dreb_riv=0,
                                               pts=0, pts_riv=0, poss=0.0, poss_riv=0.0))
             a["partits"] += 1
             a["fgm2"] += fgm2; a["fga2"] += fga2
             a["fgm3"] += fgm3; a["fga3"] += fga3
             a["ftm"] += ftm; a["fta"] += fta
-            a["tov"] += tov
+            a["tov"] += tov; a["ast"] += ast
             a["oreb"] += oreb; a["dreb"] += dreb
             a["oreb_riv"] += oreb_riv; a["dreb_riv"] += dreb_riv
             a["pts"] += pts; a["pts_riv"] += pts_riv
@@ -426,6 +427,9 @@ def _team_season_four_factors(df_partits):
             "Equip": nom_eq, "Partits": a["partits"], "TS%": ts, "eFG%": efg, "TOV%": tov_pct,
             "OR%": or_pct, "DR%": dr_pct, "FT/TCI": ft_tci,
             "OffRtg": off_rtg, "DefRtg": def_rtg, "NetRtg": net_rtg,
+            "Assistències/partit": round(a["ast"] / a["partits"], 1) if a["partits"] else None,
+            "Rebots/partit": round((a["oreb"] + a["dreb"]) / a["partits"], 1) if a["partits"] else None,
+            "Pèrdues/partit": round(a["tov"] / a["partits"], 1) if a["partits"] else None,
         })
     return pd.DataFrame(rows)
 
@@ -724,6 +728,13 @@ def genera_pdf_temporada():
                          _na(r["OffRtg"]), _na(r["DefRtg"]), _fmt_pm(r["NetRtg"])])
         elems.append(_tbl(data, [38*mm, 9*mm, 11*mm, 11*mm, 12*mm, 11*mm, 11*mm, 12*mm, 12*mm, 12*mm, 12*mm],
                            font_size=7))
+
+        elems.append(Paragraph("Assistències, rebots i pèrdues per partit", SUBTITOL))
+        data2 = [["Equip", "PJ", "Assistències/partit", "Rebots/partit", "Pèrdues/partit"]]
+        for _, r in df_teams_season.sort_values("NetRtg", ascending=False).iterrows():
+            data2.append([_bp(r["Equip"]), r["Partits"], _na(r["Assistències/partit"]),
+                          _na(r["Rebots/partit"]), _na(r["Pèrdues/partit"])])
+        elems.append(_tbl(data2, [50*mm, 15*mm, 35*mm, 30*mm, 30*mm], font_size=8))
         elems.append(PageBreak())
 
     # ── Rànquing de jugadores (complet, amb TS%/eFG%) ───────────────────────
