@@ -1686,6 +1686,16 @@ def classifica_zona_tir_feb(x_m, y_m):
 TC_INT_PAT = "Cistella de 2|Cistella de 3|Intent fallat de 2|Intent fallat de 3|fallat de 2|fallat de 3"
 TL_INT_PAT = "Cistella de 1|Intent fallat de 1|Tir lliure convertit|Tir lliure fallat"
 
+def fmt_pct_ast(v, decimals=1):
+    """Formata un percentatge com TS%/eFG% que, per la seva pròpia fórmula
+    (ponderen els triples), poden superar matemàticament el 100% amb pocs
+    tirs (p.ex. un sol triple encertat sense cap altre intent = 150%). Marca
+    aquests casos amb un asterisc perquè es vegi que no és un error."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return "—"
+    s = f"{v:.{decimals}f}"
+    return s + "*" if v > 100 else s
+
 def calc_win_shares_temporada():
     """Win Shares ofensius aproximats per jugadora, acumulats de tots els partits
     de la BD (play-by-play complet, taula `jugades`). Versió simplificada: sense

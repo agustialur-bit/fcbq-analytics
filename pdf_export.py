@@ -823,7 +823,9 @@ def genera_pdf_partit(df_orig, teams, team_names, match_id, nom_a, nom_b, fa, fb
             elems.append(Paragraph("Box Score complet", SUBTITOL))
             elems.append(Paragraph(
                 "T2/T3/TL = c/i (convertits/intentats) · TS%/eFG% calculats a partir del box score · "
-                "REB = RO+RD · AS = assistències · BR = robatories · TAP = taps · BP = pèrdues · FC = faltes comeses",
+                "REB = RO+RD · AS = assistències · BR = robatories · TAP = taps · BP = pèrdues · FC = faltes comeses "
+                "· * = amb pocs tirs (p.ex. un sol triple encertat) el TS%/eFG% pot superar el 100% — és normal, "
+                "no un error.",
                 NORMAL))
             elems.append(Spacer(1, 4))
             for eq_id, eq_nom in [(tid_a, nom_a), (tid_b, nom_b)]:
@@ -840,7 +842,8 @@ def genera_pdf_partit(df_orig, teams, team_names, match_id, nom_a, nom_b, fa, fb
                     efg = round((r["T2C"] + 1.5 * r["T3C"]) / (tca) * 100, 1) if tca else None
                     data.append([r["Jugadora"], r["PTS"],
                                  f"{r['T2C']}/{r['T2I']}", f"{r['T3C']}/{r['T3I']}", f"{r['TLC']}/{r['TLI']}",
-                                 _na(ts), _na(efg), r["RO"], r["RD"], r["AS"], r["BR"], r["TAP"], r["BP"], r["FC"]])
+                                 core.fmt_pct_ast(ts), core.fmt_pct_ast(efg), r["RO"], r["RD"], r["AS"], r["BR"],
+                                 r["TAP"], r["BP"], r["FC"]])
                 elems.append(_tbl(data,
                     [30*mm, 11*mm, 13*mm, 13*mm, 13*mm, 11*mm, 11*mm, 9*mm, 9*mm, 9*mm, 9*mm, 9*mm, 9*mm, 9*mm],
                     font_size=7))
@@ -980,8 +983,10 @@ def genera_pdf_partit(df_orig, teams, team_names, match_id, nom_a, nom_b, fa, fb
         data = [["Jugadora", "Equip", "Min", "Pts", "TS%", "+/-"]]
         for r in clutch["jugadores"]:
             data.append([r["jugadora"], _bp(r["equip_nom"]), r["minuts"], r["punts"],
-                         r["TS%"] if r["TS%"] is not None else "—", r["+/-"]])
+                         core.fmt_pct_ast(r["TS%"]), r["+/-"]])
         elems.append(_tbl(data, [40 * mm, 45 * mm, 15 * mm, 15 * mm, 18 * mm, 15 * mm]))
+        elems.append(Paragraph(
+            "* = amb pocs tirs el TS% pot superar el 100% (p.ex. un sol triple encertat) — és normal.", NORMAL))
     else:
         elems.append(Paragraph("Sense tram clutch en aquest partit (marge >5 punts durant els últims 5 minuts).", NORMAL))
 
@@ -1042,6 +1047,8 @@ def genera_pdf_temporada():
     df_sz = core.load_shots_zones_db()
     if not df_sj.empty:
         elems.append(Paragraph("Rànquing de jugadores (top 30 per punts totals)", SUBTITOL))
+        elems.append(Paragraph(
+            "* = amb pocs tirs el TS%/eFG% pot superar el 100% (p.ex. un sol triple encertat) — és normal.", NORMAL))
         agg = df_sj.groupby(["jugador", "equip_nom"]).agg(
             Partits=("match_id", "nunique"), Punts=("punts", "sum"),
             C2=("cistelles_2", "sum"), C3=("cistelles_3", "sum"), TL=("tirs_lliures", "sum"),
@@ -1051,7 +1058,7 @@ def genera_pdf_temporada():
         data = [["Jugadora", "Equip", "PJ", "Pts", "C2", "C3", "TL", "TS%", "eFG%"]]
         for _, r in agg.iterrows():
             data.append([_bp(r["jugador"]), _bp(r["equip_nom"]), r["Partits"], r["Punts"], r["C2"], r["C3"], r["TL"],
-                         _na(r.get("TS%")), _na(r.get("eFG%"))])
+                         core.fmt_pct_ast(r.get("TS%")), core.fmt_pct_ast(r.get("eFG%"))])
         elems.append(_tbl(data, [34*mm, 34*mm, 9*mm, 11*mm, 9*mm, 9*mm, 9*mm, 11*mm, 11*mm], font_size=8))
         elems.append(PageBreak())
 
