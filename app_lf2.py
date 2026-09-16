@@ -273,9 +273,6 @@ with st.sidebar:
     st.markdown('<div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#9ca3af;margin-bottom:6px">Partit</div>', unsafe_allow_html=True)
     url_input = st.text_input("", placeholder="URL o ID del partit (feb.es)", label_visibility="collapsed")
     carregar = st.button("⬇ Carregar partit", use_container_width=True)
-    forcar_recarrega = st.checkbox("🔄 Torna a descarregar de feb.es",
-        help="Si el partit ja estava desat, sobreescriu les dades amb una descàrrega "
-             "nova de feb.es (útil si es van desar abans d'una millora de l'aplicació).")
     st.caption("Ex: https://www.feb.es/competiciones/partido/2477341")
     st.markdown("---")
     st.markdown('<div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#9ca3af;margin-bottom:6px">Filtres play-by-play</div>', unsafe_allow_html=True)
@@ -292,7 +289,7 @@ if carregar and url_input:
     mid = extract_feb_match_id(url_input)
     if not mid:
         st.error("ID no vàlid. Enganxa la URL sencera del partit a feb.es.")
-    elif partit_exists(mid) and not forcar_recarrega:
+    elif partit_exists(mid):
         st.session_state.df = load_jugades_db(mid)
         st.session_state.match_id = mid
         df_part = load_partits_db()
@@ -2114,6 +2111,32 @@ def _mig_camp_shapes():
     return shapes
 
 
+def _zona_heatmap_trace(resum_zona):
+    """Heatmap continu (graella fina 0.2m) acolorit per PPS (punts per tir) de
+    cada zona, classificant cada punt de la graella amb classifica_zona_tir_feb —
+    així els límits de zona (l'arc de triple, etc.) surten corbats de manera
+    natural en comptes d'un rectangle artificial per zona."""
+    pps_by_zona = {}
+    for _, r in resum_zona.iterrows():
+        valor = 3 if "Triple" in r["Zona"] else 2
+        pps_by_zona[r["Zona"]] = (r["Encerts"] / r["Tirs"] * valor) if r["Tirs"] else None
+    if not pps_by_zona:
+        return None
+
+    pas = 0.2
+    xs = [round(i * pas, 2) for i in range(int(14 / pas) + 1)]
+    ys = [round(i * pas, 2) for i in range(int(15 / pas) + 1)]
+    z = [[pps_by_zona.get(core.classifica_zona_tir_feb(x, y)) for x in xs] for y in ys]
+    valors = [v for v in pps_by_zona.values() if v is not None]
+    zmid = sum(valors) / len(valors) if valors else 1.0
+
+    return go.Heatmap(
+        x=xs, y=ys, z=z, zmid=zmid, opacity=0.55, showscale=True,
+        colorscale=[[0.0, "#dc2626"], [0.5, "#f9fafb"], [1.0, "#16a34a"]],
+        colorbar=dict(title="PPS", thickness=12), hoverinfo="skip",
+    )
+
+
 with t7:
     st.markdown(sec("🎯 Mapa de tir"), unsafe_allow_html=True)
     st.caption("Coordenades extretes automàticament del play-by-play de feb.es, "
@@ -2148,6 +2171,14 @@ with t7:
             dt["y_m"] = dt["y"] / 100 * 15.0
             dt["Zona"] = dt.apply(lambda r: core.classifica_zona_tir_feb(r["x_m"], r["y_m"]), axis=1)
 
+            ordre_zones = ["🎯 Zona pintada", "📍 Mig esquerra", "📍 Mig centre", "📍 Mig dreta",
+                           "🏹 Triple esquerra", "🏹 Triple centre", "🏹 Triple dreta"]
+            resum_zona = dt.groupby("Zona").agg(Tirs=("fet","size"), Encerts=("fet","sum")).reset_index()
+            resum_zona["%"] = (resum_zona["Encerts"] / resum_zona["Tirs"] * 100).round(1)
+            resum_zona["_ordre"] = resum_zona["Zona"].apply(
+                lambda z: ordre_zones.index(z) if z in ordre_zones else 99)
+            resum_zona = resum_zona.sort_values("_ordre").drop(columns="_ordre")
+
             fig_shot = go.Figure()
             for fet, color, nom in [(1, "#16a34a", "Encertat"), (0, "#dc2626", "Fallat")]:
                 d_f = dt[dt["fet"]==fet]
@@ -2168,6 +2199,21 @@ with t7:
             tot = len(dt); fets = int(dt["fet"].sum())
             st.markdown(card("Tirs totals", tot, f"{fets} encertats ({round(fets/tot*100,1) if tot else 0}%)", COLOR_A if eq_tir==nom_a else COLOR_B), unsafe_allow_html=True)
 
+            st.markdown("**Eficiència per zona (PPS)**")
+            st.caption("Color de cada zona = punts per tir (PPS). Verd = zona eficient, vermell = poc eficient.")
+            zona_trace = _zona_heatmap_trace(resum_zona)
+            if zona_trace is not None:
+                fig_zona = go.Figure()
+                fig_zona.add_trace(zona_trace)
+                fig_zona.update_layout(
+                    shapes=_mig_camp_shapes(),
+                    xaxis=dict(range=[-0.5, 15], showgrid=False, zeroline=False, visible=False),
+                    yaxis=dict(range=[-0.5, 15.5], showgrid=False, zeroline=False, visible=False,
+                               scaleanchor="x", scaleratio=1),
+                    paper_bgcolor="#fff", plot_bgcolor="#f9fafb", height=440,
+                    margin=dict(l=0,r=0,t=10,b=0))
+                st.plotly_chart(fig_zona, use_container_width=True)
+
             col_zt1, col_zt2 = st.columns(2)
             with col_zt1:
                 if jug_sel == "Totes" and not sense_id:
@@ -2178,20 +2224,13 @@ with t7:
                     st.dataframe(resum_tir, use_container_width=True, hide_index=True)
             with col_zt2:
                 st.markdown("**Per zona**")
-                ordre_zones = ["🎯 Zona pintada", "📍 Mig esquerra", "📍 Mig centre", "📍 Mig dreta",
-                               "🏹 Triple esquerra", "🏹 Triple centre", "🏹 Triple dreta"]
-                resum_zona = dt.groupby("Zona").agg(Tirs=("fet","size"), Encerts=("fet","sum")).reset_index()
-                resum_zona["%"] = (resum_zona["Encerts"] / resum_zona["Tirs"] * 100).round(1)
-                resum_zona["_ordre"] = resum_zona["Zona"].apply(
-                    lambda z: ordre_zones.index(z) if z in ordre_zones else 99)
-                resum_zona = resum_zona.sort_values("_ordre").drop(columns="_ordre")
                 st.dataframe(resum_zona, use_container_width=True, hide_index=True)
             st.caption("Esquerra/dreta = des del punt de vista de la jugadora que tira, mirant a cistella.")
 
             if sense_id:
                 st.caption("ℹ️ Aquest partit es va carregar abans d'identificar la jugadora de cada tir "
-                           "(pas afegit posteriorment) — marca '🔄 Torna a descarregar de feb.es' al panell "
-                           "esquerre i torna a prémer Carregar partit per recuperar-ho.")
+                           "(pas afegit posteriorment) — esborra'l des de la pestanya 📚 Històric i torna'l "
+                           "a carregar des de feb.es per recuperar-ho.")
 
 
 with t_desc:
@@ -2229,6 +2268,22 @@ with t_desc:
                     key="dl_pdf_temporada")
             else:
                 st.info("No hi ha partits a la base de dades.")
+
+    st.markdown("**Mapa de tir del partit**")
+    df_tirs_desc = load_tirs_fcbq(match_id=match_id)
+    st.caption(f"{len(df_tirs_desc)} tirs desats" if not df_tirs_desc.empty else "Sense tirs desats per aquest partit")
+    st.caption("Mig camp amb tots els tirs de cada equip, i una graella amb el mig camp de cada jugadora.")
+    if st.button("⬇ Generar PDF del Mapa de Tir", key="btn_pdf_mapa_tir", disabled=df_tirs_desc.empty):
+        pdf_mapa_bytes = pdfx.genera_pdf_mapa_tir(df_tirs_desc, match_id, nom_a, nom_b)
+        if pdf_mapa_bytes:
+            st.download_button(
+                label="📥 Clic per descarregar",
+                data=pdf_mapa_bytes,
+                file_name=f"mapa_tir_{match_id}.pdf",
+                mime="application/pdf",
+                key="dl_pdf_mapa_tir")
+        else:
+            st.info("Sense tirs desats per aquest partit.")
 
     st.markdown(sec("📊 Informes en Excel"), unsafe_allow_html=True)
     st.caption("Excel amb totes les mètriques avançades (moltes pestanyes) o el resum estàndard de temporada.")

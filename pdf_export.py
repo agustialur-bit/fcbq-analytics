@@ -7,6 +7,7 @@ funció reutilitzable — vegeu _impacte_en_pista_rows / _rot_per_equip / etc.
 més avall), només maqueta el que ja existeix en un PDF descarregable.
 """
 import io
+import math
 from datetime import datetime
 
 import pandas as pd
@@ -14,8 +15,8 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
-from reportlab.graphics.shapes import Drawing, Rect, String, Line, PolyLine
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, KeepTogether
+from reportlab.graphics.shapes import Drawing, Rect, String, Line, PolyLine, Circle
 
 from scipy import stats as sp_stats
 
@@ -217,7 +218,7 @@ def _heatmap_parelles_elems(parelles, intervals, eq_id, eq_nom):
             matrix[j][i] = v
 
     vmax = max([abs(v) for row in matrix for v in row if v is not None] or [1]) or 1
-    noms_curts = [j.split()[-1] if len(j.split()) > 1 else j for j in jugs]
+    noms_curts = [j.split()[1] if len(j.split()) > 1 else j for j in jugs]
 
     data = [[""] + [_hp(nc) for nc in noms_curts]]
     style_cmds = [
@@ -348,6 +349,263 @@ def _rotacions_drawing(df_orig, teams, eq_id, eq_nom):
         d.add(String(LABEL_W + PLOT_W + 3, H - TOP_M - 7, "Parcial ±", fontSize=6, fillColor=FOSC))
 
     return d
+
+
+def _rendiment_quart_rows(df_orig, teams):
+    """Possessions, ritme, TS% i Off Rtg per quart i equip — mateix càlcul que
+    '📊 Rendiment per quart' en pantalla."""
+    rows = []
+    if not teams or df_orig.empty:
+        return rows
+    for q in sorted(df_orig["quart"].unique()):
+        df_q = df_orig[df_orig["quart"] == q]
+        for tid in teams[:2]:
+            df_eq_q = df_q[df_q["idEquip"].astype(str) == str(tid)]
+            tc_q = int(df_eq_q["accio"].str.contains(core.TC_INT_PAT, case=False, na=False).sum())
+            tl_q = int(df_eq_q["accio"].str.contains(core.TL_INT_PAT, case=False, na=False).sum())
+            poss_q = tc_q + 0.44 * tl_q
+            pts_q = int(df_eq_q["punts"].sum())
+            ts_q = round(pts_q / (2 * poss_q) * 100, 1) if poss_q > 0 else 0.0
+            off_rtg_q = round(pts_q / poss_q * 100, 1) if poss_q > 0 else 0.0
+            ritme_q = round(poss_q / 10, 2)
+            rows.append({"quart": int(q), "equip_id": str(tid), "poss": round(poss_q, 1),
+                         "pts": pts_q, "ts": ts_q, "off_rtg": off_rtg_q, "ritme": ritme_q})
+    return rows
+
+
+def _usage_pts40_drawing(rows):
+    """Bombolles Usage% vs Pts/40min (mida = minuts totals) per un equip —
+    mateix gràfic que 'Usage% vs Pts/40min' en pantalla, redibuixat amb
+    reportlab.graphics perquè es pugui incrustar al PDF."""
+    if not rows:
+        return None
+
+    xs = [r["Usage%"] for r in rows]
+    ys = [r["Pts/40min"] for r in rows]
+    mins = [max(r["Min tot"], 1) for r in rows]
+    mitj_x, mitj_y = sum(xs) / len(xs), sum(ys) / len(ys)
+
+    x_lo, x_hi = min(xs), max(xs)
+    y_lo, y_hi = min(ys), max(ys)
+    x_pad = (x_hi - x_lo) * 0.15 or 5
+    y_pad = (y_hi - y_lo) * 0.15 or 5
+    x_lo -= x_pad; x_hi += x_pad
+    y_lo -= y_pad; y_hi += y_pad
+
+    PLOT_W, PLOT_H = 125 * mm, 80 * mm
+    L_M, B_M, T_M, R_M = 12 * mm, 12 * mm, 4 * mm, 4 * mm
+    W = L_M + PLOT_W + R_M
+    H = B_M + PLOT_H + T_M
+
+    d = Drawing(W, H)
+
+    def x_of(v):
+        return L_M + (v - x_lo) / (x_hi - x_lo) * PLOT_W
+
+    def y_of(v):
+        return B_M + (v - y_lo) / (y_hi - y_lo) * PLOT_H
+
+    GRIS = colors.HexColor("#9ca3af")
+    FOSC = colors.HexColor("#374151")
+    GRIS_CLAR2 = colors.HexColor("#e2e4e8")
+
+    d.add(Rect(L_M, B_M, PLOT_W, PLOT_H, fillColor=colors.HexColor("#f9fafb"),
+                strokeColor=GRIS_CLAR2, strokeWidth=0.6))
+
+    d.add(Line(x_of(mitj_x), B_M, x_of(mitj_x), B_M + PLOT_H, strokeColor=GRIS_CLAR2,
+                strokeDashArray=[2, 2], strokeWidth=0.6))
+    d.add(Line(L_M, y_of(mitj_y), L_M + PLOT_W, y_of(mitj_y), strokeColor=GRIS_CLAR2,
+                strokeDashArray=[2, 2], strokeWidth=0.6))
+
+    max_min = max(mins)
+    for r, x, y, m in zip(rows, xs, ys, mins):
+        radius = 1.3 * mm + (m / max_min) * 2.6 * mm
+        cx, cy = x_of(x), y_of(y)
+        d.add(Circle(cx, cy, radius, fillColor=BLAU, strokeColor=colors.white, strokeWidth=0.6,
+                      fillOpacity=0.85))
+        nom_curt = r["Jugadora"].split()[1] if len(r["Jugadora"].split()) > 1 else r["Jugadora"]
+        d.add(String(cx, cy + radius + 2, nom_curt, fontSize=6, fillColor=FOSC, textAnchor="middle"))
+
+    # eixos: ticks arrodonits
+    for xt in _axis_ticks(x_lo + x_pad, x_hi - x_pad):
+        xp = x_of(xt)
+        if L_M <= xp <= L_M + PLOT_W:
+            d.add(Line(xp, B_M, xp, B_M - 1.5, strokeColor=GRIS, strokeWidth=0.5))
+            d.add(String(xp, B_M - 8, f"{xt:g}%", fontSize=6, fillColor=GRIS, textAnchor="middle"))
+    for yt in _axis_ticks(y_lo + y_pad, y_hi - y_pad):
+        yp = y_of(yt)
+        if B_M <= yp <= B_M + PLOT_H:
+            d.add(Line(L_M, yp, L_M - 1.5, yp, strokeColor=GRIS, strokeWidth=0.5))
+            d.add(String(L_M - 3, yp - 2, f"{yt:g}", fontSize=6, fillColor=GRIS, textAnchor="end"))
+
+    d.add(String(L_M + PLOT_W / 2, 2, "Usage%", fontSize=6.5, fillColor=FOSC, textAnchor="middle"))
+    d.add(String(3, B_M + PLOT_H / 2, "Pts/40min", fontSize=6.5, fillColor=FOSC, textAnchor="middle",
+                  transform=[0, 1, -1, 0, 3, B_M + PLOT_H / 2]))
+
+    return d
+
+
+def _axis_ticks(lo, hi, n=5):
+    """Marques d'eix arrodonides i "boniques" entre lo i hi (aprox n marques)."""
+    if hi <= lo:
+        return [lo]
+    span = hi - lo
+    raw_step = span / max(n - 1, 1)
+    mag = 10 ** (len(str(int(raw_step))) - 1) if raw_step >= 1 else 1
+    for mult in (1, 2, 2.5, 5, 10):
+        step = mult * mag
+        if step >= raw_step:
+            break
+    start = round(lo / step) * step
+    ticks = []
+    v = start
+    while v <= hi + step * 0.5:
+        if v >= lo - step * 0.5:
+            ticks.append(round(v, 2))
+        v += step
+    return ticks or [lo, hi]
+
+
+def _arc_polyline_pts(cx, cy, r, a0, a1, n, scale):
+    """Punts (llista plana x,y,x,y...) d'un arc de radi r centrat a (cx,cy),
+    escalats per `scale` (punts per metre) — versió reportlab.graphics de
+    _arc_path_m() (app_lf2.py, que fa servir Plotly)."""
+    pts = []
+    for i in range(n):
+        t = a0 + (a1 - a0) * i / (n - 1)
+        pts += [(cx + r * math.cos(t)) * scale, (cy + r * math.sin(t)) * scale]
+    return pts
+
+
+def _court_shapes(scale):
+    """Formes (reportlab.graphics) d'un mig camp FIBA (28x15m real, aquí
+    0-14m de llarg des del mig camp fins la línia de fons, 0-15m d'ample),
+    escalades per `scale` (punts per metre) — versió reportlab.graphics de
+    _mig_camp_shapes() (app_lf2.py, que fa servir Plotly)."""
+    LINE = colors.HexColor("#cbd5e1")
+    bx, by = 12.425, 7.5
+    shapes = [
+        Rect(0, 0, 14 * scale, 15 * scale, fillColor=None, strokeColor=LINE, strokeWidth=0.6),
+        Rect(8.2 * scale, (by - 2.45) * scale, (14 - 8.2) * scale, 4.9 * scale,
+             fillColor=None, strokeColor=LINE, strokeWidth=0.6),
+        PolyLine(_arc_polyline_pts(8.2, by, 1.8, 0, 2 * math.pi, 32, scale), strokeColor=LINE, strokeWidth=0.6),
+        Circle(bx * scale, by * scale, 0.225 * scale, fillColor=None,
+               strokeColor=colors.HexColor("#f97316"), strokeWidth=1.2),
+        Line(12.8 * scale, (by - 0.9) * scale, 12.8 * scale, (by + 0.9) * scale, strokeColor=LINE, strokeWidth=0.6),
+        PolyLine(_arc_polyline_pts(bx, by, 1.25, -math.pi / 2, -3 * math.pi / 2, 20, scale),
+                 strokeColor=LINE, strokeWidth=0.6),
+        Line(14 * scale, (by - 1.25) * scale, bx * scale, (by - 1.25) * scale, strokeColor=LINE, strokeWidth=0.6),
+        Line(14 * scale, (by + 1.25) * scale, bx * scale, (by + 1.25) * scale, strokeColor=LINE, strokeWidth=0.6),
+    ]
+    R3, corner_y = 6.75, 0.9
+    dx_c = math.sqrt(max(R3 ** 2 - (by - corner_y) ** 2, 0))
+    theta_low = math.atan2(-(by - corner_y), dx_c)
+    theta_high = math.atan2(by - corner_y, dx_c) - 2 * math.pi
+    shapes += [
+        PolyLine(_arc_polyline_pts(bx, by, R3, theta_low, theta_high, 48, scale), strokeColor=LINE, strokeWidth=0.6),
+        Line(14 * scale, corner_y * scale, (bx + dx_c) * scale, corner_y * scale, strokeColor=LINE, strokeWidth=0.6),
+        Line(14 * scale, (15 - corner_y) * scale, (bx + dx_c) * scale, (15 - corner_y) * scale,
+             strokeColor=LINE, strokeWidth=0.6),
+    ]
+    return shapes
+
+
+def _shot_map_drawing(df_sub, scale_mm=5.5):
+    """Mig camp amb un punt per tir (verd=encertat, vermell=fallat). df_sub ha
+    de tenir columnes x_m,y_m (metres, ja normalitzades a una sola cistella) i
+    fet (0/1) — vegeu _prep_tirs()."""
+    scale = scale_mm * mm
+    d = Drawing(14 * scale, 15 * scale)
+    for shp in _court_shapes(scale):
+        d.add(shp)
+    r_punt = max(0.9, min(1.3, scale_mm * 0.22)) * mm
+    for _, row in df_sub.iterrows():
+        color = colors.HexColor("#16a34a") if row["fet"] else colors.HexColor("#dc2626")
+        d.add(Circle(row["x_m"] * scale, row["y_m"] * scale, r_punt,
+                      fillColor=color, strokeColor=colors.white, strokeWidth=0.35, fillOpacity=0.85))
+    return d
+
+
+def _prep_tirs(df_tirs):
+    """Normalitza les coordenades de tirs_fcbq (feb.es, pista sencera 0-100)
+    a metres sobre una sola cistella — mateixa transformació que el Mapa de
+    Tir en pantalla (app_lf2.py)."""
+    dfp = df_tirs.copy()
+    dfp["jugador"] = dfp["jugador"].fillna("").replace("", "Sense identificar")
+    mirall = dfp["x"] < 50
+    dfp.loc[mirall, "x"] = 100 - dfp.loc[mirall, "x"]
+    dfp["x_m"] = (dfp["x"] - 50) / 50 * 14.0
+    dfp["y_m"] = dfp["y"] / 100 * 15.0
+    return dfp
+
+
+def genera_pdf_mapa_tir(df_tirs, match_id, nom_a, nom_b):
+    """Informe PDF només del Mapa de Tir: un mig camp amb tots els tirs per
+    equip, seguit d'una graella d'un mig camp petit per jugadora."""
+    if df_tirs.empty:
+        return None
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=18 * mm, bottomMargin=15 * mm)
+    elems = [
+        Paragraph("Mapa de tir", TITOL),
+        Paragraph(f"Partit {match_id} · Generat {datetime.now().strftime('%d/%m/%Y %H:%M')}", NORMAL),
+        Spacer(1, 10),
+    ]
+
+    dfp = _prep_tirs(df_tirs)
+    nom_jug_style = ParagraphStyle("NomJugMapa", parent=NORMAL, fontSize=8, textColor=BLAU_FOSC, alignment=1)
+    tirs_jug_style = ParagraphStyle("TirsJugMapa", parent=NORMAL, fontSize=7.5, textColor=colors.HexColor("#6b7280"),
+                                     alignment=1, spaceBefore=2)
+
+    equips_amb_tirs = [n for n in [nom_a, nom_b] if not dfp[dfp["equip_nom"] == n].empty]
+    for idx_eq, eq_nom in enumerate(equips_amb_tirs):
+        d_eq = dfp[dfp["equip_nom"] == eq_nom]
+        elems.append(Paragraph(eq_nom, SUBTITOL))
+        tot = len(d_eq)
+        fets = int(d_eq["fet"].sum())
+        elems.append(Paragraph(f"{tot} tirs · {fets} encertats ({round(fets / tot * 100, 1) if tot else 0}%)",
+                                NORMAL))
+        elems.append(Spacer(1, 4))
+        elems.append(_shot_map_drawing(d_eq, scale_mm=6.0))
+        elems.append(Spacer(1, 8))
+
+        jugadores = sorted(j for j in d_eq["jugador"].unique() if j != "Sense identificar")
+        if jugadores:
+            elems.append(Paragraph(f"Per jugadora — {eq_nom}", ParagraphStyle(
+                f"PerJugMapa_{idx_eq}", parent=NORMAL, textColor=BLAU_FOSC, fontSize=10,
+                spaceBefore=4, spaceAfter=4)))
+            files = []
+            fila = []
+            for jug in jugadores:
+                d_j = d_eq[d_eq["jugador"] == jug]
+                tot_j = len(d_j)
+                fets_j = int(d_j["fet"].sum())
+                fila.append([
+                    Paragraph(jug, nom_jug_style),
+                    _shot_map_drawing(d_j, scale_mm=2.6),
+                    Paragraph(f"{fets_j}/{tot_j} ({round(fets_j / tot_j * 100, 1) if tot_j else 0}%)",
+                              tirs_jug_style),
+                ])
+                if len(fila) == 3:
+                    files.append(fila)
+                    fila = []
+            if fila:
+                fila += [""] * (3 - len(fila))
+                files.append(fila)
+            t_grid = Table(files, colWidths=[52 * mm] * 3)
+            t_grid.setStyle(TableStyle([
+                ("VALIGN", (0, 0), (-1, -1), "TOP"), ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ]))
+            elems.append(t_grid)
+
+        if idx_eq < len(equips_amb_tirs) - 1:
+            elems.append(PageBreak())
+
+    doc.build(elems)
+    buf.seek(0)
+    return buf.getvalue()
 
 
 # ══════════════════════════════════════════════════
@@ -514,6 +772,48 @@ def genera_pdf_partit(df_orig, teams, team_names, match_id, nom_a, nom_b, fa, fb
                              da.get("ppp") if da.get("ppp") is not None else "—", da.get("poss", 0),
                              db.get("ppp") if db.get("ppp") is not None else "—", db.get("poss", 0)])
             elems.append(_tbl(data, [55 * mm, 25 * mm, 20 * mm, 25 * mm, 20 * mm]))
+
+        # ── Rendiment per quart ──────────────────────────────────────────
+        rq = _rendiment_quart_rows(df_orig, teams)
+        if rq:
+            quart_elems = [
+                Paragraph("Rendiment per quart", SUBTITOL),
+                Paragraph(
+                    "Off Rtg = pts/100 poss · TS% = pts/(2×poss)×100 · Ritme = poss/min (quarts de 10 min).", NORMAL),
+                Spacer(1, 3),
+            ]
+            header1 = [_hp("Quart"), _hp(nom_a), "", "", "", "", _hp(nom_b), "", "", "", ""]
+            header2 = ["", _hp("Poss"), _hp("Ritme"), _hp("TS%"), _hp("OffRtg"), _hp("Pts"),
+                       _hp("Pts"), _hp("OffRtg"), _hp("TS%"), _hp("Ritme"), _hp("Poss")]
+            data = [header1, header2]
+            style_cmds = [
+                ("SPAN", (0, 0), (0, 1)), ("SPAN", (1, 0), (5, 0)), ("SPAN", (6, 0), (10, 0)),
+                ("BACKGROUND", (0, 0), (-1, 1), BLAU),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#B5D4F4")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("FONTSIZE", (0, 0), (-1, -1), 7.5),
+                ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]
+            quarts_uniq = sorted({r["quart"] for r in rq})
+            for q_val in quarts_uniq:
+                ra = next((r for r in rq if r["quart"] == q_val and r["equip_id"] == str(tid_a)), None)
+                rb = next((r for r in rq if r["quart"] == q_val and r["equip_id"] == str(tid_b)), None)
+                if not ra or not rb:
+                    continue
+                row_i = len(data)
+                data.append([f"Q{q_val}", ra["poss"], ra["ritme"], ra["ts"], ra["off_rtg"], ra["pts"],
+                             rb["pts"], rb["off_rtg"], rb["ts"], rb["ritme"], rb["poss"]])
+                if ra["pts"] > rb["pts"]:
+                    style_cmds.append(("BACKGROUND", (5, row_i), (5, row_i), colors.HexColor("#D5F5E3")))
+                elif rb["pts"] > ra["pts"]:
+                    style_cmds.append(("BACKGROUND", (6, row_i), (6, row_i), colors.HexColor("#D5F5E3")))
+                else:
+                    style_cmds.append(("BACKGROUND", (5, row_i), (6, row_i), colors.HexColor("#FFF3CD")))
+            t_q = Table(data, colWidths=[10 * mm] + [12 * mm] * 10)
+            t_q.setStyle(TableStyle(style_cmds))
+            quart_elems.append(t_q)
+            elems.append(KeepTogether(quart_elems))
 
         elems.append(PageBreak())
 
@@ -808,8 +1108,18 @@ def genera_pdf_temporada():
             elems.append(Paragraph("Usage% vs Pts/40min", SUBTITOL))
             elems.append(Paragraph(
                 "Volum ofensiu (Usage%) vs productivitat anotadora normalitzada a 40 minuts, "
-                "acumulat de tota la temporada.", NORMAL))
+                "acumulat de tota la temporada. Mida de la bombolla = minuts totals jugats.", NORMAL))
             elems.append(Spacer(1, 4))
+            for eq_nom_p40 in sorted({r["Equip"] for r in rows_p40}):
+                rows_eq_p40 = [r for r in rows_p40 if r["Equip"] == eq_nom_p40]
+                d_p40 = _usage_pts40_drawing(rows_eq_p40)
+                if d_p40 is None:
+                    continue
+                elems.append(Paragraph(eq_nom_p40, ParagraphStyle(f"EqLabelP40_{eq_nom_p40}", parent=NORMAL,
+                                                                     textColor=BLAU_FOSC, fontSize=10,
+                                                                     spaceBefore=6, spaceAfter=3)))
+                elems.append(d_p40)
+                elems.append(Spacer(1, 4))
             data = [["Jugadora", "Equip", "Partits", "Min tot", "Pts tot", "Usage%", "Pts/40min"]]
             for r in sorted(rows_p40, key=lambda r: -r["Pts/40min"]):
                 data.append([_bp(r["Jugadora"]), _bp(r["Equip"]), r["Partits"], r["Min tot"], r["Pts tot"],
