@@ -2,15 +2,35 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import urllib.request
-import json, re, sqlite3, os
+import urllib.request, urllib.error
+import json, re, sqlite3, os, base64
 from datetime import datetime
 
 st.set_page_config(page_title="Analítica", page_icon="🏀", layout="wide", initial_sidebar_state="expanded")
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "historic.db")
-API_BASE = "https://msstats.optimalwayconsulting.com/v1/fcbq/getJsonWithMatchMoves/{match_id}?currentSeason=true"
-WEB_BASE = "https://www.basquetcatala.cat/estadistiques/2025/{match_id}"
+# API de msstats — des del setembre 2026 l'endpoint antic (getJsonWithMatchMoves)
+# retorna {} sempre; el nou està sota /matches/{id}/... i demana un token Bearer.
+API_MATCH = "https://msstats.optimalwayconsulting.com/v1/fcbq/matches/{match_id}/{recurs}?currentSeason=true"
+WEB_BASE = "https://www.basquetcatala.cat/estadistica/partit/{match_id}"
+
+# El play-by-play nou ve amb codis d'esdeveniment en lloc del text català que
+# feia servir l'API antiga. Els traduïm perquè la resta de l'app no canviï.
+EVENT_CODES = {
+    "D1": "Cistella de 1", "D2": "Cistella de 2", "D3": "Cistella de 3",
+    "F1": "Intent fallat de 1", "F2": "Intent fallat de 2", "F3": "Intent fallat de 3",
+    "IN": "Entra al camp", "OUT": "Surt del camp",
+    "TM": "Temps mort", "INIPER": "Inici de període", "FINPER": "Final de període",
+}
+# Les faltes porten a sobre el comptador personal de la jugadora (", 3a falta"),
+# tal com feia l'API antiga: hi ha codi que compta faltes amb contains("falta").
+CODIS_FALTA = {
+    "P": "Personal", "P1": "Personal 1 tir lliure", "P2": "Personal 2 tirs lliures",
+    "P3": "Personal 3 tirs lliures", "AT": "Falta en atac",
+    "DI2": "Antiesportiva 2 tirs lliures", "TE1": "Falta tècnica 1 tir lliure",
+}
+PUNTS_CODI = {"D1": 1, "D2": 2, "D3": 3}
+CODIS_EQUIP = {"TM", "INIPER", "FINPER"}
 COLOR_A, COLOR_B = "#185FA5", "#993C1D"
 
 import analitica_core as core
@@ -110,81 +130,99 @@ def extract_match_id(text):
     if re.match(r"^[a-f0-9]{24}$", text): return text
     return None
 
+def api_token():
+    """Token Bearer de l'API. Per ordre: el que has enganxat a la barra lateral,
+    st.secrets["FCBQ_TOKEN"] o la variable d'entorn FCBQ_TOKEN."""
+    tok = str(st.session_state.get("api_token") or "").strip()
+    if not tok:
+        try: tok = str(st.secrets.get("FCBQ_TOKEN", "") or "").strip()
+        except Exception: tok = ""
+    if not tok:
+        tok = os.environ.get("FCBQ_TOKEN", "").strip()
+    if tok.lower().startswith("bearer "): tok = tok[7:].strip()
+    return tok
+
+def token_segons_restants(tok):
+    """Segons que queden abans que caduqui el token (None si no es pot llegir)."""
+    try:
+        payload = tok.split(".")[1]
+        dades = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        return int(dades["exp"]) - int(datetime.now().timestamp())
+    except Exception:
+        return None
+
+def api_get(match_id, recurs):
+    """Crida un recurs del partit ('pbp' o 'stats') i en retorna el JSON."""
+    tok = api_token()
+    if not tok:
+        raise RuntimeError("Falta el token de l'API — posa'l a la barra lateral, a «🔑 Token API».")
+    req = urllib.request.Request(
+        API_MATCH.format(match_id=match_id, recurs=recurs),
+        headers={
+            "Accept": "application/json, text/plain, */*", "Accept-Language": "ca",
+            "Authorization": f"Bearer {tok}", "federation": "fcbq",
+            "Origin": "https://www.basquetcatala.cat",
+            "Referer": "https://www.basquetcatala.cat/",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            raise RuntimeError("Token caducat o no vàlid — n'has d'agafar un de nou (duren 2 h).") from None
+        if e.code in (404, 500):
+            raise RuntimeError("L'API no troba aquest partit — comprova que l'ID o la URL siguin correctes.") from None
+        raise RuntimeError(f"L'API ha respost amb un error {e.code}.") from None
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"No s'ha pogut connectar amb l'API: {e.reason}") from None
+
 def fetch_and_parse(match_id):
-    # Prova amb currentSeason=true i sense (per compatibilitat entre temporades)
-    urls_a_provar = [
-        API_BASE.format(match_id=match_id),
-        API_BASE.format(match_id=match_id).replace("currentSeason=true","currentSeason=false"),
-        f"https://msstats.optimalwayconsulting.com/v1/fcbq/getJsonWithMatchMoves/{match_id}",
-    ]
-    # Referers possibles — prova tots dos formats de URL
-    referers = [
-        f"https://www.basquetcatala.cat/competicions-anteriors/resultat/estadistiques/2025/{match_id}",
-        f"https://www.basquetcatala.cat/estadistiques/2025/{match_id}",
-        f"https://www.basquetcatala.cat/estadistiques/2024/{match_id}",
-        f"https://www.basquetcatala.cat/",
-    ]
-    data = None
-    for url in urls_a_provar:
-        for referer in referers:
-            try:
-                req = urllib.request.Request(url, headers={
-                    "User-Agent":"Mozilla/5.0","Accept":"application/json",
-                    "Referer": referer})
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    data = json.loads(resp.read())
-                if data: break
-            except: continue
-        if data: break
-    if not data: raise Exception("No s'ha pogut obtenir dades de l'API")
-
-    if isinstance(data, list): data = {"moves": data}
-    raw = data.get("moves") or data.get("matchMoves") or data.get("playByPlay") or []
+    """Descarrega el play-by-play del partit i el tradueix a l'esquema de sempre
+    (num, quart, temps, min_num, idEquip, dorsal, jugador, accio, marcador,
+    punts, teamAction) perquè la resta de l'app funcioni sense canvis."""
+    raw = (api_get(match_id, "pbp") or {}).get("playByPlay") or []
     if not raw:
-        for v in data.values():
-            if isinstance(v,list) and len(v)>3: raw=v; break
+        raise RuntimeError("Aquest partit encara no té el play-by-play publicat.")
 
-    # Detecta els noms de camps reals del primer element
-    camp_equip = "idTeam"
-    camp_jugador = "actorName"
-    camp_accio = "move"
-    camp_dorsal = "actorShirtNumber"
-    camp_score = "score"
-    camp_period = "period"
-    if raw and isinstance(raw[0], dict):
-        primer = raw[0]
-        # Camp equip
-        for c in ["idTeam","teamId","id_team","idEquip","equipId","team_id","idequip"]:
-            if c in primer: camp_equip = c; break
-        # Camp jugador
-        for c in ["actorName","playerName","jugador","actor_name","name","player"]:
-            if c in primer: camp_jugador = c; break
-        # Camp acció
-        for c in ["move","action","accio","moveText","actionText","description"]:
-            if c in primer: camp_accio = c; break
-        # Camp dorsal
-        for c in ["actorShirtNumber","shirtNumber","dorsal","shirt_number","number"]:
-            if c in primer: camp_dorsal = c; break
-        # Camp marcador
-        for c in ["score","marcador","scoreText","currentScore"]:
-            if c in primer: camp_score = c; break
-        # Camp periode
-        for c in ["period","quart","quarter","cuarto"]:
-            if c in primer: camp_period = c; break
+    # La capçalera porta els noms reals dels equips. Si falla, seguim igualment.
+    noms_api = {}
+    try:
+        capc = (api_get(match_id, "stats") or {}).get("header") or {}
+        for costat in ("localTeam", "visitorTeam"):
+            eq = capc.get(costat) or {}
+            if eq.get("uuid"): noms_api[eq["uuid"]] = eq.get("name", "")
+    except Exception:
+        pass
+    st.session_state["noms_api"] = noms_api
 
-    rows = []
-    for i,play in enumerate(raw):
-        if not isinstance(play,dict): continue
-        mn=play.get("min",""); sc=play.get("sec","")
-        temps=f"{int(mn):02d}:{int(sc):02d}" if mn!="" and sc!="" else str(mn)
-        move=play.get(camp_accio,"")
-        punts=3 if "Cistella de 3" in move else (2 if "Cistella de 2" in move else (1 if ("Cistella de 1" in move or "Tir lliure convertit" in move) else 0))
-        rows.append({"num":i+1,"quart":play.get(camp_period,""),"temps":temps,
-            "min_num":float(mn)+float(sc)/60 if mn!="" else 0,
-            "idEquip":str(play.get(camp_equip,"")),"dorsal":play.get(camp_dorsal,""),
-            "jugador":play.get(camp_jugador,""),"accio":move,
-            "marcador":play.get(camp_score,""),"punts":punts,
-            "teamAction":play.get("teamAction",False)})
+    rows, desconeguts, faltes_jug = [], set(), {}
+    for i, ev in enumerate(raw):
+        if not isinstance(ev, dict): continue
+        codi = str(ev.get("eventTypeCode") or "")
+        if codi in CODIS_FALTA:
+            clau = str(ev.get("uuid") or "") or f"{ev.get('teamUuid')}|{ev.get('actorName')}"
+            faltes_jug[clau] = faltes_jug.get(clau, 0) + 1
+            accio = f"{CODIS_FALTA[codi]}, {faltes_jug[clau]}a falta"
+        else:
+            accio = EVENT_CODES.get(codi)
+            if accio is None:
+                accio = codi or "?"
+                desconeguts.add(codi)
+        mn = ev.get("minute"); sc = ev.get("second")
+        mn = 0 if mn in (None, "") else int(mn)
+        sc = 0 if sc in (None, "") else int(sc)
+        id_equip = str(ev.get("teamUuid") or "") or "0"
+        jugador = ev.get("actorName") or ""
+        if codi == "TM": jugador = noms_api.get(id_equip, "")
+        rows.append({"num": i+1, "quart": ev.get("period", ""),
+            "temps": f"{mn:02d}:{sc:02d}", "min_num": mn + sc/60,
+            "idEquip": id_equip, "dorsal": ev.get("dorsal") or "",
+            "jugador": jugador, "accio": accio,
+            "marcador": f"{ev.get('localScore', 0)}-{ev.get('visitorScore', 0)}",
+            "punts": PUNTS_CODI.get(codi, 0), "teamAction": codi in CODIS_EQUIP})
+
+    st.session_state["codis_desconeguts"] = sorted(c for c in desconeguts if c)
     return pd.DataFrame(rows)
 
 # ══════════════════════════════════════════════════
@@ -199,6 +237,19 @@ with st.sidebar:
         <div style="width:34px;height:34px;background:#E6F1FB;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px">🏀</div>
         <div><div style="font-size:13px;font-weight:600;color:#1a1c22">Analítica</div>
         <div style="font-size:11px;color:#9ca3af">Analítica de Bàsquet</div></div></div>""", unsafe_allow_html=True)
+
+    with st.expander("🔑 Token API", expanded=not api_token()):
+        st.caption("basquetcatala.cat protegeix l'API amb un token que dura 2 h. "
+                   "Obre qualsevol partit al navegador → F12 → Network → Fetch/XHR → "
+                   "copia el valor de la capçalera Authorization.")
+        st.text_input("Bearer token", key="api_token", type="password",
+                      placeholder="eyJraWQiOiJXRUIi...", label_visibility="collapsed")
+        _tok = api_token()
+        if _tok:
+            _seg = token_segons_restants(_tok)
+            if _seg is None:  st.caption("⚠️ No sembla un JWT vàlid.")
+            elif _seg <= 0:   st.caption("🔴 Caducat — cal enganxar-ne un de nou.")
+            else:             st.caption(f"🟢 Vàlid durant {_seg//60} min més.")
 
     st.markdown('<div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#9ca3af;margin-bottom:6px">Partit</div>', unsafe_allow_html=True)
     url_input = st.text_input("", placeholder="URL o ID del partit", label_visibility="collapsed")
@@ -229,7 +280,11 @@ with st.sidebar:
                         teams_m = get_teams_ordered(df_m)
                         noms_m = {}
                         for j, tid_m in enumerate(teams_m[:2]):
-                            noms_m[tid_m] = noms_guardats_multi.get(tid_m, f"Equip {chr(65+j)}")
+                            noms_api_m = st.session_state.get("noms_api", {})
+                            nom_m = noms_guardats_multi.get(tid_m) or noms_api_m.get(tid_m)
+                            if nom_m and tid_m not in noms_guardats_multi:
+                                save_nom_equip(tid_m, nom_m)
+                            noms_m[tid_m] = nom_m or f"Equip {chr(65+j)}"
                         id_a_m = teams_m[0] if teams_m else ""
                         id_b_m = teams_m[1] if len(teams_m)>1 else ""
                         sdf_m = score_evo(df_m); sa, sb = final_score(sdf_m)
@@ -242,7 +297,7 @@ with st.sidebar:
                     else:
                         errors.append(f"No trobat: {mid_multi[:20]}")
                 except Exception as ex:
-                    errors.append(f"Error {mid_multi[:20]}: {str(ex)[:30]}")
+                    errors.append(f"Error {mid_multi[:20]}: {ex}")
                 progress.progress((i+1)/len(linies))
             if ok > 0:
                 st.success(f"✅ {ok}/{len(linies)} partits carregats!")
@@ -286,10 +341,13 @@ if carregar and url_input:
                 df = fetch_and_parse(mid)
                 teams_tmp = get_teams_ordered(df)
                 noms_guardats = load_noms_equips()
+                noms_api = st.session_state.get("noms_api", {})
                 def get_nom(i, tid, input_nom):
                     if input_nom and input_nom.strip():
                         save_nom_equip(tid, input_nom.strip()); return input_nom.strip()
                     if tid in noms_guardats: return noms_guardats[tid]
+                    if noms_api.get(tid):
+                        save_nom_equip(tid, noms_api[tid]); return noms_api[tid]
                     return f"Equip {chr(65+i)}"
                 noms = {}
                 inputs = [nom_equip_1, nom_equip_2]
@@ -309,8 +367,11 @@ if carregar and url_input:
                 st.session_state.score_a = fa
                 st.session_state.score_b = fb
                 st.success("Carregat i desat ✅")
+                if st.session_state.get("codis_desconeguts"):
+                    st.warning("Codis d'acció no reconeguts (avisa'm per afegir-los): "
+                               + ", ".join(st.session_state["codis_desconeguts"]))
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(str(e))
 
 # ── Pantalla inicial ────────────────────────────────────────────────────────────
 if st.session_state.df is None:
