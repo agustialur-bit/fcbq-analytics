@@ -1,19 +1,22 @@
 # -*- coding: utf-8 -*-
-"""Pont per rebre el token de l'API sense haver-lo de copiar a mà.
+"""Pont per renovar el token de l'API sense haver de rebuscar-lo al navegador.
 
 basquetcatala.cat protegeix tot el web amb un reCAPTCHA i emet el token de
 l'API (JWT de 2 h) només un cop passat. Això vol dir que el token l'ha
 d'obtenir una persona amb un navegador de debò — no es pot automatitzar sense
 saltar-se la protecció anti-bot, i no ho fem.
 
-El que sí que estalviem és el F12 → Network → copiar la capçalera: el
-bookmarklet d'aquí sota llegeix el token que la pàgina ja té i l'envia a
-aquest receptor, que escolta només a 127.0.0.1 i el desa a `.fcbq_token`.
-L'app el recull sola a la següent interacció.
+El que sí que estalviem és el F12 → Network → copiar la capçalera. El
+bookmarklet d'aquí sota llegeix el token que la pàgina ja té i:
 
-Si el receptor no hi és (per exemple amb l'app desplegada a Streamlit Cloud,
-on el navegador no arriba al localhost del contenidor), el bookmarklet es
-queda el token al porta-retalls i només cal enganxar-lo.
+  * el copia sempre al porta-retalls, que és l'única via que funciona amb
+    l'app desplegada al núvol (allà el navegador no arriba al localhost del
+    contenidor, i el fitxer d'aquí sota no hi és mai);
+  * a més l'envia al receptor local, si l'app s'està executant a l'ordinador.
+    Llavors la recull sola i no cal enganxar res.
+
+L'avís del bookmarklet diu què ha passat a cada banda, perquè no sembli que
+l'app del núvol ja té el token quan en realitat no el té.
 """
 import os
 import json
@@ -87,7 +90,7 @@ class _Receptor(BaseHTTPRequestHandler):
         try:
             with open(FITXER_TOKEN, "w", encoding="utf-8") as f:
                 f.write(token)
-            os.chmod(FITXER_TOKEN, 0o600)
+            os.chmod(FITXER_TOKEN, 0o600)  # no fa res a Windows, sí a Streamlit Cloud
         except Exception:
             self._cors(500)
             return
@@ -97,9 +100,15 @@ class _Receptor(BaseHTTPRequestHandler):
         pass  # sense soroll als logs de Streamlit
 
 
+def es_al_nuvol():
+    """True si l'app corre a Streamlit Cloud, que munta el repo a /mount/src.
+    Allà el receptor no serveix de res: el navegador de l'usuari no arriba al
+    localhost del contenidor, i el token s'ha d'enganxar a mà."""
+    return os.path.abspath(__file__).replace("\\", "/").startswith("/mount/src")
+
+
 def inicia_receptor():
-    """Arrenca el receptor en segon pla. Retorna un text per mostrar a l'app.
-    Es pot cridar més d'un cop sense problema (si el port ja està ocupat, ho diu)."""
+    """Arrenca el receptor en segon pla. Retorna un text per mostrar a l'app."""
     try:
         servidor = HTTPServer(("127.0.0.1", PORT), _Receptor)
     except OSError as e:
@@ -108,21 +117,28 @@ def inicia_receptor():
     return f"escoltant a 127.0.0.1:{PORT}"
 
 
-# Bookmarklet: busca un JWT viu a localStorage / sessionStorage / cookies de
-# basquetcatala.cat i l'envia al receptor; si no hi arriba, el copia.
+# Bookmarklet. Va tot en una sola línia perquè és una URL javascript:, així que
+# cap literal pot contenir un salt de línia de debò — els avisos porten \n
+# escapat (per això les cadenes raw d'aquí sota).
 BOOKMARKLET = (
     "javascript:(function(){"
-    "var re=/eyJ[A-Za-z0-9_-]+\\.eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+/,t=null,s=[];"
+    r"var re=/eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/,t=null,s=[];"
     "try{for(var i=0;i<localStorage.length;i++)s.push(localStorage.getItem(localStorage.key(i)))}catch(e){}"
     "try{for(var i=0;i<sessionStorage.length;i++)s.push(sessionStorage.getItem(sessionStorage.key(i)))}catch(e){}"
     "s.push(document.cookie);"
+    "function pl(x){return JSON.parse(atob(x.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')))}"
     "for(var i=0;i<s.length&&!t;i++){var m=(s[i]||'').match(re);if(!m)continue;"
-    "try{var p=JSON.parse(atob(m[0].split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));"
-    "if(p.exp&&p.exp*1000>Date.now())t=m[0]}catch(e){}}"
-    "if(!t){alert('No he trobat cap token viu. Obre primer les estadistiques d un partit i torna-ho a provar.');return}"
+    "try{var p=pl(m[0]);if(p.exp&&p.exp*1000>Date.now())t=m[0]}catch(e){}}"
+    r"if(!t){alert('No he trobat cap token viu.\n\nObre primer les estadistiques d un partit, "
+    r"i espera que es vegin les dades (no la pantalla de verificacio).');return}"
+    "var min=Math.round((pl(t).exp*1000-Date.now())/60000);"
+    r"function avis(loc){alert('Token copiat al porta-retalls ('+min+' min de vida).\n\n"
+    r"APP AL NUVOL: enganxa l al camp Token API de la barra lateral.\n"
+    r"APP LOCAL: '+loc)}"
+    "navigator.clipboard.writeText(t).then(function(){"
     "fetch('http://127.0.0.1:" + str(PORT) + "/token',{method:'POST',body:t})"
-    ".then(function(r){if(!r.ok)throw 0;alert('Token enviat a Analitica. Ja pots tornar a l app.')})"
-    ".catch(function(){navigator.clipboard.writeText(t).then(function(){"
-    "alert('L app no escolta al port " + str(PORT) + ". Token copiat al porta-retalls: enganxa l a la barra lateral.')})});"
+    ".then(function(r){avis(r.ok?'ja el te, no cal fer res mes.':'no l ha acceptat.')})"
+    ".catch(function(){avis('no s esta executant ara mateix.')})"
+    "},function(){window.prompt('Copia aquest token:',t)});"
     "})()"
 )

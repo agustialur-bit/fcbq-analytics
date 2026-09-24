@@ -133,7 +133,11 @@ def extract_match_id(text):
 
 @st.cache_resource
 def arrenca_pont_token():
-    """Arrenca el receptor del bookmarklet un sol cop per sessió de servidor."""
+    """Arrenca el receptor del bookmarklet un sol cop per sessió de servidor.
+    Al núvol no s'arrenca: el navegador no hi arribaria i diria que escolta
+    quan en realitat el token no li arriba mai."""
+    if token_bridge.es_al_nuvol():
+        return None
     return token_bridge.inicia_receptor()
 
 def api_token():
@@ -163,7 +167,9 @@ def api_get(match_id, recurs):
     """Crida un recurs del partit ('pbp' o 'stats') i en retorna el JSON."""
     tok = api_token()
     if not tok:
-        raise RuntimeError("Falta el token de l'API — posa'l a la barra lateral, a «🔑 Token API».")
+        raise RuntimeError("Falta el token de l'API. Obre «🔑 Token API» a la barra "
+                           "lateral: allà tens el marcador per agafar-ne un i el camp "
+                           "per enganxar-lo.")
     req = urllib.request.Request(
         API_MATCH.format(match_id=match_id, recurs=recurs),
         headers={
@@ -248,9 +254,15 @@ with st.sidebar:
 
     with st.expander("🔑 Token API", expanded=not api_token()):
         _estat_pont = arrenca_pont_token()
-        st.caption("basquetcatala.cat protegeix l'API amb un reCAPTCHA i el token "
-                   "que en surt dura 2 h. Per renovar-lo: obre un partit al "
-                   "navegador i clica el marcador «Token Analítica».")
+        if _estat_pont:
+            st.caption("El token dura 2 h. Per renovar-lo: obre un partit a "
+                       "basquetcatala.cat, espera que es vegin les dades i clica "
+                       "el marcador «Token Analítica». L'app el recull sola.")
+        else:
+            st.caption("El token dura 2 h. Per renovar-lo: obre un partit a "
+                       "basquetcatala.cat, espera que es vegin les dades, clica "
+                       "el marcador «Token Analítica» i **enganxa'l aquí sota** "
+                       "(al núvol no es pot recollir automàticament).")
         st.text_input("Bearer token", key="api_token", type="password",
                       placeholder="o enganxa'l aquí a mà", label_visibility="collapsed")
         _tok = api_token()
@@ -259,15 +271,20 @@ with st.sidebar:
             if _seg is None:  st.caption("⚠️ No sembla un JWT vàlid.")
             elif _seg <= 0:   st.caption("🔴 Caducat — cal renovar-lo.")
             else:             st.caption(f"🟢 Vàlid durant {_seg//60} min més.")
-        st.caption(f"Receptor: {_estat_pont}")
+        if _estat_pont: st.caption(f"Receptor: {_estat_pont}")
         with st.popover("📌 Crear el marcador", use_container_width=True):
-            st.markdown("Arrossega aquest enllaç a la barra de marcadors del navegador "
-                        "(o crea un marcador nou i enganxa-hi el codi de sota com a URL):")
-            st.markdown(f'<a href="{token_bridge.BOOKMARKLET}" '
-                        'style="display:inline-block;padding:6px 14px;background:#185FA5;'
-                        'color:#fff;border-radius:6px;text-decoration:none;font-weight:600">'
-                        '🔑 Token Analítica</a>', unsafe_allow_html=True)
+            # Streamlit neteja les URL javascript: dels enllaços HTML (els deixa
+            # en href="#"), així que no es pot oferir un enllaç per arrossegar:
+            # el marcador acabaria apuntant a l'app. Cal crear-lo a mà.
+            st.markdown("""1. Copia el codi de sota (botó 📋 al cantó del bloc).
+2. Al navegador, **Ctrl+Shift+O** per obrir el gestor de marcadors.
+3. Menú **⋮** → **Afegeix un marcador nou**.
+4. Nom: `Token Analítica` · URL: **enganxa-hi el codi**.
+5. Desa. Només cal fer-ho un cop.""")
             st.code(token_bridge.BOOKMARKLET, language="javascript")
+            st.caption("Ha de començar per `javascript:`. Si el navegador no t'ho "
+                       "deixa desar, crea el marcador amb una URL qualsevol i "
+                       "després edita'l per enganxar-hi el codi.")
 
     st.markdown('<div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#9ca3af;margin-bottom:6px">Partit</div>', unsafe_allow_html=True)
     url_input = st.text_input("", placeholder="URL o ID del partit", label_visibility="collapsed")
