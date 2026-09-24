@@ -21,6 +21,7 @@ l'app del núvol ja té el token quan en realitat no el té.
 import os
 import json
 import base64
+import socket
 import threading
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -64,6 +65,11 @@ class _Receptor(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", ORIGEN)
         self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        # Private Network Access: Chrome tracta una crida d'una web pública
+        # (basquetcatala.cat) cap a 127.0.0.1 com a accés a xarxa privada i hi
+        # fa un preflight que exigeix aquesta capçalera. Sense ella el
+        # bookmarklet no arribaria mai al receptor.
+        self.send_header("Access-Control-Allow-Private-Network", "true")
         self.send_header("Content-Length", "0")
         self.end_headers()
 
@@ -108,7 +114,16 @@ def es_al_nuvol():
 
 
 def inicia_receptor():
-    """Arrenca el receptor en segon pla. Retorna un text per mostrar a l'app."""
+    """Arrenca el receptor en segon pla. Retorna un text per mostrar a l'app.
+
+    A Windows, SO_REUSEADDR deixa que dos processos lliguin el mateix port
+    sense error: el segon creuria que escolta mentre el primer es queda les
+    peticions (i potser amb codi antic). Per això es comprova primer si algú
+    ja hi respon, en lloc de confiar que el bind falli."""
+    with socket.socket() as s:
+        s.settimeout(0.3)
+        if s.connect_ex(("127.0.0.1", PORT)) == 0:
+            return f"ja hi ha un altre receptor al port {PORT}"
     try:
         servidor = HTTPServer(("127.0.0.1", PORT), _Receptor)
     except OSError as e:
@@ -118,27 +133,61 @@ def inicia_receptor():
 
 
 # Bookmarklet. Va tot en una sola línia perquè és una URL javascript:, així que
-# cap literal pot contenir un salt de línia de debò — els avisos porten \n
-# escapat (per això les cadenes raw d'aquí sota).
+# cap literal pot contenir un salt de línia de debò.
+#
+# basquetcatala.cat NO desa el token a localStorage/sessionStorage/cookies —
+# se'l queda a la memòria de JavaScript. Per això mirar els magatzems no
+# n'hi ha prou: el bookmarklet també intercepta la capçalera Authorization de
+# les peticions que la pàgina fa tota sola. És el mateix que es feia a mà amb
+# F12 → Network, sense tocar el reCAPTCHA: només llegeix una credencial que el
+# navegador ja té i ja està fent servir.
+#
+# Flux: 1r clic → si el troba als magatzems, l'entrega; si no, instal·la els
+# hooks i demana a l'usuari que cliqui una pestanya del partit. Quan la pàgina
+# fa la següent petició, el captura i mostra un requadre amb el botó de copiar
+# (el porta-retalls necessita un clic de l'usuari; l'enviament al receptor
+# local, no).
 BOOKMARKLET = (
-    "javascript:(function(){"
-    r"var re=/eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/,t=null,s=[];"
+    "javascript:(function(){var W=window;"
+    r"var re=/eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/;"
+    "function pl(x){return JSON.parse(atob(x.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')))}"
+    "function viu(t){try{var p=pl(t);return !!(p.exp&&p.exp*1000>Date.now())}catch(e){return false}}"
+    "function mag(){var s=[];"
     "try{for(var i=0;i<localStorage.length;i++)s.push(localStorage.getItem(localStorage.key(i)))}catch(e){}"
     "try{for(var i=0;i<sessionStorage.length;i++)s.push(sessionStorage.getItem(sessionStorage.key(i)))}catch(e){}"
     "s.push(document.cookie);"
-    "function pl(x){return JSON.parse(atob(x.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')))}"
-    "for(var i=0;i<s.length&&!t;i++){var m=(s[i]||'').match(re);if(!m)continue;"
-    "try{var p=pl(m[0]);if(p.exp&&p.exp*1000>Date.now())t=m[0]}catch(e){}}"
-    r"if(!t){alert('No he trobat cap token viu.\n\nObre primer les estadistiques d un partit, "
-    r"i espera que es vegin les dades (no la pantalla de verificacio).');return}"
-    "var min=Math.round((pl(t).exp*1000-Date.now())/60000);"
-    r"function avis(loc){alert('Token copiat al porta-retalls ('+min+' min de vida).\n\n"
-    r"APP AL NUVOL: enganxa l al camp Token API de la barra lateral.\n"
-    r"APP LOCAL: '+loc)}"
-    "navigator.clipboard.writeText(t).then(function(){"
+    "for(var i=0;i<s.length;i++){var m=(s[i]||'').match(re);if(m&&viu(m[0]))return m[0]}return null}"
+    "function bn(h){var d=document.getElementById('mkB')||document.createElement('div');d.id='mkB';"
+    "d.style.cssText='position:fixed;z-index:2147483647;right:16px;bottom:16px;max-width:330px;"
+    "background:#185FA5;color:#fff;font:13px/1.5 system-ui,sans-serif;padding:14px 16px;"
+    "border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.35)';d.innerHTML=h;"
+    "document.body.appendChild(d);return d}"
+    "function bo(t){var b=document.getElementById('mkC');if(!b)return;b.onclick=function(){"
+    "navigator.clipboard.writeText(t).then(function(){b.textContent='Copiat!'},"
+    "function(){window.prompt('Copia aquest token:',t)})}}"
+    "function ent(t){var min=Math.round((pl(t).exp*1000-Date.now())/60000);"
+    "var btn='<button id=\"mkC\" style=\"margin-top:10px;padding:7px 12px;border:0;border-radius:6px;"
+    "cursor:pointer;font-weight:600\">Copia per a l app del nuvol</button>';"
+    "function fi(loc){bn('<b>Token trobat</b> ('+min+' min de vida).<br>App local: '+loc+btn);bo(t)}"
     "fetch('http://127.0.0.1:" + str(PORT) + "/token',{method:'POST',body:t})"
-    ".then(function(r){avis(r.ok?'ja el te, no cal fer res mes.':'no l ha acceptat.')})"
-    ".catch(function(){avis('no s esta executant ara mateix.')})"
-    "},function(){window.prompt('Copia aquest token:',t)});"
+    ".then(function(r){fi(r.ok?'ja el te.':'no l ha acceptat.')})"
+    ".catch(function(){fi('no s esta executant.')})}"
+    "var t=W.__mkTok||mag();"
+    "if(t&&viu(t)){ent(t);return}"
+    "if(W.__mkHook){bn('<b>Encara no he vist cap peticio amb token.</b><br>Clica una pestanya del "
+    "partit (Estadistiques, Jugades...) <u>sense recarregar</u> la pagina.');return}"
+    "W.__mkHook=1;"
+    "function mira(v){if(!v||W.__mkTok)return;var m=String(v).match(re);"
+    "if(m&&viu(m[0])){W.__mkTok=m[0];ent(m[0])}}"
+    "var sh=XMLHttpRequest.prototype.setRequestHeader;"
+    "XMLHttpRequest.prototype.setRequestHeader=function(k,v){"
+    "try{if(String(k).toLowerCase()==='authorization')mira(v)}catch(e){}"
+    "return sh.apply(this,arguments)};"
+    "var of=W.fetch;W.fetch=function(a,b){try{var h=(b&&b.headers)||(a&&a.headers);"
+    "if(h){if(h.get)mira(h.get('authorization'));"
+    "else Object.keys(h).forEach(function(k){if(k.toLowerCase()==='authorization')mira(h[k])})}}catch(e){}"
+    "return of.apply(this,arguments)};"
+    "bn('<b>Escoltant...</b><br>Ara clica una pestanya del partit (Estadistiques, Jugades...) "
+    "<u>sense recarregar</u> la pagina. El token apareixera aqui.')"
     "})()"
 )

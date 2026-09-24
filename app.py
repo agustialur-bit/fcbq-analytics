@@ -254,7 +254,9 @@ with st.sidebar:
 
     with st.expander("🔑 Token API", expanded=not api_token()):
         _estat_pont = arrenca_pont_token()
-        if _estat_pont:
+        # Només promet recollida automàtica si el receptor és d'aquesta app:
+        # si el port el té una altra instància, el token no arribarà aquí.
+        if _estat_pont and _estat_pont.startswith("escoltant"):
             st.caption("El token dura 2 h. Per renovar-lo: obre un partit a "
                        "basquetcatala.cat, espera que es vegin les dades i clica "
                        "el marcador «Token Analítica». L'app el recull sola.")
@@ -272,6 +274,8 @@ with st.sidebar:
             elif _seg <= 0:   st.caption("🔴 Caducat — cal renovar-lo.")
             else:             st.caption(f"🟢 Vàlid durant {_seg//60} min més.")
         if _estat_pont: st.caption(f"Receptor: {_estat_pont}")
+        if _estat_pont and not _estat_pont.startswith("escoltant"):
+            st.caption("Una altra app (Pele o LF2) té el port. Enganxa el token aquí.")
         with st.popover("📌 Crear el marcador", use_container_width=True):
             # Streamlit neteja les URL javascript: dels enllaços HTML (els deixa
             # en href="#"), així que no es pot oferir un enllaç per arrossegar:
