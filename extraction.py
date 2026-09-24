@@ -175,13 +175,21 @@ def extract_match(match_id: str, token: str = None) -> pd.DataFrame:
 
 
 def extract_matches(match_ids: list, token: str = None) -> pd.DataFrame:
-    """Descarrega i concatena diversos partits, afegint la columna match_id."""
-    frames = []
+    """Descarrega i concatena diversos partits, afegint la columna match_id.
+
+    pd.concat perd els .attrs, així que els noms dels equips de tots els
+    partits es refonen a mà a df.attrs["noms_equips"] (uuid -> nom)."""
+    frames, noms, desconeguts = [], {}, set()
     for mid in match_ids:
         df = extract_match(mid, token)
         df["match_id"] = mid
+        noms.update(df.attrs.get("noms_equips") or {})
+        desconeguts.update(df.attrs.get("codis_desconeguts") or [])
         frames.append(df)
-    return pd.concat(frames, ignore_index=True)
+    total = pd.concat(frames, ignore_index=True)
+    total.attrs["noms_equips"] = noms
+    total.attrs["codis_desconeguts"] = sorted(desconeguts)
+    return total
 
 
 # Compatibilitat: Micki Analítica crida fetch_and_parse(match_id) per a un sol partit.
