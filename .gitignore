@@ -3,3 +3,4 @@ __pycache__/
 historic.db
 historic_lf2.db
 .claude/
+.fcbq_token

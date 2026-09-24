@@ -34,6 +34,7 @@ CODIS_EQUIP = {"TM", "INIPER", "FINPER"}
 COLOR_A, COLOR_B = "#185FA5", "#993C1D"
 
 import analitica_core as core
+import token_bridge
 from analitica_core import (
     MICKI_CSS, C_BG, C_BG_SOFT, C_BORDER, C_TEXT, C_TEXT_MUTED, C_LABEL,
     C_CARD_BORDER, C_WHITE, C_ACCENT, C_ACCENT_DARK, C_ACCENT_MID, C_CHART_TEXT,
@@ -130,10 +131,17 @@ def extract_match_id(text):
     if re.match(r"^[a-f0-9]{24}$", text): return text
     return None
 
+@st.cache_resource
+def arrenca_pont_token():
+    """Arrenca el receptor del bookmarklet un sol cop per sessió de servidor."""
+    return token_bridge.inicia_receptor()
+
 def api_token():
     """Token Bearer de l'API. Per ordre: el que has enganxat a la barra lateral,
-    st.secrets["FCBQ_TOKEN"] o la variable d'entorn FCBQ_TOKEN."""
+    el que hi ha deixat el bookmarklet, st.secrets["FCBQ_TOKEN"] o $FCBQ_TOKEN."""
     tok = str(st.session_state.get("api_token") or "").strip()
+    if not tok:
+        tok = token_bridge.llegeix_token()
     if not tok:
         try: tok = str(st.secrets.get("FCBQ_TOKEN", "") or "").strip()
         except Exception: tok = ""
@@ -239,17 +247,27 @@ with st.sidebar:
         <div style="font-size:11px;color:#9ca3af">Analítica de Bàsquet</div></div></div>""", unsafe_allow_html=True)
 
     with st.expander("🔑 Token API", expanded=not api_token()):
-        st.caption("basquetcatala.cat protegeix l'API amb un token que dura 2 h. "
-                   "Obre qualsevol partit al navegador → F12 → Network → Fetch/XHR → "
-                   "copia el valor de la capçalera Authorization.")
+        _estat_pont = arrenca_pont_token()
+        st.caption("basquetcatala.cat protegeix l'API amb un reCAPTCHA i el token "
+                   "que en surt dura 2 h. Per renovar-lo: obre un partit al "
+                   "navegador i clica el marcador «Token Analítica».")
         st.text_input("Bearer token", key="api_token", type="password",
-                      placeholder="eyJraWQiOiJXRUIi...", label_visibility="collapsed")
+                      placeholder="o enganxa'l aquí a mà", label_visibility="collapsed")
         _tok = api_token()
         if _tok:
             _seg = token_segons_restants(_tok)
             if _seg is None:  st.caption("⚠️ No sembla un JWT vàlid.")
-            elif _seg <= 0:   st.caption("🔴 Caducat — cal enganxar-ne un de nou.")
+            elif _seg <= 0:   st.caption("🔴 Caducat — cal renovar-lo.")
             else:             st.caption(f"🟢 Vàlid durant {_seg//60} min més.")
+        st.caption(f"Receptor: {_estat_pont}")
+        with st.popover("📌 Crear el marcador", use_container_width=True):
+            st.markdown("Arrossega aquest enllaç a la barra de marcadors del navegador "
+                        "(o crea un marcador nou i enganxa-hi el codi de sota com a URL):")
+            st.markdown(f'<a href="{token_bridge.BOOKMARKLET}" '
+                        'style="display:inline-block;padding:6px 14px;background:#185FA5;'
+                        'color:#fff;border-radius:6px;text-decoration:none;font-weight:600">'
+                        '🔑 Token Analítica</a>', unsafe_allow_html=True)
+            st.code(token_bridge.BOOKMARKLET, language="javascript")
 
     st.markdown('<div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#9ca3af;margin-bottom:6px">Partit</div>', unsafe_allow_html=True)
     url_input = st.text_input("", placeholder="URL o ID del partit", label_visibility="collapsed")
