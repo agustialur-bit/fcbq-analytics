@@ -1,0 +1,315 @@
+<title>La Nit dels Tirs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --page-bg:   #0b0a12;
+    --mat:       #17141f;
+    --mat-edge:  rgba(255,255,255,0.06);
+    --cream:     #f4ead9;
+    --cream-dim: rgba(244,234,217,0.62);
+    --gold:      #f2b544;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background: radial-gradient(120% 90% at 50% 0%, #14111e 0%, #0b0a12 60%, #08070d 100%);
+    color: var(--cream);
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 18px 56px;
+  }
+  .stage{
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 18px;
+    width: 100%;
+  }
+  .frame{
+    background: var(--mat);
+    border: 1px solid var(--mat-edge);
+    border-radius: 6px;
+    padding: clamp(10px, 2.4vw, 26px);
+    box-shadow:
+      0 30px 70px -20px rgba(0,0,0,0.65),
+      0 2px 0 rgba(255,255,255,0.03) inset;
+    width: min(560px, 92vw);
+  }
+  .poster{
+    position: relative;
+    width: 100%;
+    aspect-ratio: 900 / 1350;
+    overflow: hidden;
+    border-radius: 2px;
+    background: #0b1130;
+  }
+  .poster svg{
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    display: block;
+  }
+
+  .eyebrow{
+    position: absolute;
+    top: 4.4%; left: 7%;
+    font-size: clamp(8px, 1.05vw, 12px);
+    letter-spacing: .22em;
+    text-transform: uppercase;
+    color: var(--cream-dim);
+    font-weight: 500;
+  }
+
+  .wordmark{
+    position: absolute;
+    left: 50%;
+    top: 76.5%;
+    transform: translate(-50%, -50%);
+    width: 100%;
+    text-align: center;
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 800;
+    font-optical-sizing: auto;
+    font-size: clamp(46px, 12.4vw, 78px);
+    letter-spacing: 0.01em;
+    color: var(--cream);
+    text-shadow: 0 2px 26px rgba(0,0,0,0.55), 0 1px 0 rgba(0,0,0,0.4);
+    line-height: 1;
+    pointer-events: none;
+  }
+  .stat-line{
+    position: absolute;
+    left: 50%;
+    bottom: 4.6%;
+    transform: translateX(-50%);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: clamp(9px, 1.4vw, 12px);
+    color: var(--cream-dim);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: .03em;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    white-space: nowrap;
+    background: rgba(5,4,10,0.55);
+    padding: 6px 16px;
+    border-radius: 999px;
+    backdrop-filter: blur(2px);
+  }
+  .stat-line .dot{
+    display: inline-block;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    margin-right: 5px;
+    vertical-align: middle;
+  }
+  .stat-line .made{ background: var(--gold); box-shadow: 0 0 6px var(--gold); }
+  .stat-line .miss{ background: #7f8bb0; }
+
+
+  @media (prefers-reduced-motion: no-preference){
+    .twinkle{ animation: tw 3.6s ease-in-out infinite; }
+  }
+  @keyframes tw{
+    0%,100%{ opacity: 0.35; }
+    50%{ opacity: 0.9; }
+  }
+</style>
+
+<div class="stage">
+  <div class="frame">
+    <div class="poster" id="poster">
+      <svg viewBox="0 0 900 1350" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%"  stop-color="#0a0f2e"/>
+            <stop offset="46%" stop-color="#1c1440"/>
+            <stop offset="78%" stop-color="#3a2148"/>
+            <stop offset="100%" stop-color="#160f22"/>
+          </linearGradient>
+          <filter id="starBlur" x="-200%" y="-200%" width="500%" height="500%">
+            <feGaussianBlur stdDeviation="4.2"/>
+          </filter>
+          <linearGradient id="skylineFade" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#241a30"/>
+            <stop offset="18%" stop-color="#140d1c"/>
+            <stop offset="100%" stop-color="#050308"/>
+          </linearGradient>
+          <linearGradient id="horizonGlow" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#e8934f" stop-opacity="0.5"/>
+            <stop offset="100%" stop-color="#e8934f" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+
+        <rect x="0" y="0" width="900" height="1350" fill="url(#sky)"/>
+
+        <g id="ambientStars"></g>
+
+        <g id="dataStars"></g>
+
+        <g id="skyline"></g>
+      </svg>
+
+      <div class="eyebrow">Una temporada de tirs</div>
+      <div class="wordmark">MANRESA</div>
+      <div class="stat-line" id="statLine"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var SHOTS = __SHOTS_DATA__;
+  var NS = 'http://www.w3.org/2000/svg';
+  var W = 900, H = 1350;
+
+  function el(tag, attrs){
+    var e = document.createElementNS(NS, tag);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+
+  var total = SHOTS.length, made = 0;
+  for (var i=0;i<total;i++) made += SHOTS[i][2];
+  var pct = Math.round(made/total*1000)/10;
+
+  var statLine = document.getElementById('statLine');
+  statLine.innerHTML =
+    '<span><span class="dot made"></span>' + made.toLocaleString('ca-ES') + ' cistelles</span>' +
+    '<span><span class="dot miss"></span>' + (total-made).toLocaleString('ca-ES') + ' fallades</span>' +
+    '<span>' + total.toLocaleString('ca-ES') + ' tirs · ' + pct.toFixed(1).replace('.', ',') + '%</span>';
+
+  // ---------------------------------------------------------------
+  // Skyline: 48 columns, building height = shot volume in that
+  // horizontal band. The peak column (nearest the hoop) gets a
+  // taller spire, echoing a hilltop basilica silhouette.
+  // ---------------------------------------------------------------
+  var BUCKETS = 48;
+  var counts = new Array(BUCKETS).fill(0);
+  for (var s=0;s<SHOTS.length;s++){
+    var bx = Math.min(BUCKETS-1, Math.max(0, Math.floor(SHOTS[s][0]/100*BUCKETS)));
+    counts[bx]++;
+  }
+  var maxCount = Math.max.apply(null, counts);
+  var peakIdx = counts.indexOf(maxCount);
+
+  var skylineTop = 1080, skylineH = H - skylineTop;
+  var colW = W / BUCKETS;
+  var skylineGroup = document.getElementById('skyline');
+
+  skylineGroup.appendChild(el('rect', {x:0, y:skylineTop-64, width:W, height:64, fill:'url(#horizonGlow)'}));
+  skylineGroup.appendChild(el('rect', {x:0, y:skylineTop-2, width:W, height:skylineH+2, fill:'url(#skylineFade)'}));
+
+  for (var c=0;c<BUCKETS;c++){
+    var norm = counts[c]/maxCount;
+    var bh = 30 + norm*200;
+    var isPeak = (c===peakIdx);
+    if (isPeak) bh += 50;
+    var bx0 = c*colW;
+    var by0 = H - bh;
+    var bw = colW*0.84;
+    var bx = bx0 + colW*0.08;
+    var shade = (c%3===0) ? '#241a30' : (c%3===1 ? '#180f22' : '#0e0918');
+
+    var rect = el('rect', {x:bx.toFixed(1), y:by0.toFixed(1), width:bw.toFixed(1), height:(bh+6).toFixed(1), fill:shade});
+    skylineGroup.appendChild(rect);
+    skylineGroup.appendChild(el('rect', {x:bx.toFixed(1), y:by0.toFixed(1), width:1.4, height:(bh+6).toFixed(1), fill:'#3a2a44', opacity:0.5}));
+
+    if (isPeak){
+      var tipX = (bx+bw/2).toFixed(1);
+      var spire = el('path', {
+        d: 'M '+bx.toFixed(1)+' '+by0.toFixed(1)+' L '+tipX+' '+(by0-38).toFixed(1)+' L '+(bx+bw).toFixed(1)+' '+by0.toFixed(1)+' Z',
+        fill: shade
+      });
+      skylineGroup.appendChild(spire);
+      skylineGroup.appendChild(el('circle', {cx:tipX, cy:(by0-38).toFixed(1), r:3, fill:'var(--gold)', opacity:0.95}));
+      skylineGroup.appendChild(el('circle', {cx:tipX, cy:(by0-38).toFixed(1), r:8, fill:'var(--gold)', opacity:0.25, filter:'url(#starBlur)'}));
+    }
+
+    // lit windows, seeded from the bucket's own data (deterministic)
+    var winCount = bh > 150 ? 6 : (bh > 100 ? 4 : (bh > 60 ? 2 : 1));
+    for (var w=0; w<winCount; w++){
+      var wy = by0 + 12 + ((w*29 + c*17) % Math.max(1, Math.floor(bh-20)));
+      var wx = bx + (bw*0.16) + ((c*11 + w*23) % Math.max(1, Math.floor(bw*0.7)));
+      if ((c*5+w*3) % 4 === 0) continue; // leave some windows dark
+      skylineGroup.appendChild(el('rect', {
+        x: wx.toFixed(1), y: wy.toFixed(1), width:3.4, height:4.6,
+        fill:'var(--gold)', opacity: 0.55 + ((c*3+w)%4)*0.11
+      }));
+    }
+  }
+
+  // ---------------------------------------------------------------
+  // Ambient background stars (decorative, non-data)
+  // ---------------------------------------------------------------
+  var ambient = document.getElementById('ambientStars');
+  for (var a=0; a<130; a++){
+    var ax = Math.random()*W, ay = Math.random()*(skylineTop-20)+10;
+    var ar = Math.random()*1.1 + 0.4;
+    var c2 = el('circle', {cx:ax.toFixed(1), cy:ay.toFixed(1), r:ar.toFixed(2), fill:'#fdf6e8'});
+    c2.setAttribute('opacity', (0.15 + Math.random()*0.35).toFixed(2));
+    if (Math.random() < 0.18) c2.setAttribute('class','twinkle');
+    ambient.appendChild(c2);
+  }
+
+  // ---------------------------------------------------------------
+  // Data stars — every real shot, mapped from the court onto the sky.
+  // Made = warm gold; missed = dim, cool. The vertical range is taken
+  // from the data itself so any source's coordinate convention works.
+  // ---------------------------------------------------------------
+  var dataStars = document.getElementById('dataStars');
+  var topMargin = 132, mapBottom = 860; // keep clear of the horizon glow / wordmark band
+  var yLo = Infinity, yHi = -Infinity;
+  for (var yi=0; yi<SHOTS.length; yi++){
+    if (SHOTS[yi][1] < yLo) yLo = SHOTS[yi][1];
+    if (SHOTS[yi][1] > yHi) yHi = SHOTS[yi][1];
+  }
+  var ySpan = Math.max(1, yHi - yLo);
+  yLo -= ySpan*0.04; yHi += ySpan*0.04;
+
+  var coords = [];
+  for (var k=0;k<SHOTS.length;k++){
+    var sx = SHOTS[k][0], sy = SHOTS[k][1], sm = SHOTS[k][2];
+    // deterministic jitter: real coordinates repeat exact baseline values often
+    // (a quirk of the source extraction), which reads as hard rows of stars;
+    // a few px of seeded scatter keeps the illustration painterly.
+    var jx = ((k*37) % 11) - 5, jy = ((k*53) % 9) - 4;
+    var px = Math.min(888, Math.max(12, sx/100*W + jx));
+    var tY = Math.min(1, Math.max(0, (sy-yLo)/(yHi-yLo)));
+    var py = topMargin + tY*(mapBottom-topMargin) + jy;
+
+    if (!sm){
+      // missed shots: a hollow ring (empty, unlike the solid made-stars) —
+      // sized and lit well above the ambient noise stars so every real
+      // shot stays legible, not just the makes. Drawn first, so a made
+      // star placed nearby always ends up on top of it.
+      var r2 = 2.3 + (k%3)*0.4;
+      var star2 = el('circle', {cx:px.toFixed(1), cy:py.toFixed(1), r:r2.toFixed(2), fill:'none', stroke:'#aab6e3', 'stroke-width':1.1});
+      star2.setAttribute('opacity', 0.7 + (k%3)*0.09);
+      dataStars.appendChild(star2);
+    }
+    coords.push([px, py, sm, k]);
+  }
+
+  // made shots drawn in a second pass, always on top, every one glowing —
+  // so every basket reads as a bright star, not just a lucky handful.
+  for (var m=0;m<coords.length;m++){
+    var mpx=coords[m][0], mpy=coords[m][1], msm=coords[m][2], mk=coords[m][3];
+    if (!msm) continue;
+    var r = 2.1 + (mk%3)*0.5;
+    var glow = el('circle', {cx:mpx.toFixed(1), cy:mpy.toFixed(1), r:(r*2.8).toFixed(1), fill:'var(--gold)', filter:'url(#starBlur)', opacity:0.55});
+    dataStars.appendChild(glow);
+    var star = el('circle', {cx:mpx.toFixed(1), cy:mpy.toFixed(1), r:r.toFixed(2), fill:'var(--gold)'});
+    star.setAttribute('opacity', 0.92 + (mk%4)*0.02);
+    if (mk % 11 === 0) star.setAttribute('class','twinkle');
+    dataStars.appendChild(star);
+  }
+
+})();
+</script>
