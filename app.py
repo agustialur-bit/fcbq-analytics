@@ -1732,33 +1732,39 @@ with t4:
                 # per no haver-la de reescriure a cada enviament.
                 taula = pd.DataFrame({
                     "Partit": [etiquetes_copa[str(m)] for m in sub["match_id"]],
-                    "Data del partit": [
-                        (str(d)[:10] if pd.notna(d) and str(d).strip() else "")
-                        for d in sub["data_partit"]
-                    ],
+                    # Columna de dates de debo (no text): aixi no hi ha manera
+                    # d'equivocar-se amb el format i surt un calendari.
+                    "Data del partit": pd.to_datetime(sub["data_partit"], errors="coerce").dt.date,
                     "Jornada": [
                         (int(j) if pd.notna(j) and str(j).strip() not in ("", "None") else None)
                         for j in sub["jornada"]
                     ],
                 })
+                if taula["Data del partit"].isna().any():
+                    st.info(
+                        "Omple la columna **Data del partit** de la taula: es la data real "
+                        "del partit, no la d'avui. Nomes cal fer-ho un cop, despres queda "
+                        "desada.", icon="📅",
+                    )
                 editat = st.data_editor(
                     taula, hide_index=True, use_container_width=True, key="copa_meta",
                     disabled=["Partit"],
                     column_config={
-                        "Data del partit": st.column_config.TextColumn(
-                            help="AAAA-MM-DD. La del partit, no la d'avui.", max_chars=10),
+                        "Data del partit": st.column_config.DateColumn(
+                            help="La data real del partit.", format="DD/MM/YYYY"),
                         "Jornada": st.column_config.NumberColumn(min_value=1, step=1),
                     },
                 )
 
-                partits_copa, problemes = [], []
+                partits_copa, problemes, sense_data = [], [], []
                 for i, mid in enumerate(sub["match_id"].astype(str).tolist()):
-                    data_i = str(editat.iloc[i]["Data del partit"]).strip()
+                    data_cel = editat.iloc[i]["Data del partit"]
                     jorn_i = editat.iloc[i]["Jornada"]
                     jorn_i = int(jorn_i) if pd.notna(jorn_i) else None
-                    if not data_i:
-                        problemes.append(f"{etiquetes_copa[mid]}: falta la data del partit")
+                    if pd.isna(data_cel):
+                        sense_data.append(etiquetes_copa[mid])
                         continue
+                    data_i = pd.Timestamp(data_cel).strftime("%Y-%m-%d")
                     try:
                         save_meta_partit(mid, data_i, jorn_i)
                         df_m = load_jugades_db(mid)
@@ -1776,6 +1782,12 @@ with t4:
                     except Exception as ex:
                         problemes.append(f"{etiquetes_copa[mid]}: {ex}")
 
+                if sense_data:
+                    st.caption(
+                        f"Encara sense data ({len(sense_data)}): " + ", ".join(sense_data[:4]) +
+                        (" i " + str(len(sense_data) - 4) + " mes" if len(sense_data) > 4 else "") +
+                        ". No s'enviaran fins que la posis."
+                    )
                 for msg in problemes:
                     st.warning(msg, icon="⚠️")
                 if partits_copa:
