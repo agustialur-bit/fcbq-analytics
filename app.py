@@ -1674,11 +1674,32 @@ with t4:
         "Es pot reenviar un partit tantes vegades com calgui: substitueix les seves "
         "files, no en duplica."
     )
-    if "copa" not in st.secrets:
-        st.info(
-            "Falta configurar els secrets de Streamlit: `[copa]` (sheet_id, temporada, "
-            "competicio) i `[gcp_service_account]`. Mentre no hi siguin, l'enviament "
-            "queda desactivat."
+    # Missatge concret a posta: distingir "no s'ha desat res" de "s'ha desat a
+    # mitges" o "encara no ha reiniciat" estalvia molta estona buscant a cegues.
+    _te_copa = "copa" in st.secrets
+    _te_gcp = "gcp_service_account" in st.secrets
+    _falten = []
+    if _te_copa:
+        _falten = [k for k in ("sheet_id", "temporada", "competicio")
+                   if not str(st.secrets["copa"].get(k, "")).strip()]
+    if (not _te_copa) or (not _te_gcp) or _falten:
+        _avisos = []
+        if not _te_copa:
+            _avisos.append("no hi ha el bloc `[copa]`")
+        elif _falten:
+            _avisos.append("al bloc `[copa]` hi falten: " + ", ".join(_falten))
+        if not _te_gcp:
+            _avisos.append("no hi ha el bloc `[gcp_service_account]`")
+        st.warning("Secrets de Streamlit: " + "; ".join(_avisos) + ".")
+        try:
+            _vistos = sorted(st.secrets.keys())
+        except Exception:
+            _vistos = []
+        st.caption(
+            "Blocs que l'app veu ara mateix: **" + (", ".join(_vistos) if _vistos else "cap") +
+            "**. Si no en veu cap i tu els has desat, o els has posat en una altra app "
+            "de Streamlit, o cal reiniciar-la (Manage app → Reboot). Si en veu però no "
+            "els que toca, mira el format del TOML."
         )
     else:
         import copa_sync
