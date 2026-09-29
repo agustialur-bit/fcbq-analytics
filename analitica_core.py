@@ -503,7 +503,37 @@ def migrate_db():
         con.commit()
     except Exception:
         pass
+    # Data REAL del partit i jornada. Fins ara nomes es desava data_consulta (el
+    # dia que es va baixar), que es el motiu que l'Excel mostres la data
+    # d'exportacio en lloc de la del partit.
+    try:
+        con.execute("ALTER TABLE partits ADD COLUMN data_partit TEXT")
+        con.commit()
+    except Exception:
+        pass
+    try:
+        con.execute("ALTER TABLE partits ADD COLUMN jornada INTEGER")
+        con.commit()
+    except Exception:
+        pass
     con.close()
+
+def save_meta_partit(match_id, data_partit=None, jornada=None):
+    """Completa la data real i la jornada d'un partit ja desat.
+
+    Serveix perque l'usuari nomes les hagi d'escriure un cop: l'API de la FCBQ
+    no sempre les dona i la base de dades antiga no les tenia.
+    """
+    con = sqlite3.connect(DB_PATH)
+    if data_partit not in ("", None):
+        con.execute("UPDATE partits SET data_partit=? WHERE match_id=?", (str(data_partit)[:10], str(match_id)))
+    if jornada not in ("", None):
+        try:
+            con.execute("UPDATE partits SET jornada=? WHERE match_id=?", (int(jornada), str(match_id)))
+        except (TypeError, ValueError):
+            pass
+    con.commit(); con.close()
+
 
 def save_nom_equip(id_equip, nom):
     con = sqlite3.connect(DB_PATH)
@@ -523,15 +553,22 @@ def partit_exists(match_id):
     r = con.execute("SELECT 1 FROM partits WHERE match_id=?", (match_id,)).fetchone()
     con.close(); return r is not None
 
-def save_partit(match_id, df, nom_a, nom_b, id_a, id_b, score_a, score_b):
+def save_partit(match_id, df, nom_a, nom_b, id_a, id_b, score_a, score_b,
+                data_partit=None, jornada=None):
     con = sqlite3.connect(DB_PATH)
     con.execute("DELETE FROM partits WHERE match_id=?", (match_id,))
     con.execute("DELETE FROM jugades WHERE match_id=?", (match_id,))
     con.execute("DELETE FROM stats_jugador WHERE match_id=?", (match_id,))
     con.execute("DELETE FROM shots_zones WHERE match_id=?", (match_id,))
-    con.execute("INSERT INTO partits VALUES (?,?,?,?,?,?,?,?,?)",
+    # Columnes explicites a posta: amb VALUES posicional, qualsevol columna nova
+    # afegida per migrate_db() trencaria aquest INSERT.
+    con.execute(
+        "INSERT INTO partits (match_id, data_consulta, nom_a, nom_b, id_equip_a, "
+        "id_equip_b, score_a, score_b, total_jugades, data_partit, jornada) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (match_id, datetime.now().strftime("%Y-%m-%d %H:%M"),
-         nom_a, nom_b, str(id_a), str(id_b), score_a, score_b, len(df)))
+         nom_a, nom_b, str(id_a), str(id_b), score_a, score_b, len(df),
+         data_partit or None, jornada if jornada not in ("", None) else None))
     rows = [(match_id, int(r["num"]), int(r["quart"]) if r["quart"]!="" else 0,
              float(r["min_num"]), str(r["temps"]), str(r["idEquip"]), str(r["dorsal"]),
              str(r["jugador"]), str(r["accio"]), str(r["marcador"]), int(r["punts"]),
@@ -1060,6 +1097,24 @@ def calc_pm_combinacions(df_orig, mode="quintets"):
     return rows
 
 
+# Patrons de tir. Es defineixen un sol cop perque el recompte de possessions i
+# el de tirs ON de la base COPA no puguin divergir mai: si un dia canvia el
+# vocabulari de l'API, canvia aqui i prou.
+# Nota: calc_usage_rate te el seu propi patro, sense "Tir de 2|Tir de 3". Amb
+# les dades FCBQ actuals aquells literals no apareixen mai, o sigui que els dos
+# patrons compten igual; no s'unifiquen per no alterar l'Usage existent.
+RE_TC_INT = ("Cistella de 2|Cistella de 3|Intent fallat de 2|Intent fallat de 3|"
+             "Tir de 2|Tir de 3|fallat de 2|fallat de 3")
+RE_TL_INT = "Cistella de 1|Intent fallat de 1"
+
+
+def compta_tirs(df_sub) -> tuple[int, int]:
+    """(tirs de camp intentats, tirs lliures intentats) d'un subconjunt de jugades."""
+    tc = int(df_sub["accio"].str.contains(RE_TC_INT, case=False, na=False).sum())
+    tl = int(df_sub["accio"].str.contains(RE_TL_INT, case=False, na=False).sum())
+    return tc, tl
+
+
 def calc_possessions(df_equip, poss_mode="approx"):
     """Calcula les possessions estimades d'un equip.
 
@@ -1074,12 +1129,7 @@ def calc_possessions(df_equip, poss_mode="approx"):
         surten a 0 i el resultat NO ha de fer-se servir. Cal passar-ho
         explícitament a cada crida; mai s'activa sol.
     """
-    tc_int = int(df_equip["accio"].str.contains(
-        "Cistella de 2|Cistella de 3|Intent fallat de 2|Intent fallat de 3|"
-        "Tir de 2|Tir de 3|fallat de 2|fallat de 3",
-        case=False, na=False).sum())
-    tl_int = int(df_equip["accio"].str.contains(
-        "Cistella de 1|Intent fallat de 1", case=False, na=False).sum())
+    tc_int, tl_int = compta_tirs(df_equip)
     base = tc_int + 0.44 * tl_int
     if poss_mode == "full":
         oreb = int(df_equip["accio"].str.contains("Rebot ofensiu", case=False, na=False).sum())
@@ -1167,11 +1217,18 @@ def calc_onoff_raw(df_orig, jugadora, equip_id, teams, poss_mode="approx"):
     df_off_eq = df_t[~mask_on & (df_t["idEquip"]==equip_id)]
     df_off_riv= df_t[~mask_on & (df_t["idEquip"]==rival_id)]
 
+    # Els tirs surten de la mateixa mascara ON que els punts i les possessions:
+    # nomes aixi els totals de l'equip quadren amb ON + OFF a la base COPA.
+    tci_on, tli_on = compta_tirs(df_on_eq)
+    tci_off, tli_off = compta_tirs(df_off_eq)
+
     return {
         "pts_on":      int(df_on_eq["punts"].sum()),  "poss_on":      calc_possessions(df_on_eq, poss_mode),
         "pts_on_riv":  int(df_on_riv["punts"].sum()), "poss_on_riv":  calc_possessions(df_on_riv, poss_mode),
         "pts_off":     int(df_off_eq["punts"].sum()), "poss_off":     calc_possessions(df_off_eq, poss_mode),
         "pts_off_riv": int(df_off_riv["punts"].sum()),"poss_off_riv": calc_possessions(df_off_riv, poss_mode),
+        "tci_on": tci_on, "tli_on": tli_on,
+        "tci_off": tci_off, "tli_off": tli_off,
     }
 
 def calc_onoff(df_orig, jugadora, equip_id, teams, poss_mode="approx"):

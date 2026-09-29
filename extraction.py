@@ -126,6 +126,7 @@ def extract_match(match_id: str, token: str = None) -> pd.DataFrame:
         raise RuntimeError(f"El partit {match_id} no té play-by-play publicat.")
 
     noms_equips, nom_local, nom_visitor = {}, "", ""
+    capc = {}
     try:
         capc = (_api_get(match_id, "stats", token) or {}).get("header") or {}
         local, visitant = capc.get("localTeam") or {}, capc.get("visitorTeam") or {}
@@ -171,6 +172,10 @@ def extract_match(match_id: str, token: str = None) -> pd.DataFrame:
     df.attrs["nom_visitor"] = nom_visitor
     df.attrs["noms_equips"] = noms_equips
     df.attrs["codis_desconeguts"] = sorted(c for c in desconeguts if c)
+    # Capçalera sencera de l'API. D'aquí en surten la data real del partit i la
+    # jornada (copa_adapter.metadades_del_partit). Es desa tal com ve perquè no
+    # en tenim la documentació i no sabem com es diuen exactament els camps.
+    df.attrs["header"] = capc
     return df
 
 

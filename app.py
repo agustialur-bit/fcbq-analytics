@@ -49,7 +49,7 @@ from analitica_core import (
     calc_onoff_raw, calc_onoff, calc_onoff_agregat, calc_context_bloc, calc_onoff_bloc_split,
     calc_context_onoff, calc_onoff_ts, calc_lineup_impact, calc_metriques_partit,
     classifica_arquetip_global, classifica_zona_tir, calc_win_shares_temporada,
-    genera_excel_analisi, genera_excel_temporada,
+    genera_excel_analisi, genera_excel_temporada, save_meta_partit,
 )
 
 ZONA_A_CATEGORIA = {
@@ -1666,6 +1666,99 @@ with t4:
             )
         else:
             st.info("No hi ha partits a la base de dades.")
+
+    # ── Enviar a la base COPA ───────────────────────────────────────────────
+    st.markdown(sec("Enviar a la base COPA"), unsafe_allow_html=True)
+    st.caption(
+        "Escriu les dades en brut de cada partit al full comu de la COPA. "
+        "Es pot reenviar un partit tantes vegades com calgui: substitueix les seves "
+        "files, no en duplica."
+    )
+    if "copa" not in st.secrets:
+        st.info(
+            "Falta configurar els secrets de Streamlit: `[copa]` (sheet_id, temporada, "
+            "competicio) i `[gcp_service_account]`. Mentre no hi siguin, l'enviament "
+            "queda desactivat."
+        )
+    else:
+        import copa_sync
+        from copa_adapter import partit_a_copa
+
+        df_bd_copa = load_partits_db()
+        if df_bd_copa.empty:
+            st.info("No hi ha partits a la base de dades.")
+        else:
+            for _c in ("data_partit", "jornada"):
+                if _c not in df_bd_copa.columns:
+                    df_bd_copa[_c] = None
+
+            etiquetes_copa = {
+                str(r["match_id"]): f'{r["nom_a"]} {r["score_a"]}-{r["score_b"]} {r["nom_b"]}'
+                for _, r in df_bd_copa.iterrows()
+            }
+            tria_copa = st.multiselect(
+                "Partits a enviar",
+                options=list(etiquetes_copa),
+                format_func=lambda m: etiquetes_copa.get(m, m),
+                default=list(etiquetes_copa),
+                key="copa_tria",
+            )
+
+            if tria_copa:
+                sub = df_bd_copa[df_bd_copa["match_id"].astype(str).isin(tria_copa)]
+                # La data REAL del partit no ve de l'API i la base antiga nomes
+                # desava el dia de la descarrega. Es demana un cop i es guarda,
+                # per no haver-la de reescriure a cada enviament.
+                taula = pd.DataFrame({
+                    "Partit": [etiquetes_copa[str(m)] for m in sub["match_id"]],
+                    "Data del partit": [
+                        (str(d)[:10] if pd.notna(d) and str(d).strip() else "")
+                        for d in sub["data_partit"]
+                    ],
+                    "Jornada": [
+                        (int(j) if pd.notna(j) and str(j).strip() not in ("", "None") else None)
+                        for j in sub["jornada"]
+                    ],
+                })
+                editat = st.data_editor(
+                    taula, hide_index=True, use_container_width=True, key="copa_meta",
+                    disabled=["Partit"],
+                    column_config={
+                        "Data del partit": st.column_config.TextColumn(
+                            help="AAAA-MM-DD. La del partit, no la d'avui.", max_chars=10),
+                        "Jornada": st.column_config.NumberColumn(min_value=1, step=1),
+                    },
+                )
+
+                partits_copa, problemes = [], []
+                for i, mid in enumerate(sub["match_id"].astype(str).tolist()):
+                    data_i = str(editat.iloc[i]["Data del partit"]).strip()
+                    jorn_i = editat.iloc[i]["Jornada"]
+                    jorn_i = int(jorn_i) if pd.notna(jorn_i) else None
+                    if not data_i:
+                        problemes.append(f"{etiquetes_copa[mid]}: falta la data del partit")
+                        continue
+                    try:
+                        save_meta_partit(mid, data_i, jorn_i)
+                        df_m = load_jugades_db(mid)
+                        fila = sub[sub["match_id"].astype(str) == mid].iloc[0]
+                        partits_copa.append(partit_a_copa(
+                            df_m,
+                            match_id=mid,
+                            temporada=st.secrets["copa"]["temporada"],
+                            competicio=st.secrets["copa"]["competicio"],
+                            data=data_i,
+                            jornada=jorn_i,
+                            noms_equips={str(fila["id_equip_a"]): fila["nom_a"],
+                                         str(fila["id_equip_b"]): fila["nom_b"]},
+                        ))
+                    except Exception as ex:
+                        problemes.append(f"{etiquetes_copa[mid]}: {ex}")
+
+                for msg in problemes:
+                    st.warning(msg, icon="⚠️")
+                if partits_copa:
+                    copa_sync.render_boto_copa(partits_copa)
 
 with t_onoff:
     st.markdown(sec("⚡ Eficiència i On/Off Rating per jugadora"), unsafe_allow_html=True)
