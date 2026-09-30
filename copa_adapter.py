@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from extraction import metadades_de_capcalera
 from analitica_core import (
     calc_minuts_reals,
     calc_onoff_raw,
@@ -42,22 +43,6 @@ MINS_PER_QUART = 10
 # ─────────────────────────────────────────────────────────────────────────────
 # METADADES
 # ─────────────────────────────────────────────────────────────────────────────
-# Claus on l'API de la FCBQ podria donar la data i la jornada. La capçalera
-# 'stats' es desa sencera a df.attrs["header"]; com que no en tenim la
-# documentació, provem uns quants noms versemblants i, si no hi són, tornem None
-# perquè la UI ho demani. Quan se'n vegi una de real, es deixa només la bona.
-_CLAUS_DATA = ("date", "matchDate", "startDate", "gameDate", "data", "dateTime")
-_CLAUS_JORNADA = ("round", "roundNumber", "matchday", "jornada", "week", "gameNumber")
-
-
-def _primer_valor(d: dict, claus) -> str | None:
-    for k in claus:
-        v = d.get(k)
-        if v not in (None, "", 0):
-            return v
-    return None
-
-
 def metadades_del_partit(df: pd.DataFrame) -> dict:
     """Treu data i jornada de la capçalera de l'API, si hi són.
 
@@ -66,26 +51,7 @@ def metadades_del_partit(df: pd.DataFrame) -> dict:
     d'avui, que és justament el que feia que l'Excel mostrés 29/09 per a partits
     del cap de setmana.
     """
-    cap = df.attrs.get("header") or {}
-    data = _primer_valor(cap, _CLAUS_DATA)
-    if data is not None:
-        data = str(data)[:10]
-        # Accepta DD/MM/YYYY i ho passa a ISO
-        if "/" in data:
-            parts = data.split("/")
-            if len(parts) == 3 and len(parts[2]) == 4:
-                data = f"{parts[2]}-{parts[1].zfill(2)}-{parts[0].zfill(2)}"
-        if len(data) != 10 or data[4] != "-":
-            data = None
-
-    jornada = _primer_valor(cap, _CLAUS_JORNADA)
-    if jornada is not None:
-        try:
-            jornada = int(str(jornada).strip())
-        except (TypeError, ValueError):
-            jornada = None
-
-    return {"data": data, "jornada": jornada}
+    return metadades_de_capcalera(df.attrs.get("header"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

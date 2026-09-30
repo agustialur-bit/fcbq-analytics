@@ -35,6 +35,7 @@ COLOR_A, COLOR_B = "#185FA5", "#993C1D"
 
 import analitica_core as core
 import token_bridge
+from extraction import metadades_de_capcalera
 from analitica_core import (
     MICKI_CSS, C_BG, C_BG_SOFT, C_BORDER, C_TEXT, C_TEXT_MUTED, C_LABEL,
     C_CARD_BORDER, C_WHITE, C_ACCENT, C_ACCENT_DARK, C_ACCENT_MID, C_CHART_TEXT,
@@ -206,6 +207,10 @@ def fetch_and_parse(match_id):
         for costat in ("localTeam", "visitorTeam"):
             eq = capc.get(costat) or {}
             if eq.get("uuid"): noms_api[eq["uuid"]] = eq.get("name", "")
+        # La capcalera tambe porta la data real del partit i la jornada; les
+        # desem per match_id perque save_partit les pugui guardar i no calgui
+        # escriure-les a ma per enviar-les a la COPA.
+        st.session_state.setdefault("meta_api", {})[str(match_id)] =             metadades_de_capcalera(capc)
     except Exception:
         pass
     st.session_state["noms_api"] = noms_api
@@ -328,7 +333,9 @@ with st.sidebar:
                         id_b_m = teams_m[1] if len(teams_m)>1 else ""
                         sdf_m = score_evo(df_m); sa, sb = final_score(sdf_m)
                         ts_m = datetime.now().strftime("%Y-%m-%d %H:%M")
-                        save_partit(mid_multi, df_m, noms_m.get(id_a_m,"A"), noms_m.get(id_b_m,"B"), id_a_m, id_b_m, sa, sb)
+                        _meta_m = st.session_state.get("meta_api", {}).get(str(mid_multi), {})
+                        save_partit(mid_multi, df_m, noms_m.get(id_a_m,"A"), noms_m.get(id_b_m,"B"), id_a_m, id_b_m, sa, sb,
+                                    data_partit=_meta_m.get("data"), jornada=_meta_m.get("jornada"))
                         save_stats_jugador(mid_multi, ts_m, df_m, teams_m, noms_m)
                         save_shots_zones(mid_multi, ts_m, df_m, noms_m)
                         save_timeouts(mid_multi, ts_m, df_m, noms_m)
@@ -396,7 +403,9 @@ if carregar and url_input:
                 id_b = teams_tmp[1] if len(teams_tmp)>1 else ""
                 sdf = score_evo(df); fa,fb = final_score(sdf)
                 ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-                save_partit(mid, df, noms.get(id_a,"A"), noms.get(id_b,"B"), id_a, id_b, fa, fb)
+                _meta = st.session_state.get("meta_api", {}).get(str(mid), {})
+                save_partit(mid, df, noms.get(id_a,"A"), noms.get(id_b,"B"), id_a, id_b, fa, fb,
+                            data_partit=_meta.get("data"), jornada=_meta.get("jornada"))
                 save_stats_jugador(mid, ts, df, teams_tmp, noms)
                 save_shots_zones(mid, ts, df, noms)
                 save_timeouts(mid, ts, df, noms)

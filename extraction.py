@@ -112,6 +112,49 @@ def _api_get(match_id: str, recurs: str, token: str = None):
         raise RuntimeError(f"No s'ha pogut connectar amb l'API: {e.reason}") from None
 
 
+# Camps de la capcalera 'stats' de la FCBQ. Confirmats contra l'API el
+# 29/09/2026 amb un partit real: date ve com "2026-09-19T10:45:00.000+0000" i
+# la jornada com matchDayNum. Es deixen alternatives per si canvien de nom.
+CLAUS_DATA = ("date", "matchDate", "startDate", "gameDate")
+CLAUS_JORNADA = ("matchDayNum", "round", "roundNumber", "matchday", "jornada")
+
+
+def _primer_valor(d, claus):
+    for k in claus:
+        v = d.get(k)
+        if v not in (None, "", 0):
+            return v
+    return None
+
+
+def metadades_de_capcalera(capc):
+    """Data real del partit i jornada a partir de la capcalera de l'API.
+
+    Retorna {"data": "YYYY-MM-DD"|None, "jornada": int|None}. Mai inventa res:
+    si no hi son, torna None i qui ho faci servir ho ha de demanar. Posar-hi la
+    data d'avui es justament el que feia que l'Excel mostres la data
+    d'exportacio en lloc de la del partit.
+    """
+    capc = capc or {}
+    data = _primer_valor(capc, CLAUS_DATA)
+    if data is not None:
+        data = str(data)[:10]
+        if "/" in data:                      # per si algun dia ve DD/MM/YYYY
+            t = data.split("/")
+            if len(t) == 3 and len(t[2]) == 4:
+                data = "%s-%s-%s" % (t[2], t[1].zfill(2), t[0].zfill(2))
+        if len(data) != 10 or data[4] != "-":
+            data = None
+
+    jornada = _primer_valor(capc, CLAUS_JORNADA)
+    if jornada is not None:
+        try:
+            jornada = int(str(jornada).strip())
+        except (TypeError, ValueError):
+            jornada = None
+    return {"data": data, "jornada": jornada}
+
+
 def extract_match(match_id: str, token: str = None) -> pd.DataFrame:
     """Punt d'entrada: partit -> DataFrame amb columnes num, quart, temps,
     min_num, idEquip, dorsal, jugador, accio, marcador, punts, teamAction —
