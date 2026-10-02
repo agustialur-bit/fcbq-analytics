@@ -48,6 +48,7 @@ from analitica_core import (
     get_teams, get_teams_ordered, score_evo, final_score, estat_marc, get_shot_counts,
     get_intervals_jugadores_global, calc_pm_combinacions, calc_possessions, calc_eficiencies,
     calc_onoff_raw, calc_onoff, calc_onoff_agregat, calc_context_bloc, calc_onoff_bloc_split,
+    calc_contribucio_companyes,
     calc_context_onoff, calc_onoff_ts, calc_lineup_impact, calc_metriques_partit,
     classifica_arquetip_global, classifica_zona_tir, calc_win_shares_temporada,
     genera_excel_analisi, genera_excel_temporada, save_meta_partit,
@@ -247,6 +248,22 @@ def fetch_and_parse(match_id):
 # ══════════════════════════════════════════════════
 # HELPERS
 # ══════════════════════════════════════════════════
+
+@st.cache_data(show_spinner="Acumulant la temporada...")
+def contrib_companyes_temporada(match_ids):
+    """Contribució per companya acumulant tots els partits de la BD.
+    La clau de cache són els match_id, així que es recalcula sol quan en
+    carregues un de nou i no cada vegada que toques un selector."""
+    partits = []
+    df_part = load_partits_db()
+    for _, p in df_part[df_part["match_id"].isin(match_ids)].iterrows():
+        df_m = load_jugades_db(p["match_id"])
+        if df_m.empty: continue
+        teams_m = get_teams_ordered(df_m)
+        if len(teams_m) < 2: continue
+        partits.append((df_m, {str(teams_m[0]): p["nom_a"], str(teams_m[1]): p["nom_b"]}))
+    return calc_contribucio_companyes(partits)
+
 
 # ══════════════════════════════════════════════════
 # SIDEBAR
@@ -1685,8 +1702,14 @@ with t4:
     )
     # Missatge concret a posta: distingir "no s'ha desat res" de "s'ha desat a
     # mitges" o "encara no ha reiniciat" estalvia molta estona buscant a cegues.
-    _te_copa = "copa" in st.secrets
-    _te_gcp = "gcp_service_account" in st.secrets
+    # Si no hi ha cap secrets.toml, "x in st.secrets" no retorna False: llança
+    # StreamlitSecretNotFoundError i tomba l'app sencera — justament el cas que
+    # aquest bloc vol explicar. Es tracta com a "no hi és".
+    def _te_secret(clau):
+        try: return clau in st.secrets
+        except Exception: return False
+    _te_copa = _te_secret("copa")
+    _te_gcp = _te_secret("gcp_service_account")
     _falten = []
     if _te_copa:
         _falten = [k for k in ("sheet_id", "temporada", "competicio")
@@ -2312,6 +2335,16 @@ with t5:
         return intervals
 
     intervals_jug = get_intervals_jugadores(df_orig)
+
+    # +/- per parella amb el motor de microintervals (el mateix que l'Excel i que
+    # la secció d'aportació per companya). Es calculava solapant intervals i
+    # sumant els punts amb els dos extrems inclosos, cosa que comptava dues
+    # vegades les cistelles anotades just en un instant de canvi: fins a 4 punts
+    # de diferència en un partit real. Es calcula un sol cop i el reaprofiten el
+    # mapa de calor i el detall de parelles.
+    pm_parelles_micro = {}
+    for _r_par in calc_pm_combinacions(df_orig, mode="parelles"):
+        pm_parelles_micro[(str(_r_par["equip"]), frozenset(_r_par["combinacio"]))] = _r_par
     score_df_rot = score_df.copy() if not score_df.empty else pd.DataFrame()
 
     # ── 1. Gràfic de quintets (Gantt de rotacions) ────────────────────────
@@ -2537,32 +2570,11 @@ with t5:
     if tid_rot and intervals_jug:
         jugs_eq_all = sorted([j for j,ivs in intervals_jug.items()
                               if any(ei==tid_rot for _,_,ei in ivs)])
-        rival_rot_id2 = teams[1] if tid_rot == teams[0] else (teams[0] if teams else None)
 
         if len(jugs_eq_all) >= 2:
-            # Precalcula t_abs per eficiència
-            df_orig_tab = df_orig.copy()
-            df_orig_tab["t_abs"] = df_orig_tab.apply(
-                lambda r: (int(r["quart"])-1)*10 + (10 - float(r["min_num"]))
-                if float(r.get("min_num",0)) <= 10
-                else float(r.get("min_num",0)), axis=1)
-
             def pm_parella(j1, j2):
-                ivs1 = [(ti,tf) for ti,tf,ei in intervals_jug.get(j1,[]) if ei==tid_rot]
-                ivs2 = [(ti,tf) for ti,tf,ei in intervals_jug.get(j2,[]) if ei==tid_rot]
-                juntes = []
-                for a1,a2 in ivs1:
-                    for b1,b2 in ivs2:
-                        ini=max(a1,b1); fi=min(a2,b2)
-                        if fi > ini: juntes.append((ini,fi))
-                if not juntes: return None
-                pf=pc=0
-                for ti,tf in juntes:
-                    df_j = df_orig_tab[(df_orig_tab["t_abs"]>=ti)&(df_orig_tab["t_abs"]<=tf)]
-                    pf += int(df_j[df_j["idEquip"]==tid_rot]["punts"].sum())
-                    if rival_rot_id2:
-                        pc += int(df_j[df_j["idEquip"]==rival_rot_id2]["punts"].sum())
-                return pf - pc
+                r = pm_parelles_micro.get((str(tid_rot), frozenset((j1, j2))))
+                return r["pm"] if r else None
 
             # Construeix matriu
             n = len(jugs_eq_all)
@@ -2636,24 +2648,14 @@ with t5:
                     ini = max(a1,b1); fi = min(a2,b2)
                     if fi > ini: juntes.append((ini,fi))
 
-            if not juntes:
+            r_par_sel = pm_parelles_micro.get((str(tid_rot), frozenset((jug_p1, jug_p2))))
+            if not juntes or not r_par_sel:
                 st.info(f"{jug_p1} i {jug_p2} no han jugat juntes en aquest partit.")
             else:
-                total_min_j = sum(f-i for i,f in juntes)
-                # Suma punts directament del play-by-play (mateix metode que el mapa de calor
-                # de parelles, per garantir que els dos valors coincideixen sempre)
-                df_orig_par = df_orig.copy()
-                df_orig_par["t_abs"] = df_orig_par.apply(
-                    lambda r: (int(r["quart"])-1)*10+(10-float(r["min_num"]))
-                    if float(r.get("min_num",0))<=10 else float(r.get("min_num",0)), axis=1)
-                rival_rot_par = teams[1] if tid_rot == teams[0] else (teams[0] if teams else None)
-                pf_j = pc_j = 0
-                for t_ini,t_fi in juntes:
-                    df_j = df_orig_par[(df_orig_par["t_abs"]>=t_ini)&(df_orig_par["t_abs"]<=t_fi)]
-                    pf_j += int(df_j[df_j["idEquip"]==tid_rot]["punts"].sum())
-                    if rival_rot_par:
-                        pc_j += int(df_j[df_j["idEquip"]==rival_rot_par]["punts"].sum())
-                parcial_j = pf_j - pc_j
+                # Mateix motor que el mapa de calor i que l'aportació per companya,
+                # perquè els tres valors coincideixin sempre.
+                total_min_j = r_par_sel["minuts"]
+                parcial_j = r_par_sel["pm"]
 
                 c1,c2,c3 = st.columns(3)
                 col_p = "#16a34a" if parcial_j >= 0 else "#dc2626"
@@ -2663,6 +2665,89 @@ with t5:
                     f"{'+'if parcial_j>=0 else ''}{round(parcial_j/total_min_j,2) if total_min_j>0 else 0}",
                     "", col_p), unsafe_allow_html=True)
                 st.caption(f"Trams juntes: {', '.join([f'{i:.0f}–{f:.0f} min' for i,f in juntes])}")
+
+    # ── 5b. Aportació d'una jugadora amb cada companya ────────────────────
+    st.markdown(sec("🤝 Aportació d'una jugadora amb cada companya"), unsafe_allow_html=True)
+    st.caption("Cada barra és el +/- per minut de la jugadora seleccionada mentre comparteix "
+               "pista amb aquella companya. El diamant blau és la mitjana pròpia de la companya "
+               "(tots els seus minuts, no només junts). La línia taronja és la mitjana de la "
+               "jugadora seleccionada: les barres que la superen són les companyes amb qui "
+               "rendeix per sobre del seu propi nivell.")
+
+    abast_ctb = st.radio("Abast", ["Aquest partit", "Tota la temporada"],
+                         horizontal=True, key="abast_contrib", label_visibility="collapsed")
+
+    if abast_ctb == "Aquest partit":
+        noms_ctb = {}
+        if teams: noms_ctb[str(teams[0])] = nom_a
+        if len(teams) > 1: noms_ctb[str(teams[1])] = nom_b
+        contrib_ctb = calc_contribucio_companyes([(df_orig, noms_ctb)])
+        peu_ctb = "Només el partit carregat."
+    else:
+        ids_ctb = tuple(sorted(load_partits_db()["match_id"].tolist()))
+        contrib_ctb = contrib_companyes_temporada(ids_ctb) if ids_ctb else {}
+        peu_ctb = (f"Acumulat de {len(ids_ctb)} partits. Només se sumen els partits on l'equip "
+                   "està escrit igual — si un surt com a «Equip A», compta a part.")
+
+    if not contrib_ctb:
+        st.info("Encara no hi ha prou minuts compartits per calcular-ho.")
+    else:
+        equips_ctb = sorted({e for e, _ in contrib_ctb})
+        cc1, cc2 = st.columns(2)
+        with cc1:
+            idx_eq = equips_ctb.index(nom_a) if nom_a in equips_ctb else 0
+            eq_ctb = st.selectbox("Equip", equips_ctb, index=idx_eq, key="eq_contrib")
+        jugs_ctb = sorted([j for e, j in contrib_ctb if e == eq_ctb])
+        with cc2:
+            jug_ctb = st.selectbox("Jugadora", jugs_ctb, key="jug_contrib")
+
+        dades_ctb = contrib_ctb.get((eq_ctb, jug_ctb))
+        if not dades_ctb:
+            st.info(f"{jug_ctb} no ha compartit prou minuts amb cap companya.")
+        else:
+            mitj_ctb = dades_ctb["pm_min"]
+            k1, k2, k3 = st.columns(3)
+            col_ctb = C_SUCCESS if mitj_ctb >= 0 else C_ERROR
+            with k1: st.markdown(card("Minuts jugats", dades_ctb["minuts"], "min", C_ACCENT),
+                                 unsafe_allow_html=True)
+            with k2: st.markdown(card("+/- total",
+                f"{'+' if dades_ctb['pm'] >= 0 else ''}{dades_ctb['pm']}",
+                f"{dades_ctb['partits']} partit(s)", col_ctb), unsafe_allow_html=True)
+            with k3: st.markdown(card("+/- per minut",
+                f"{'+' if mitj_ctb >= 0 else ''}{mitj_ctb:.3f}", "mitjana pròpia", col_ctb),
+                unsafe_allow_html=True)
+
+            df_ctb = pd.DataFrame(dades_ctb["companyes"])
+            fig_ctb = go.Figure(go.Bar(
+                y=df_ctb["companya"], x=df_ctb["pm_min"], orientation="h",
+                marker_color=[C_SUCCESS if v >= 0 else C_ERROR for v in df_ctb["pm_min"]],
+                text=[f"{'+' if v >= 0 else ''}{v:.2f}" for v in df_ctb["pm_min"]],
+                textposition="outside", name="Junts",
+                customdata=df_ctb[["minuts", "pm"]].values,
+                hovertemplate="<b>%{y}</b><br>+/- per min junts: %{x:+.3f}"
+                              "<br>Minuts junts: %{customdata[0]:.1f}"
+                              "<br>+/- junts: %{customdata[1]:+d}<extra></extra>"))
+            if df_ctb["pm_min_propi"].notna().any():
+                fig_ctb.add_trace(go.Scatter(
+                    x=df_ctb["pm_min_propi"], y=df_ctb["companya"], mode="markers",
+                    name="Mitjana pròpia de la companya",
+                    marker=dict(symbol="diamond", size=11, color=C_ACCENT_DARK,
+                                line=dict(width=1.5, color=C_WHITE)),
+                    hovertemplate="<b>%{y}</b><br>Mitjana pròpia: %{x:+.3f}<extra></extra>"))
+            fig_ctb.add_vline(x=0, line_dash="solid", line_color=C_BORDER)
+            fig_ctb.add_vline(x=mitj_ctb, line_dash="dot", line_color=C_WARNING,
+                              annotation_text=f"Mitjana de {jug_ctb.split()[0]}: {mitj_ctb:+.2f}",
+                              annotation_font_size=10, annotation_font_color=C_WARNING)
+            fig_ctb.update_xaxes(title="+/- per minut")
+            st.plotly_chart(chart_style(fig_ctb, max(240, len(df_ctb) * 38),
+                f"{jug_ctb} — aportació amb cada companya"), use_container_width=True)
+            st.caption(peu_ctb)
+
+            df_show_ctb = df_ctb.rename(columns={
+                "companya": "Companya", "minuts": "Min junts", "pf": "Pts favor",
+                "pc": "Pts contra", "pm": "+/-", "pm_min": "+/- per min",
+                "pm_min_propi": "Mitjana pròpia"})
+            st.dataframe(df_show_ctb, use_container_width=True, hide_index=True)
 
 with t6:
     st.markdown(sec("Rànquing acumulat"), unsafe_allow_html=True)

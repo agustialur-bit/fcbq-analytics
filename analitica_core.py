@@ -1011,8 +1011,10 @@ def get_intervals_jugadores_global(df):
 
 
 def calc_pm_combinacions(df_orig, mode="quintets"):
-    """Calcula +/- per combinacions de jugadores (quintets o parelles).
-    mode: 'quintets' o 'parelles'
+    """Calcula +/- per combinacions de jugadores (quintets, parelles o individual).
+    mode: 'quintets', 'parelles' o 'individual' (combinacions d'una sola jugadora,
+    útil per tenir la mitjana pròpia amb EXACTAMENT el mateix motor que les
+    parelles — si es calculés a part, els dos números no quadrarien).
     Retorna llista de dicts: {combinacio, equip, minuts, pf, pc, pm, pm_min}
     """
     MINS_Q = 10
@@ -1064,6 +1066,9 @@ def calc_pm_combinacions(df_orig, mode="quintets"):
             if mode == "quintets":
                 if len(en_pista_ara) != 5: continue
                 combos = [tuple(sorted(en_pista_ara))]
+            elif mode == "individual":
+                if not en_pista_ara: continue
+                combos = [(j,) for j in en_pista_ara]
             else:  # parelles
                 if len(en_pista_ara) < 2: continue
                 combos = [tuple(sorted(c)) for c in itertools.combinations(en_pista_ara, 2)]
@@ -1113,6 +1118,69 @@ def compta_tirs(df_sub) -> tuple[int, int]:
     tc = int(df_sub["accio"].str.contains(RE_TC_INT, case=False, na=False).sum())
     tl = int(df_sub["accio"].str.contains(RE_TL_INT, case=False, na=False).sum())
     return tc, tl
+
+
+def calc_contribucio_companyes(partits, min_minuts_junts=1.0):
+    """Per cada jugadora, el seu +/- per minut amb CADA companya concreta.
+
+    `partits`: llista de (df_jugades, {str(idEquip): nom_equip}). Amb un sol
+    element dona el partit carregat; amb tots els de la BD, l'acumulat de
+    temporada (el mateix que la pestanya "Contribució per companya" de l'Excel).
+
+    S'agrega per NOM d'equip i de jugadora, no per idEquip, perquè funcioni
+    igual tant si els partits són de la mateixa temporada com si n'hi ha de
+    temporades amb identificadors antics.
+
+    Tot surt de calc_pm_combinacions() —parelles i individual— perquè la barra
+    (amb la companya) i el diamant (mitjana pròpia de la companya) es calculin
+    amb el mateix motor i no puguin contradir-se.
+
+    Retorna {(nom_equip, jugadora): {minuts, pf, pc, pm, pm_min, partits,
+    companyes: [{companya, minuts, pf, pc, pm, pm_min, pm_min_propi}]}}
+    """
+    tot = {}       # (eq, jug) -> [minuts, pf, pc, n_partits]
+    par = {}       # (eq, frozenset({j1,j2})) -> [minuts, pf, pc]
+
+    for df_m, noms_m in partits:
+        if df_m is None or df_m.empty: continue
+        for r in calc_pm_combinacions(df_m, mode="individual"):
+            eq = noms_m.get(str(r["equip"]), "?")
+            k = (eq, r["combinacio"][0])
+            a = tot.setdefault(k, [0.0, 0, 0, 0])
+            a[0] += r["minuts"]; a[1] += r["pf"]; a[2] += r["pc"]; a[3] += 1
+        for r in calc_pm_combinacions(df_m, mode="parelles"):
+            eq = noms_m.get(str(r["equip"]), "?")
+            k = (eq, frozenset(r["combinacio"]))
+            a = par.setdefault(k, [0.0, 0, 0])
+            a[0] += r["minuts"]; a[1] += r["pf"]; a[2] += r["pc"]
+
+    def mitjana(eq, jug):
+        a = tot.get((eq, jug))
+        if not a or a[0] <= 0: return None
+        return round((a[1] - a[2]) / a[0], 3)
+
+    resultat = {}
+    for (eq, jug), (mins, pf, pc, n_p) in tot.items():
+        companyes = []
+        for (eq_p, combo), (m_p, pf_p, pc_p) in par.items():
+            if eq_p != eq or jug not in combo: continue
+            if m_p < min_minuts_junts: continue
+            altra = [j for j in combo if j != jug]
+            if not altra: continue
+            companyes.append({
+                "companya": altra[0], "minuts": round(m_p, 1),
+                "pf": pf_p, "pc": pc_p, "pm": pf_p - pc_p,
+                "pm_min": round((pf_p - pc_p) / m_p, 3) if m_p > 0 else 0.0,
+                "pm_min_propi": mitjana(eq, altra[0]),
+            })
+        if not companyes: continue
+        companyes.sort(key=lambda r: -r["pm_min"])
+        resultat[(eq, jug)] = {
+            "minuts": round(mins, 1), "pf": pf, "pc": pc, "pm": pf - pc,
+            "pm_min": round((pf - pc) / mins, 3) if mins > 0 else 0.0,
+            "partits": n_p, "companyes": companyes,
+        }
+    return resultat
 
 
 def calc_possessions(df_equip, poss_mode="approx"):
