@@ -33,9 +33,12 @@ from analitica_core import (
 )
 from copa_sync import PartitCopa, construir_partit
 
-# Parelles per sota d'aquests minuts compartits no es desen: en un partit n'hi ha
-# un centenar i la immensa majoria són de segons, soroll que no es mirarà mai.
-MIN_MINUTS_PARELLA = 3.0
+# Parelles per sota d'aquests minuts compartits no es desen. Es va comencar amb
+# 3 minuts, pero per al grafic de contribucio per companya el que compta es el
+# total de la temporada, i amb 3 es perdia un 2% dels minuts compartits i un 11%
+# de les parelles. Amb 1 minut es conserva el 99,9% del temps i la base nomes
+# creix un 10%. Micki fa servir el mateix llindar per defecte.
+MIN_MINUTS_PARELLA = 1.0
 
 MINS_PER_QUART = 10
 
@@ -193,6 +196,14 @@ def partit_a_copa(
 
     # ── jugadores ────────────────────────────────────────────────────────────
     minuts = calc_minuts_reals(df)
+    # Minuts i +/- a pista del mateix motor que calcula les parelles. Es desen a
+    # part perque el grafic de contribucio per companya compari la barra (amb la
+    # companya) i el diamant (mitjana propia) amb el mateix criteri.
+    ind = {}
+    for r in calc_pm_combinacions(df, mode="individual"):
+        if len(r["combinacio"]) != 1:
+            continue
+        ind[(str(r["equip"]), r["combinacio"][0])] = r
     jugadores = []
     for eq_id, nom_eq in ((id_local, nom_local), (id_visitant, nom_visitant)):
         for jug in _jugadores_de(df, eq_id, nom_eq):
@@ -216,6 +227,8 @@ def partit_a_copa(
                 "eq_poss_rival_on": round(on.get("poss_on_riv", 0.0), 2),
                 "eq_tci_on": on.get("tci_on", 0),
                 "eq_tli_on": on.get("tli_on", 0),
+                "min_ind": round(ind.get((str(eq_id), jug), {}).get("minuts", 0.0), 1),
+                "pm_ind": ind.get((str(eq_id), jug), {}).get("pm", 0),
             })
 
     # ── parelles ─────────────────────────────────────────────────────────────

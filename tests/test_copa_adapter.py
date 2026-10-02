@@ -229,6 +229,42 @@ def test_parelles_coherents(partit):
         assert r["min"] > 0
 
 
+def test_min_ind_i_pm_ind_venen_del_motor_de_parelles(partit, dades):
+    """
+    El grafic de contribucio per companya compara la barra (+/- amb la
+    companya) amb el diamant (mitjana propia d'aquella companya). Els dos han
+    de sortir del MATEIX motor: si el diamant es calcules des d'eq_pts_on,
+    difereix en algunes jugadores i el grafic es contradiria amb Micki.
+    """
+    df, _ = dades
+    ind = {}
+    for r in ac.calc_pm_combinacions(df, mode="individual"):
+        if len(r["combinacio"]) == 1:
+            ind[(str(r["equip"]), r["combinacio"][0])] = r
+
+    comprovades = 0
+    for _, j in partit.jugadores.iterrows():
+        r = ind.get((str(j["equip_id"]), j["jugadora"]))
+        if not r:
+            continue
+        comprovades += 1
+        assert j["min_ind"] == pytest.approx(round(r["minuts"], 1), abs=0.05)
+        assert j["pm_ind"] == r["pm"]
+    assert comprovades > 0
+
+
+def test_parelles_i_individual_son_coherents(partit):
+    """Els minuts d'una parella mai poden passar dels de cap de les dues."""
+    mins = {(r["equip"], r["jugadora"]): r["min_ind"]
+            for _, r in partit.jugadores.iterrows()}
+    for _, p in partit.parelles.iterrows():
+        for qui in (p["jugadora_a"], p["jugadora_b"]):
+            propi = mins.get((p["equip"], qui))
+            if propi is None:
+                continue
+            assert p["min"] <= propi + 0.15, (p["jugadora_a"], p["jugadora_b"], qui)
+
+
 def test_parelles_filtrades_pel_minim(dades):
     df, meta = dades
     comu = dict(match_id=meta["match_id"], temporada="2026-27", competicio="COPA",

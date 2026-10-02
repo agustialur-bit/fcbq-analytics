@@ -34,7 +34,8 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-VERSIO_ESQUEMA = "2"   # v2: afegida la pestanya parella_partit
+VERSIO_ESQUEMA = "3"   # v3: min_ind i pm_ind a jugadora_partit
+                       # v2: afegida la pestanya parella_partit
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ESQUEMA — l'ordre de les columnes és el del Google Sheet. No el canviïs sense
@@ -66,6 +67,14 @@ STATS_JUGADORA = [
     # Els valors OFF es dedueixen: total equip − ON.
     "eq_pts_on", "eq_pts_contra_on", "eq_poss_on", "eq_poss_rival_on",
     "eq_tci_on", "eq_tli_on",
+    # Minuts i +/- de la jugadora a pista segons el MATEIX motor que calcula les
+    # parelles (calc_pm_combinacions). Son redundants amb min i amb
+    # eq_pts_on - eq_pts_contra_on, pero no identics: els dos motors tallen els
+    # intervals diferent i les jugades que cauen just en un canvi es compten
+    # d'una manera o de l'altra. Es desen perque el grafic de contribucio per
+    # companya compari barra i diamant amb el mateix criteri, i no digui una
+    # cosa diferent de Micki.
+    "min_ind", "pm_ind",
 ]
 COLS_JUGADORA = COLS_COMUNES + [
     "jugadora", "jugadora_id", "dorsal", "equip", "equip_id", "rival", "titular",
