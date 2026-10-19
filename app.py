@@ -35,6 +35,7 @@ COLOR_A, COLOR_B = "#185FA5", "#993C1D"
 
 import analitica_core as core
 import token_bridge
+import informe_rivals
 from extraction import metadades_de_capcalera
 from analitica_core import (
     MICKI_CSS, C_BG, C_BG_SOFT, C_BORDER, C_TEXT, C_TEXT_MUTED, C_LABEL,
@@ -245,6 +246,111 @@ def fetch_and_parse(match_id):
     st.session_state["codis_desconeguts"] = sorted(c for c in desconeguts if c)
     return pd.DataFrame(rows)
 
+
+def carrega_partit_historic(mid):
+    """DataFrame d'un partit: de l'històric si ja hi és; si no, el descarrega de
+    l'API i el desa (partit, jugadores, zones i temps morts), com la càrrega
+    múltiple. No el deixa com a partit actiu de l'app."""
+    if partit_exists(mid):
+        return load_jugades_db(mid)
+    df_m = fetch_and_parse(mid)
+    if df_m is None or df_m.empty:
+        raise RuntimeError(f"No trobat: {mid[:20]}")
+    noms_guardats_m = load_noms_equips()
+    noms_api_m = st.session_state.get("noms_api", {})
+    teams_m = get_teams_ordered(df_m)
+    noms_m = {}
+    for j, tid_m in enumerate(teams_m[:2]):
+        nom_m = noms_guardats_m.get(tid_m) or noms_api_m.get(tid_m)
+        if nom_m and tid_m not in noms_guardats_m:
+            save_nom_equip(tid_m, nom_m)
+        noms_m[tid_m] = nom_m or f"Equip {chr(65+j)}"
+    id_a_m = teams_m[0] if teams_m else ""
+    id_b_m = teams_m[1] if len(teams_m)>1 else ""
+    sa, sb = final_score(score_evo(df_m))
+    ts_m = datetime.now().strftime("%Y-%m-%d %H:%M")
+    _meta_m = st.session_state.get("meta_api", {}).get(str(mid), {})
+    save_partit(mid, df_m, noms_m.get(id_a_m,"A"), noms_m.get(id_b_m,"B"), id_a_m, id_b_m, sa, sb,
+                data_partit=_meta_m.get("data"), jornada=_meta_m.get("jornada"))
+    save_stats_jugador(mid, ts_m, df_m, teams_m, noms_m)
+    save_shots_zones(mid, ts_m, df_m, noms_m)
+    save_timeouts(mid, ts_m, df_m, noms_m)
+    return df_m
+
+
+def pagina_informe_rivals():
+    """📑 Informe de rivals: què fan els rivals quan juguen contra nosaltres.
+    Per a cada rival: el partit contra nosaltres i 1-3 partits seus contra altres.
+    El rival es detecta sol (és l'equip que surt a tots els partits)."""
+    st.markdown("## 📑 Informe de rivals")
+    st.caption("Per a cada rival, el partit contra nosaltres es compara amb la mitjana dels "
+               "seus altres partits. Després es fa la mitjana entre rivals, amb el mateix pes "
+               "per a tots. Les dades surten del play-by-play de la FCBQ.")
+    n_rivals = st.selectbox("Nombre de rivals", list(range(1, 9)), index=2, key="ir_n")
+    entrades = []
+    cols = st.columns(min(int(n_rivals), 4))
+    for i in range(int(n_rivals)):
+        with cols[i % len(cols)]:
+            st.markdown(f"**Rival {i+1}**")
+            vs = st.text_input("Partit contra nosaltres", key=f"ir_vs_{i}",
+                               placeholder="URL o ID")
+            altres = st.text_area("Altres partits del rival (un per línia, 1-3)",
+                                  key=f"ir_altres_{i}", height=110)
+            entrades.append((vs, altres))
+    nostre_in = st.text_input("Nom del nostre equip (si es deixa buit, surt de l'API)",
+                              key="ir_nostre")
+
+    if st.button("📑 Generar informe", type="primary", key="ir_go"):
+        rivals, errors = [], []
+        noms = None
+        with st.spinner("Carregant els partits..."):
+            for i, (vs, altres) in enumerate(entrades):
+                mid_vs = extract_match_id(vs or "") or (vs or "").strip()
+                mids_altres = [extract_match_id(l) or l.strip()
+                               for l in (altres or "").splitlines() if l.strip()]
+                if not mid_vs or not mids_altres:
+                    errors.append(f"Rival {i+1}: falta el partit contra nosaltres o els altres partits.")
+                    continue
+                try:
+                    df_vs = carrega_partit_historic(mid_vs)
+                    dfs_altres = [carrega_partit_historic(m) for m in mids_altres]
+                    noms = load_noms_equips()
+                    id_riv, _ = informe_rivals.identifica_rival(df_vs, dfs_altres)
+                    nom_riv = noms.get(id_riv) or f"Rival {i+1}"
+                    rivals.append(informe_rivals.analitza_rival(nom_riv, df_vs, dfs_altres))
+                except Exception as ex:
+                    errors.append(f"Rival {i+1}: {ex}")
+        for e in errors:
+            st.error(e)
+        if rivals:
+            nostres = {r["id_nostre"] for r in rivals}
+            nostre = (nostre_in or "").strip()
+            if not nostre:
+                nostre = (noms or {}).get(next(iter(nostres)), "") if len(nostres) == 1 else ""
+            if len(nostres) > 1:
+                st.warning("Els partits 'contra nosaltres' no són tots contra el mateix equip. "
+                           "Comprova'ls.")
+            st.session_state["ir_resultat"] = (rivals, nostre or "nosaltres")
+
+    if st.session_state.get("ir_resultat"):
+        rivals, nostre = st.session_state["ir_resultat"]
+        for r in rivals:
+            for a in r["avisos"]:
+                st.warning(f"Comprovació de punts — {a}")
+        t = informe_rivals.textos(rivals, nostre)
+        sec(f"Resum · {', '.join(r['nom'] for r in rivals)}")
+        for cap, clau in (("Punts", "punts"), ("Tir de 3", "tir3"),
+                          ("Tir lliure", "tl"), ("Joc interior", "interior")):
+            st.markdown(f"- **{cap}:** {t[clau][0].upper() + t[clau][1:]}")
+        df_t = informe_rivals.taula(rivals)
+        st.dataframe(df_t.style.format({c: "{:.1f}" for c in df_t.columns if c != "Indicador"}),
+                     use_container_width=True, hide_index=True)
+        st.download_button("⬇ Descarregar el PowerPoint",
+                           data=informe_rivals.genera_pptx(rivals, nostre),
+                           file_name=informe_rivals.nom_fitxer(nostre),
+                           mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                           use_container_width=True)
+
 # ══════════════════════════════════════════════════
 # HELPERS
 # ══════════════════════════════════════════════════
@@ -328,37 +434,11 @@ with st.sidebar:
             linies = [l.strip() for l in urls_multi.strip().split("\n") if l.strip()]
             ok = 0; errors = []
             progress = st.progress(0)
-            noms_guardats_multi = load_noms_equips()
             for i, linia in enumerate(linies):
                 mid_multi = extract_match_id(linia) or linia.strip()
                 try:
-                    if partit_exists(mid_multi):
-                        ok += 1  # ja el tenim desat
-                        progress.progress((i+1)/len(linies))
-                        continue
-                    df_m = fetch_and_parse(mid_multi)
-                    if df_m is not None and not df_m.empty:
-                        teams_m = get_teams_ordered(df_m)
-                        noms_m = {}
-                        for j, tid_m in enumerate(teams_m[:2]):
-                            noms_api_m = st.session_state.get("noms_api", {})
-                            nom_m = noms_guardats_multi.get(tid_m) or noms_api_m.get(tid_m)
-                            if nom_m and tid_m not in noms_guardats_multi:
-                                save_nom_equip(tid_m, nom_m)
-                            noms_m[tid_m] = nom_m or f"Equip {chr(65+j)}"
-                        id_a_m = teams_m[0] if teams_m else ""
-                        id_b_m = teams_m[1] if len(teams_m)>1 else ""
-                        sdf_m = score_evo(df_m); sa, sb = final_score(sdf_m)
-                        ts_m = datetime.now().strftime("%Y-%m-%d %H:%M")
-                        _meta_m = st.session_state.get("meta_api", {}).get(str(mid_multi), {})
-                        save_partit(mid_multi, df_m, noms_m.get(id_a_m,"A"), noms_m.get(id_b_m,"B"), id_a_m, id_b_m, sa, sb,
-                                    data_partit=_meta_m.get("data"), jornada=_meta_m.get("jornada"))
-                        save_stats_jugador(mid_multi, ts_m, df_m, teams_m, noms_m)
-                        save_shots_zones(mid_multi, ts_m, df_m, noms_m)
-                        save_timeouts(mid_multi, ts_m, df_m, noms_m)
-                        ok += 1
-                    else:
-                        errors.append(f"No trobat: {mid_multi[:20]}")
+                    carrega_partit_historic(mid_multi)
+                    ok += 1
                 except Exception as ex:
                     errors.append(f"Error {mid_multi[:20]}: {ex}")
                 progress.progress((i+1)/len(linies))
@@ -366,6 +446,8 @@ with st.sidebar:
                 st.success(f"✅ {ok}/{len(linies)} partits carregats!")
             if errors:
                 st.warning("\n".join(errors))
+    st.toggle("📑 Informe de rivals", key="mode_informe",
+              help="Què fan els rivals quan juguen contra nosaltres, comparat amb els seus altres partits.")
     st.markdown("---")
     st.markdown('<div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#9ca3af;margin-bottom:6px">Filtres play-by-play</div>', unsafe_allow_html=True)
     quart_sel = st.multiselect("Quart", options=[1,2,3,4], default=[1,2,3,4])
@@ -437,6 +519,11 @@ if carregar and url_input:
                                + ", ".join(st.session_state["codis_desconeguts"]))
             except Exception as e:
                 st.error(str(e))
+
+# ── Informe de rivals (no necessita cap partit carregat) ──────────────────────
+if st.session_state.get("mode_informe"):
+    pagina_informe_rivals()
+    st.stop()
 
 # ── Pantalla inicial ────────────────────────────────────────────────────────────
 if st.session_state.df is None:
