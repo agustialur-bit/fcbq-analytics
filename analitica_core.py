@@ -516,7 +516,35 @@ def migrate_db():
         con.commit()
     except Exception:
         pass
+    versio = con.execute("PRAGMA user_version").fetchone()[0]
     con.close()
+
+    # v1: save_stats_jugador() desava minuts i usage_rate intercanviats. Es
+    # recalcula stats_jugador de cada partit a partir de les jugades guardades.
+    if versio < 1:
+        try:
+            recalcula_stats_jugador_db()
+            con2 = sqlite3.connect(DB_PATH)
+            con2.execute("PRAGMA user_version = 1")
+            con2.commit(); con2.close()
+        except Exception:
+            pass
+
+def recalcula_stats_jugador_db():
+    """Torna a calcular i desar stats_jugador de tots els partits de la BD a partir
+    de la taula jugades (font original, no afectada pel bug d'ordre de columnes)."""
+    con = sqlite3.connect(DB_PATH)
+    try:
+        partits = con.execute(
+            "SELECT match_id, data_consulta, nom_a, nom_b, id_equip_a, id_equip_b FROM partits").fetchall()
+    finally:
+        con.close()
+    for match_id, data_consulta, nom_a, nom_b, id_a, id_b in partits:
+        df = load_jugades_db(match_id)
+        if df.empty:
+            continue
+        save_stats_jugador(match_id, data_consulta, df, [str(id_a), str(id_b)],
+                           {str(id_a): nom_a, str(id_b): nom_b})
 
 def save_meta_partit(match_id, data_partit=None, jornada=None):
     """Completa la data real i la jornada d'un partit ja desat.
@@ -741,8 +769,10 @@ def save_stats_jugador(match_id, data_consulta, df, teams, team_names):
         else:
             usage = calc_usage_rate(dj, df[df["idEquip"]==eq_id])
         rows.append((match_id,data_consulta,jug,eq_nom,punts,cist2,cist3,tl,faltes,accions,impacte,pts_min,round(usage,1)))
-    # Afegir minuts a cada row
-    rows_amb_min = [r + (minuts_reals.get(r[2], 0),) for r in rows]
+    # L'ordre ha de coincidir amb les columnes de l'INSERT: ..., pts_per_min, minuts, usage_rate.
+    # (rows acaba amb [pts_min, usage]; abans s'hi afegien els minuts al final i
+    # minuts/usage_rate quedaven intercanviats a la BD.)
+    rows_amb_min = [r[:-1] + (minuts_reals.get(r[2], 0), r[-1]) for r in rows]
     con.executemany("INSERT INTO stats_jugador (match_id,data_consulta,jugador,equip_nom,punts,cistelles_2,cistelles_3,tirs_lliures,faltes,accions,impacte,pts_per_min,minuts,usage_rate) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows_amb_min)
     con.commit(); con.close()
 
