@@ -14,6 +14,7 @@ Si un dia canvia un càlcul allà, aquí canvia sol. Concretament:
   · tirs ON ................ calc_onoff_raw()        (mateixa màscara que els punts ON)
   · tirs .................... get_shot_counts()      (🎯 Eficiència de tir)
   · parelles ............... calc_pm_combinacions()  (Rotacions)
+  · quintets ............... calc_pm_combinacions()  (mateix motor, mode quintets)
 
 L'única cosa que es calcula aquí són els punts per quart i les faltes, amb el
 mateix criteri literal que ja fa servir app.py.
@@ -39,6 +40,12 @@ from copa_sync import PartitCopa, construir_partit
 # de les parelles. Amb 1 minut es conserva el 99,9% del temps i la base nomes
 # creix un 10%. Micki fa servir el mateix llindar per defecte.
 MIN_MINUTS_PARELLA = 1.0
+
+# Quintets: no s'hi posa cap llindar propi. El motor ja descarta per sota de mig
+# minut, i d'un partit en surten una trentena de files (contra ~130 de parelles),
+# o sigui que filtrar no estalviaria res. I el hub suma la temporada sencera: un
+# quintet de 40 segons per partit acaba sent minuts de debo al cap de 13 jornades.
+MIN_MINUTS_QUINTET = 0.0
 
 MINS_PER_QUART = 10
 
@@ -133,6 +140,7 @@ def partit_a_copa(
     noms_equips: dict | None = None,
     poss_mode: str = "approx",
     min_minuts_parella: float = MIN_MINUTS_PARELLA,
+    min_minuts_quintet: float = MIN_MINUTS_QUINTET,
 ) -> PartitCopa:
     """
     Converteix un partit carregat per Micki en un PartitCopa.
@@ -257,6 +265,27 @@ def partit_a_copa(
             "min": c["minuts"], "pf": c["pf"], "pc": c["pc"],
         })
 
+    # -- quintets -------------------------------------------------------------
+    # Mateix motor que les parelles, nomes canvia el mode. Es desen els dos
+    # equips de cada partit: surt del mateix calcul, no costa res i permet
+    # mirar els quintets d'un rival si algun dia interessa.
+    quintets = []
+    for c in calc_pm_combinacions(df, mode="quintets"):
+        if c["minuts"] < min_minuts_quintet:
+            continue
+        combo = [str(x) for x in c["combinacio"]]
+        if len(set(combo)) != 5:
+            continue
+        if any(x not in noms_jugadores for x in combo):
+            continue
+        nom_eq = nom_per_id.get(str(c["equip"])) or nom_per_id.get(c["equip"])
+        if not nom_eq:
+            continue
+        quintets.append({
+            "equip": nom_eq, "jugadores": combo,
+            "min": c["minuts"], "pf": c["pf"], "pc": c["pc"],
+        })
+
     return construir_partit(
         match_id=str(match_id),
         data=data,
@@ -267,6 +296,7 @@ def partit_a_copa(
         equips=equips,
         jugadores=jugadores,
         parelles=parelles,
+        quintets=quintets,
         temporada=temporada,
         competicio=competicio,
         jornada=jornada,

@@ -34,7 +34,8 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-VERSIO_ESQUEMA = "3"   # v3: min_ind i pm_ind a jugadora_partit
+VERSIO_ESQUEMA = "4"   # v4: afegida la pestanya quintet_partit
+                       # v3: min_ind i pm_ind a jugadora_partit
                        # v2: afegida la pestanya parella_partit
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -89,6 +90,15 @@ COLS_PARELLA = COLS_COMUNES + [
     "jugadora_a", "jugadora_b", "min", "pf", "pc",
 ]
 
+# Quintets: els cinc noms van en columnes separades i ORDENATS alfabeticament,
+# de manera que un mateix quintet sempre cau a la mateixa fila sigui quin sigui
+# l'ordre en que surt del motor. Aixi el hub pot agrupar la temporada sencera
+# comparant j1..j5 directament, sense haver de muntar conjunts.
+COLS_QUINTET = COLS_COMUNES + [
+    "equip", "equip_id", "rival",
+    "j1", "j2", "j3", "j4", "j5", "min", "pf", "pc",
+]
+
 COLS_EQUIPS = ["nom_fcbq", "equip_id", "nom_curt"]
 COLS_LOG = ["enviat_at", "match_id", "accio", "files_equip", "files_jugadora", "versio_esquema"]
 
@@ -97,6 +107,7 @@ ESQUEMA = {
     "equip_partit": COLS_EQUIP,
     "jugadora_partit": COLS_JUGADORA,
     "parella_partit": COLS_PARELLA,
+    "quintet_partit": COLS_QUINTET,
     "equips": COLS_EQUIPS,
     "_log": COLS_LOG,
 }
@@ -119,6 +130,7 @@ class PartitCopa:
     # Opcional: si l'adaptador no les calcula, el partit s'envia igualment i la
     # pestanya queda buida per a aquell match_id.
     parelles: pd.DataFrame = field(default_factory=lambda: pd.DataFrame(columns=COLS_PARELLA))
+    quintets: pd.DataFrame = field(default_factory=lambda: pd.DataFrame(columns=COLS_QUINTET))
 
     @property
     def match_id(self) -> str:
@@ -145,6 +157,7 @@ def construir_partit(
     visitant_id: str = "",
     prorrogues: int = 0,
     parelles: list[dict] | None = None,
+    quintets: list[dict] | None = None,
 ) -> PartitCopa:
     """
     Munta un PartitCopa a partir de les estadístiques calculades per Micki.
@@ -220,11 +233,23 @@ def construir_partit(
             "min": pa.get("min", ""), "pf": pa.get("pf", ""), "pc": pa.get("pc", ""),
         })
 
+    files_qui = []
+    for qu in (quintets or []):
+        eq = qu["equip"]
+        noms5 = sorted(qu["jugadores"])
+        files_qui.append({
+            **comuns,
+            "equip": eq, "equip_id": ids.get(eq, ""), "rival": rivals.get(eq, ""),
+            **{f"j{i+1}": noms5[i] for i in range(5)},
+            "min": qu.get("min", ""), "pf": qu.get("pf", ""), "pc": qu.get("pc", ""),
+        })
+
     return PartitCopa(
         partit=partit,
         equips=pd.DataFrame(files_equip, columns=COLS_EQUIP),
         jugadores=pd.DataFrame(files_jug, columns=COLS_JUGADORA),
         parelles=pd.DataFrame(files_par, columns=COLS_PARELLA),
+        quintets=pd.DataFrame(files_qui, columns=COLS_QUINTET),
     )
 
 
@@ -276,6 +301,22 @@ def validar(p: PartitCopa) -> tuple[list[str], list[str]]:
                     err.append(f"{et}: la parella {r.jugadora_a}/{r.jugadora_b} inclou '{r[c]}', que no surt a jugadores")
             if r.jugadora_a == r.jugadora_b:
                 err.append(f"{et}: parella amb la mateixa jugadora dos cops ({r.jugadora_a})")
+
+    # Quintets: mateix criteri que les parelles. Han de ser cinc noms diferents
+    # i tots del partit, si no el hub buscaria jugadores que no hi son.
+    if not p.quintets.empty:
+        noms = set(p.jugadores["jugadora"])
+        equips_ok = set(p.equips["equip"])
+        claus5 = ["j1", "j2", "j3", "j4", "j5"]
+        for _, r in p.quintets.iterrows():
+            if r.equip not in equips_ok:
+                err.append(f"{et}: quintet amb equip desconegut '{r.equip}'")
+            cinc = [r[c] for c in claus5]
+            fora = [x for x in cinc if x not in noms]
+            if fora:
+                err.append(f"{et}: el quintet inclou {fora}, que no surten a jugadores")
+            if len(set(cinc)) != 5:
+                err.append(f"{et}: quintet amb noms repetits ({cinc})")
 
     for df, qui in ((p.equips, "equip"), (p.jugadores, "jugadora")):
         for c, i in (("t2c", "t2i"), ("t3c", "t3i"), ("tlc", "tli")):
@@ -418,8 +459,10 @@ def enviar_partits(sh, partits: list[PartitCopa]) -> dict:
     df_eq = pd.concat([p.equips for p in partits], ignore_index=True)
     df_jug = pd.concat([p.jugadores for p in partits], ignore_index=True)
     df_par = pd.concat([p.parelles for p in partits], ignore_index=True)
+    df_qui = pd.concat([p.quintets for p in partits], ignore_index=True)
 
     # Ordre: detall primer, 'partits' al final (és l'índex que llegeix el hub).
+    _substituir(sh.worksheet("quintet_partit"), COLS_QUINTET, ids, _a_files(df_qui, COLS_QUINTET))
     _substituir(sh.worksheet("parella_partit"), COLS_PARELLA, ids, _a_files(df_par, COLS_PARELLA))
     _substituir(sh.worksheet("jugadora_partit"), COLS_JUGADORA, ids, _a_files(df_jug, COLS_JUGADORA))
     _substituir(sh.worksheet("equip_partit"), COLS_EQUIP, ids, _a_files(df_eq, COLS_EQUIP))
@@ -447,6 +490,7 @@ def enviar_partits(sh, partits: list[PartitCopa]) -> dict:
         "substituits": len(existien),
         "files_jugadora": len(df_jug),
         "files_parella": len(df_par),
+        "files_quintet": len(df_qui),
         "equips_nous": [n[0] for n in nous],
     }
 

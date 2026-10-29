@@ -20,7 +20,8 @@ sys.path.insert(0, str(ARREL))
 import analitica_core as ac              # noqa: E402
 from copa_adapter import partit_a_copa   # noqa: E402
 from copa_sync import (                  # noqa: E402
-    COLS_EQUIP, COLS_JUGADORA, COLS_PARELLA, VERSIO_ESQUEMA, validar,
+    COLS_EQUIP, COLS_JUGADORA, COLS_PARELLA, COLS_QUINTET, VERSIO_ESQUEMA,
+    validar,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -273,3 +274,109 @@ def test_parelles_filtrades_pel_minim(dades):
     moltes = partit_a_copa(df, min_minuts_parella=0.0, **comu)
     assert len(poques.parelles) < len(moltes.parelles)
     assert poques.parelles["min"].min() >= 20.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Quintets
+# ─────────────────────────────────────────────────────────────────────────────
+CLAUS5 = ["j1", "j2", "j3", "j4", "j5"]
+
+
+def test_quintets_tenen_les_columnes_de_l_esquema(partit):
+    assert list(partit.quintets.columns) == COLS_QUINTET
+
+
+def test_quintets_coherents(partit):
+    noms = set(partit.jugadores["jugadora"])
+    equips = set(partit.equips["equip"])
+    assert not partit.quintets.empty, "el partit hauria de tenir quintets"
+    for _, r in partit.quintets.iterrows():
+        cinc = [r[c] for c in CLAUS5]
+        assert len(set(cinc)) == 5, cinc
+        assert all(x in noms for x in cinc), cinc
+        assert cinc == sorted(cinc), "j1..j5 han d anar en ordre alfabetic"
+        assert r["equip"] in equips
+        assert r["min"] > 0
+
+
+def test_cada_quintet_surt_una_sola_vegada_per_equip(partit):
+    """
+    Els noms van ordenats precisament per aixo: si el mateix quintet sortis
+    dues vegades amb l ordre canviat, el hub sumaria la temporada dos cops.
+    """
+    vistos = set()
+    for _, r in partit.quintets.iterrows():
+        clau = (r["equip"], tuple(r[c] for c in CLAUS5))
+        assert clau not in vistos, clau
+        vistos.add(clau)
+
+
+def test_els_minuts_dels_quintets_cobreixen_gairebe_tot_el_partit(partit):
+    """
+    Un equip te sempre 5 jugadores a pista, o sigui que els minuts dels seus
+    quintets han de sumar la durada del partit. No hi arriben del tot perque
+    el play-by-play de la FCBQ deixa trossos on no en consten exactament 5;
+    si aquesta cobertura baixes molt, vol dir que s han perdut canvis.
+    """
+    durada = 40.0 + 5.0 * int(partit.partit.get("prorrogues") or 0)
+    for eq, files in partit.quintets.groupby("equip"):
+        total = files["min"].sum()
+        assert total <= durada + 0.5, (eq, total, durada)
+        assert total >= durada * 0.90, (eq, total, durada)
+
+
+def test_els_punts_dels_quintets_no_passen_dels_de_l_equip(partit):
+    """pf i pc d un quintet son els punts mentre aquelles cinc hi eren."""
+    pts = {r["equip"]: r["pts"] for _, r in partit.equips.iterrows()}
+    rival_de = {r["equip"]: r["rival"] for _, r in partit.equips.iterrows()}
+    for eq, files in partit.quintets.groupby("equip"):
+        assert files["pf"].sum() <= pts[eq]
+        assert files["pc"].sum() <= pts[rival_de[eq]]
+
+
+def test_un_quintet_no_pot_tenir_mes_minuts_que_les_seves_jugadores(partit):
+    mins = {(r["equip"], r["jugadora"]): r["min_ind"]
+            for _, r in partit.jugadores.iterrows()}
+    for _, q in partit.quintets.iterrows():
+        for qui in (q[c] for c in CLAUS5):
+            propi = mins.get((q["equip"], qui))
+            if propi is None:
+                continue
+            assert q["min"] <= propi + 0.15, (qui, q["min"], propi)
+
+
+def test_els_quintets_surten_del_mateix_motor_que_micki(dades, partit):
+    """
+    El mateix criteri que amb min_ind i les parelles: el numero que veu l staff
+    a l app ha de ser el que calcula Micki, no una copia que es pugui desviar.
+    """
+    df, _ = dades
+    del_motor = {}
+    for r in ac.calc_pm_combinacions(df, mode="quintets"):
+        if len(r["combinacio"]) != 5:
+            continue
+        del_motor[tuple(sorted(str(x) for x in r["combinacio"]))] = r
+    assert del_motor, "el motor hauria de donar quintets"
+    comprovats = 0
+    for _, q in partit.quintets.iterrows():
+        r = del_motor.get(tuple(q[c] for c in CLAUS5))
+        assert r is not None, [q[c] for c in CLAUS5]
+        assert q["min"] == pytest.approx(r["minuts"], abs=0.05)
+        assert q["pf"] == r["pf"] and q["pc"] == r["pc"]
+        comprovats += 1
+    assert comprovats == len(partit.quintets)
+
+
+def test_quintets_filtrats_pel_minim(dades):
+    df, meta = dades
+    comu = dict(match_id=meta["match_id"], temporada="2026-27", competicio="COPA",
+                data=meta["data"], noms_equips=meta["team_names"])
+    pocs = partit_a_copa(df, min_minuts_quintet=5.0, **comu)
+    molts = partit_a_copa(df, min_minuts_quintet=0.0, **comu)
+    assert len(pocs.quintets) < len(molts.quintets)
+    assert pocs.quintets["min"].min() >= 5.0
+
+
+def test_els_dos_equips_tenen_quintets(partit):
+    """Es desen els dos equips, no nomes el Manresa: la pantalla filtra despres."""
+    assert partit.quintets["equip"].nunique() == 2
