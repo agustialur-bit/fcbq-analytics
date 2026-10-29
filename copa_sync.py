@@ -555,7 +555,7 @@ def render_boto_copa(partits: list[PartitCopa]) -> None:
                 return
         st.success(
             f"Fet: {r['nous']} partits nous, {r['substituits']} substituïts, "
-            f"{r['files_jugadora']} files de jugadora."
+            f"{r['files_jugadora']} files de jugadora i {r['files_quintet']} de quintet."
         )
         if r["equips_nous"]:
             st.info("Equips nous afegits a la pestanya 'equips' (revisa'n el nom curt): "
